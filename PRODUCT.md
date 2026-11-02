@@ -20,7 +20,7 @@
 
 ## Capabilities and Constraints
 
-本地优先、菜单栏常驻、功能按目录隔离；无账号、云端或服务器。不默认启用 App Sandbox。优先逐步讨论全局快捷键与基础截图；编辑器、滚动截图、剪贴板与 Todo 需求尚未确定。
+本地优先、菜单栏常驻、功能按目录隔离；无账号、云端或服务器。不默认启用 App Sandbox。已确认优先开发全局快捷键配置，随后分期完成截图选择、编辑、置顶透明度、最近截图、拼图和手动滚动拼接，详见 [需求规格](docs/REQUIREMENTS.md)。剪贴板与 Todo 需求尚未确定。
 
 ## Product Principles
 

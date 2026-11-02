@@ -56,6 +56,8 @@ nylaiTests/                 偏好、快捷键、截图流程与窗口生命周�
 
 设计与阶段计划见 [ARCHITECTURE.md](ARCHITECTURE.md)、[ROADMAP.md](ROADMAP.md)。
 
+已确认的后续需求见 [需求规格](docs/REQUIREMENTS.md)，逐任务执行方式见 [开发计划](docs/DEVELOPMENT_PLAN.md)。下一开发阶段优先完成全局快捷键配置。
+
 ## 协作与发布
 
 当前仓库地址：https://github.com/NoName4Me/nylai 。修改前先构建；涉及行为时补充必要测试；不提交构建产物和个人 Xcode 配置。提交使用当前仓库的 Git 身份配置。
