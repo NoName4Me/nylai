@@ -11,13 +11,15 @@ AppKit 的 `NSStatusItem` / `NSMenu` 管理菜单栏，`NSWindowController` 托�
 ## 运行方式与职责
 
 - `App/main.swift`：启动 accessory 应用；`LSUIElement` 隐藏 Dock 图标。
-- `AppDelegate`：持有共享偏好、菜单栏和懒加载设置窗口；关闭设置不退出，重复启动打开设置。
+- `AppDelegate`：持有共享偏好、菜单栏、快捷键控制器和懒加载设置窗口；启动注册快捷键，退出注销；关闭设置不退出，重复启动打开设置。
 - `StatusBarController`：仅负责菜单入口与动作转发。
 - `Features/Settings`：原生表单、设置窗口复用、权限展示。当前唯一持久化选项是「打开应用时显示设置」。
-- `Features/GlobalShortcuts`：快捷键数据模型及注册/注销协议，无实现。未来先评估系统 `RegisterEventHotKey`，避免以全局键盘监听作为默认方案。
+- `Features/GlobalShortcuts`：`CarbonGlobalShortcutRegistrar` 实现注册/注销协议，`SettingsShortcutController` 管理固定 `⌃⌥N` 的状态、重试和设置动作。使用 `RegisterEventHotKey` 独占注册；重复注册和系统占用返回明确错误。Carbon 事件回调按签名及进程内唯一 ID 路由，各注册器不会误消费其他注册器的事件。
 - `Features/Screenshot`：按显示器 ID 异步返回 `CGImage` 的协议，无实现。未来适配 ScreenCaptureKit；区域选择和编辑不属于当前接口承诺。
 - `Shared/Preferences`：注入式 UserDefaults，便于隔离测试。
 - `Shared/Permissions`：按能力逐步增加权限支持，当前只做屏幕录制预检查和系统设置跳转，不主动申请权限。
+
+快捷键注册、注销和事件处理也限制在主线程。退出显式清理；注册器释放时将清理任务交给主线程，并保留 C 回调上下文直到移除 handler。注册失败且无有效快捷键时也移除 handler。系统注册 API 无法穷尽识别第三方基于原始键盘监听实现的快捷键；后续自定义录入时另行处理系统保留组合与布局显示。
 
 UI 和窗口生命周期限制在主线程。后续截图编码、文件写入等耗时工作应离开主线程，明确取消和错误处理，避免不必要的后台计时器。
 
@@ -40,3 +42,5 @@ UI 和窗口生命周期限制在主线程。后续截图编码、文件写入�
 - [NSStatusItem](https://developer.apple.com/documentation/appkit/nsstatusitem)
 - [SCScreenshotManager](https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager)
 - [RegisterEventHotKey](https://developer.apple.com/documentation/carbon/registereventhotkey(_:_:_:_:_:_:))
+
+快捷键 API 的独占语义及线程约束以本机 macOS SDK 的 `HIToolbox.framework/Headers/CarbonEvents.h` 为依据；无需辅助功能或输入监控权限。

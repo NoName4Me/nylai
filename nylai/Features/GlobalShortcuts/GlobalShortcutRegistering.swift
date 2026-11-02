@@ -5,7 +5,7 @@ struct GlobalShortcut: Equatable {
     let modifiers: NSEvent.ModifierFlags
 }
 
-// 后续由系统快捷键适配器实现；当前不注册任何快捷键。
+// 实现负责报告占用冲突；注销后不再分发动作。
 @MainActor
 protocol GlobalShortcutRegistering: AnyObject {
     func register(_ shortcut: GlobalShortcut, action: @escaping @MainActor () -> Void) throws

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var preferences: AppPreferences
+    var settingsShortcut: SettingsShortcutController
     @State private var screenRecordingGranted = false
     @State private var showSettingsError = false
 
@@ -10,6 +11,21 @@ struct SettingsView: View {
         Form {
             Section("通用") {
                 Toggle("打开应用时显示设置", isOn: $preferences.showSettingsOnLaunch)
+            }
+
+            Section("全局快捷键") {
+                LabeledContent("打开设置") {
+                    Text("⌃⌥N")
+                        .accessibilityLabel("Control Option N")
+                }
+                if case .failed(let message) = settingsShortcut.status {
+                    Text(message)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("重试注册") {
+                        settingsShortcut.start()
+                    }
+                }
             }
 
             Section("系统权限") {
@@ -26,7 +42,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 300)
+        .frame(width: 480, height: 400)
         .onAppear(perform: refreshPermission)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshPermission()

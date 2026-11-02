@@ -8,7 +8,10 @@ final class SettingsWindowControllerTests: XCTestCase {
         let suiteName = "nylai.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let controller = SettingsWindowController(preferences: AppPreferences(defaults: defaults))
+        let controller = SettingsWindowController(
+            preferences: AppPreferences(defaults: defaults),
+            settingsShortcut: SettingsShortcutController(openSettings: {})
+        )
         let window = try XCTUnwrap(controller.window)
         defer { controller.close() }
 

@@ -2,7 +2,7 @@
 
 所需，信手拈来。一个本地优先、轻量常驻的原生 macOS 效率工具。
 
-当前已完成基础工程：菜单栏入口、设置窗口、本地偏好和屏幕录制权限状态检查。全局快捷键与截图仅有接口，尚未实现。
+当前支持菜单栏入口、设置窗口、本地偏好、屏幕录制权限状态检查，以及固定全局快捷键 `⌃⌥N` 呼出设置。截图仅有接口，尚未实现。
 
 ## 开发环境
 
@@ -14,7 +14,7 @@
 
 1. 用 Xcode 打开 `nylai.xcodeproj`。
 2. 选择 `nylai` scheme、`My Mac`，按 `⌘R`。
-3. 点击菜单栏叠层图标 →「设置…」。应用不显示 Dock 图标，关闭设置后继续常驻；通过菜单栏「退出 nylai」退出。
+3. 点击菜单栏叠层图标 →「设置…」，或在其他应用中按 `Control + Option + N`。应用不显示 Dock 图标，关闭设置后继续常驻；通过菜单栏「退出 nylai」退出。
 
 工程默认使用本地 ad-hoc 签名，无需开发者会员或 Development Team，不启用 App Sandbox。此签名用于本机开发，不代表已可供外部用户直接安装。
 
@@ -26,6 +26,8 @@ xcodebuild -project nylai.xcodeproj -scheme nylai -configuration Debug -derivedD
 open build/Build/Products/Debug/nylai.app
 ```
 
+快捷键启动时注册，退出时注销。若注册失败会打开设置显示原因，可排除冲突后点击「重试注册」。目前使用物理 N 键位置，尚不支持自定义录入和键盘布局转换；占用检测以系统 API 返回结果为准。
+
 设置立即保存到应用专属的 UserDefaults。启动和设置界面不主动申请屏幕录制、辅助功能或输入监控权限；权限页面仅检查屏幕录制状态并提供系统设置入口。
 
 ## 工程结构
@@ -36,12 +38,12 @@ nylai/
   App/                      进程生命周期、菜单栏
   Features/
     Settings/               SwiftUI 设置及窗口管理
-    GlobalShortcuts/        快捷键模型、注册接口
+    GlobalShortcuts/        系统快捷键注册、设置呼出及状态管理
     Screenshot/             显示器截图接口
   Shared/
     Preferences/            本地偏好
     Permissions/            系统权限状态与设置入口
-nylaiTests/                 偏好存储与窗口生命周期测试
+nylaiTests/                 偏好、快捷键注册及窗口生命周期测试
 ```
 
 设计与阶段计划见 [ARCHITECTURE.md](ARCHITECTURE.md)、[ROADMAP.md](ROADMAP.md)。

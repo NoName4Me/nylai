@@ -4,16 +4,31 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let preferences = AppPreferences()
     private var statusBarController: StatusBarController?
-    private lazy var settingsWindowController = SettingsWindowController(preferences: preferences)
+    private lazy var settingsShortcut = SettingsShortcutController { [weak self] in
+        self?.showSettings()
+    }
+    private lazy var settingsWindowController = SettingsWindowController(
+        preferences: preferences, settingsShortcut: settingsShortcut
+    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu()
         statusBarController = StatusBarController { [weak self] in
             self?.showSettings()
         }
-        if preferences.showSettingsOnLaunch {
+        settingsShortcut.start()
+        if preferences.showSettingsOnLaunch || shortcutRegistrationFailed {
             showSettings()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        settingsShortcut.stop()
+    }
+
+    private var shortcutRegistrationFailed: Bool {
+        if case .failed = settingsShortcut.status { return true }
+        return false
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

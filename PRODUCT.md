@@ -16,7 +16,7 @@
 
 ## Product Purpose
 
-轻量整合常用生产力工具；本轮仅初始化可运行基础工程。
+轻量整合常用生产力工具；从可运行基础工程开始，当前增量开发固定全局快捷键。
 
 ## Capabilities and Constraints
 
