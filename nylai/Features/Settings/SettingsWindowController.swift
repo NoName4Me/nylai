@@ -3,12 +3,12 @@ import SwiftUI
 
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    init(preferences: AppPreferences, settingsShortcut: SettingsShortcutController) {
-        let hostingController = NSHostingController(rootView: SettingsView(preferences: preferences, settingsShortcut: settingsShortcut))
+    init(preferences: AppPreferences, settingsShortcut: GlobalShortcutController, screenshotShortcut: GlobalShortcutController) {
+        let hostingController = NSHostingController(rootView: SettingsView(preferences: preferences, settingsShortcut: settingsShortcut, screenshotShortcut: screenshotShortcut))
         let window = NSWindow(contentViewController: hostingController)
         window.title = "nylai 设置"
         window.styleMask = [.titled, .closable, .miniaturizable]
-        window.setContentSize(NSSize(width: 480, height: 400))
+        window.setContentSize(NSSize(width: 480, height: 440))
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.center()

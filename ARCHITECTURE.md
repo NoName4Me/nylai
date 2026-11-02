@@ -14,14 +14,20 @@ AppKit 的 `NSStatusItem` / `NSMenu` 管理菜单栏，`NSWindowController` 托�
 - `AppDelegate`：持有共享偏好、菜单栏、快捷键控制器和懒加载设置窗口；启动注册快捷键，退出注销；关闭设置不退出，重复启动打开设置。
 - `StatusBarController`：仅负责菜单入口与动作转发。
 - `Features/Settings`：原生表单、设置窗口复用、权限展示。当前唯一持久化选项是「打开应用时显示设置」。
-- `Features/GlobalShortcuts`：`CarbonGlobalShortcutRegistrar` 实现注册/注销协议，`SettingsShortcutController` 管理固定 `⌃⌥N` 的状态、重试和设置动作。使用 `RegisterEventHotKey` 独占注册；重复注册和系统占用返回明确错误。Carbon 事件回调按签名及进程内唯一 ID 路由，各注册器不会误消费其他注册器的事件。
-- `Features/Screenshot`：按显示器 ID 异步返回 `CGImage` 的协议，无实现。未来适配 ScreenCaptureKit；区域选择和编辑不属于当前接口承诺。
+- `Features/GlobalShortcuts`：`CarbonGlobalShortcutRegistrar` 实现注册/注销协议，通用 `GlobalShortcutController` 分别管理 `⌃⌥N`（设置）与 `⌃⌥S`（截图）的状态、重试和动作。使用 `RegisterEventHotKey` 独占注册；重复注册和系统占用返回明确错误。Carbon 事件回调按签名及进程内唯一 ID 路由，各注册器不会误消费其他注册器的事件。
+- `Features/Screenshot`：`ScreenCaptureService` 实现按显示器 ID 返回 `CGImage` 的接口；`ScreenshotController` 编排主显示器捕获、保存、并发保护与错误反馈；`PNGScreenshotSaver` 管理系统保存面板；`PNGImageWriter` actor 执行 PNG 编码和原子写入。
 - `Shared/Preferences`：注入式 UserDefaults，便于隔离测试。
-- `Shared/Permissions`：按能力逐步增加权限支持，当前只做屏幕录制预检查和系统设置跳转，不主动申请权限。
+- `Shared/Permissions`：按能力逐步增加权限支持，启动及设置界面只做屏幕录制预检查；用户主动截图时才请求权限。拒绝或撤销后的错误提供系统设置入口。
 
 快捷键注册、注销和事件处理也限制在主线程。退出显式清理；注册器释放时将清理任务交给主线程，并保留 C 回调上下文直到移除 handler。注册失败且无有效快捷键时也移除 handler。系统注册 API 无法穷尽识别第三方基于原始键盘监听实现的快捷键；后续自定义录入时另行处理系统保留组合与布局显示。
 
-UI 和窗口生命周期限制在主线程。后续截图编码、文件写入等耗时工作应离开主线程，明确取消和错误处理，避免不必要的后台计时器。
+UI、窗口生命周期及捕获编排限制在主线程；ScreenCaptureKit 使用异步 API。PNG 编码与文件写入由独立 actor 处理。取消检查覆盖捕获前后及写入前；用户取消保存不视为错误。捕获任务完成后释放图片，不维持录屏流或后台计时器。
+
+## 截图约定
+
+默认捕获 `CGMainDisplayID()`，使用 `SCShareableContent` 查找对应显示器，再构造排除本应用的内容过滤器。输出宽高取过滤器 `contentRect × pointPixelScale`，保留 Retina 像素比例；不包含鼠标，显式输出标准 sRGB / BGRA。
+
+图片捕获在保存面板打开之前完成，避免把面板拍入；菜单栏动作先关闭菜单跟踪。文件经 ImageIO 编码为 PNG，再以原子写入提交；取消面板不创建图片文件。全程保持单任务，退出取消未完成任务。系统返回拒绝授权时统一显示权限恢复入口，其他捕获及磁盘错误保留具体原因。
 
 ## 公共能力与数据
 
@@ -29,7 +35,7 @@ UI 和窗口生命周期限制在主线程。后续截图编码、文件写入�
 
 简单偏好用 UserDefaults；后续如有历史记录，优先在 Application Support 下存储，图片由文件管理。只有查询规模和一致性需求明确后再选择 SQLite / SwiftData；敏感凭据如有需求使用 Keychain。
 
-当前不采集遥测、不访问网络、不保存屏幕内容。未来仅在用户触发相关功能时申请必要权限；权限拒绝或撤销必须提供恢复路径。普通快捷键是否需要辅助功能取决于实现，不能一律要求授权。
+当前不采集遥测、不访问网络。截图先保存在内存，用户确认保存后才写入选择的本地位置。仅在用户触发截图时请求屏幕录制权限；拒绝或撤销时提供恢复路径。普通快捷键是否需要辅助功能取决于实现，不能一律要求授权。
 
 ## 开发与发布
 

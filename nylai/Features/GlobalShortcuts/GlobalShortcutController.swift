@@ -1,32 +1,33 @@
-import Carbon
 import Observation
 
 @MainActor
 @Observable
-final class SettingsShortcutController {
+final class GlobalShortcutController {
     enum Status: Equatable {
         case inactive
         case registered
         case failed(String)
     }
 
-    static let shortcut = GlobalShortcut(keyCode: UInt32(kVK_ANSI_N), modifiers: [.control, .option])
+    let shortcut: GlobalShortcut
     private let registrar: any GlobalShortcutRegistering
-    private let openSettings: @MainActor () -> Void
+    private let action: @MainActor () -> Void
     private(set) var status: Status = .inactive
 
     init(
+        shortcut: GlobalShortcut,
         registrar: any GlobalShortcutRegistering = CarbonGlobalShortcutRegistrar(),
-        openSettings: @escaping @MainActor () -> Void
+        action: @escaping @MainActor () -> Void
     ) {
+        self.shortcut = shortcut
         self.registrar = registrar
-        self.openSettings = openSettings
+        self.action = action
     }
 
     func start() {
         guard status != .registered else { return }
         do {
-            try registrar.register(Self.shortcut, action: openSettings)
+            try registrar.register(shortcut, action: action)
             status = .registered
         } catch {
             status = .failed(error.localizedDescription)

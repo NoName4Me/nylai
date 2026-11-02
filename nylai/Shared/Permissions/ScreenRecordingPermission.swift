@@ -8,6 +8,11 @@ enum ScreenRecordingPermission {
         CGPreflightScreenCaptureAccess()
     }
 
+    // 仅由用户主动触发截图的路径调用。
+    static func requestAccessIfNeeded() -> Bool {
+        isGranted || CGRequestScreenCaptureAccess()
+    }
+
     @discardableResult
     static func openSystemSettings() -> Bool {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else {

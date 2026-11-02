@@ -10,7 +10,8 @@ final class SettingsWindowControllerTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let controller = SettingsWindowController(
             preferences: AppPreferences(defaults: defaults),
-            settingsShortcut: SettingsShortcutController(openSettings: {})
+            settingsShortcut: GlobalShortcutController(shortcut: .openSettings, action: {}),
+            screenshotShortcut: GlobalShortcutController(shortcut: .captureMainDisplay, action: {})
         )
         let window = try XCTUnwrap(controller.window)
         defer { controller.close() }

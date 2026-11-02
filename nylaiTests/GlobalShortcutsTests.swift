@@ -79,7 +79,7 @@ final class GlobalShortcutsTests: XCTestCase {
         let registrar = StubRegistrar()
         registrar.error = .occupied
         var invocations = 0
-        let controller = SettingsShortcutController(registrar: registrar) { invocations += 1 }
+        let controller = GlobalShortcutController(shortcut: .openSettings, registrar: registrar) { invocations += 1 }
 
         controller.start()
         guard case .failed(let message) = controller.status else {
@@ -91,7 +91,7 @@ final class GlobalShortcutsTests: XCTestCase {
         controller.start()
         XCTAssertEqual(controller.status, .registered)
         XCTAssertEqual(registrar.registrationAttempts, 2)
-        XCTAssertEqual(registrar.shortcut, SettingsShortcutController.shortcut)
+        XCTAssertEqual(registrar.shortcut, GlobalShortcut.openSettings)
         registrar.action?()
         XCTAssertEqual(invocations, 1)
         controller.stop()

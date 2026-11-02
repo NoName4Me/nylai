@@ -3,7 +3,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var preferences: AppPreferences
-    var settingsShortcut: SettingsShortcutController
+    var settingsShortcut: GlobalShortcutController
+    var screenshotShortcut: GlobalShortcutController
     @State private var screenRecordingGranted = false
     @State private var showSettingsError = false
 
@@ -14,18 +15,8 @@ struct SettingsView: View {
             }
 
             Section("全局快捷键") {
-                LabeledContent("打开设置") {
-                    Text("⌃⌥N")
-                        .accessibilityLabel("Control Option N")
-                }
-                if case .failed(let message) = settingsShortcut.status {
-                    Text(message)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button("重试注册") {
-                        settingsShortcut.start()
-                    }
-                }
+                shortcutRow("打开设置", keys: "⌃⌥N", accessibilityLabel: "Control Option N", controller: settingsShortcut)
+                shortcutRow("截取主显示器", keys: "⌃⌥S", accessibilityLabel: "Control Option S", controller: screenshotShortcut)
             }
 
             Section("系统权限") {
@@ -42,7 +33,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 400)
+        .frame(width: 480, height: 440)
         .onAppear(perform: refreshPermission)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshPermission()
@@ -51,6 +42,19 @@ struct SettingsView: View {
             Button("好", role: .cancel) {}
         } message: {
             Text("请前往系统设置 → 隐私与安全性 → 屏幕录制。")
+        }
+    }
+
+    @ViewBuilder
+    private func shortcutRow(_ title: String, keys: String, accessibilityLabel: String, controller: GlobalShortcutController) -> some View {
+        LabeledContent(title) {
+            Text(keys).accessibilityLabel(accessibilityLabel)
+        }
+        if case .failed(let message) = controller.status {
+            Text(message)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("重试注册") { controller.start() }
         }
     }
 

@@ -16,7 +16,7 @@
 
 ## Product Purpose
 
-轻量整合常用生产力工具；从可运行基础工程开始，当前增量开发固定全局快捷键。
+轻量整合常用生产力工具；从可运行基础工程开始，当前支持固定全局快捷键和主显示器 PNG 截图。
 
 ## Capabilities and Constraints
 

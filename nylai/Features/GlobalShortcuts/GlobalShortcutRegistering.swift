@@ -1,6 +1,10 @@
 import AppKit
+import Carbon
 
 struct GlobalShortcut: Equatable {
+    static let openSettings = GlobalShortcut(keyCode: UInt32(kVK_ANSI_N), modifiers: [.control, .option])
+    static let captureMainDisplay = GlobalShortcut(keyCode: UInt32(kVK_ANSI_S), modifiers: [.control, .option])
+
     let keyCode: UInt32
     let modifiers: NSEvent.ModifierFlags
 }
