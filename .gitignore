@@ -1,0 +1,8 @@
+# Xcode / local builds
+.DS_Store
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcresult
+.impeccable/review/
