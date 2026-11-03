@@ -1,78 +1,166 @@
 import AppKit
 import ImageIO
+import ScreenCaptureKit
 import UniformTypeIdentifiers
 import XCTest
 @testable import nylai
 
 final class ScreenshotTests: XCTestCase {
     @MainActor
-    func testDeniedPermissionDoesNotAttemptCaptureOrSave() async {
-        let saver = StubScreenshotSaver()
-        var errors: [Error] = []
-        let controller = ScreenshotController(
-            capturer: ScreenCaptureService(requestAccess: { false }), saver: saver,
-            presentError: { errors.append($0) }
+    func testSuccessfulCaptureDoesNotRequestPermission() async throws {
+        var requestCount = 0
+        let recovery = ScreenCapturePermissionRecovery(
+            isAccessGranted: { false },
+            requestAccess: {
+                requestCount += 1
+                return true
+            }
         )
-        await controller.captureMainDisplay()
-        XCTAssertEqual(errors.first as? ScreenshotError, .permissionRequired)
-        XCTAssertEqual(saver.calls, 0)
-        XCTAssertFalse(controller.isBusy)
+
+        let value = try await recovery.perform { 42 }
+
+        XCTAssertEqual(value, 42)
+        XCTAssertEqual(requestCount, 0)
     }
 
     @MainActor
-    func testSaveCancellationIsSilentAndAllowsNextCapture() async throws {
-        let capturer = StubScreenCapturer(image: try makeImage())
-        let saver = StubScreenshotSaver()
-        var errors: [Error] = []
-        let controller = ScreenshotController(capturer: capturer, saver: saver, presentError: { errors.append($0) })
-        await controller.captureMainDisplay()
-        await controller.captureMainDisplay()
-        XCTAssertEqual(capturer.displayIDs, [CGMainDisplayID(), CGMainDisplayID()])
-        XCTAssertEqual(saver.calls, 2)
-        XCTAssertTrue(errors.isEmpty)
-        XCTAssertFalse(controller.isBusy)
-    }
+    func testPermissionFailureRequestsAccessAndRetriesOnce() async throws {
+        var requestCount = 0
+        var operationCount = 0
+        let recovery = ScreenCapturePermissionRecovery(
+            isAccessGranted: { false },
+            requestAccess: {
+                requestCount += 1
+                return true
+            }
+        )
 
-    @MainActor
-    func testWriteFailureIsReportedAndDoesNotLeaveControllerBusy() async throws {
-        let capturer = StubScreenCapturer(image: try makeImage())
-        let saver = StubScreenshotSaver()
-        saver.error = CocoaError(.fileWriteNoPermission)
-        var errors: [Error] = []
-        let controller = ScreenshotController(capturer: capturer, saver: saver, presentError: { errors.append($0) })
-        await controller.captureMainDisplay()
-        XCTAssertEqual((errors.first as? CocoaError)?.code, .fileWriteNoPermission)
-        XCTAssertFalse(controller.isBusy)
-        saver.error = nil
-        await controller.captureMainDisplay()
-        XCTAssertEqual(saver.calls, 2)
-        XCTAssertEqual(errors.count, 1)
-    }
-
-    @MainActor
-    func testConcurrentTriggerDoesNotCreateAnotherCaptureAndCancelledTaskDoesNotSave() async throws {
-        let capturer = SuspendedScreenCapturer()
-        let saver = StubScreenshotSaver()
-        var errors: [Error] = []
-        let controller = ScreenshotController(capturer: capturer, saver: saver, presentError: { errors.append($0) })
-        let first = Task { await controller.captureMainDisplay() }
-        // 等待捕获调用进入受控挂起点，不访问真实屏幕或申请系统权限。
-        for _ in 0..<100 where capturer.continuation == nil {
-            try await Task.sleep(for: .milliseconds(1))
+        let value = try await recovery.perform {
+            operationCount += 1
+            if operationCount == 1 {
+                throw NSError(
+                    domain: SCStreamErrorDomain,
+                    code: SCStreamError.Code.userDeclined.rawValue
+                )
+            }
+            return 42
         }
-        guard let continuation = capturer.continuation else {
-            first.cancel()
-            return XCTFail("未进入截图流程")
+
+        XCTAssertEqual(value, 42)
+        XCTAssertEqual(operationCount, 2)
+        XCTAssertEqual(requestCount, 1)
+    }
+
+    @MainActor
+    func testDeniedPermissionStopsWithoutRetryingCapture() async {
+        var requestCount = 0
+        var operationCount = 0
+        let recovery = ScreenCapturePermissionRecovery(
+            isAccessGranted: { false },
+            requestAccess: {
+                requestCount += 1
+                return false
+            }
+        )
+
+        do {
+            _ = try await recovery.perform {
+                operationCount += 1
+                throw NSError(
+                    domain: SCStreamErrorDomain,
+                    code: SCStreamError.Code.userDeclined.rawValue
+                )
+            }
+            XCTFail("拒绝权限后不应返回结果")
+        } catch {
+            XCTAssertEqual(error as? ScreenshotError, .permissionRequired)
         }
-        XCTAssertTrue(controller.isBusy)
-        await controller.captureMainDisplay()
-        XCTAssertEqual(capturer.calls, 1)
-        first.cancel()
-        continuation.resume(returning: try makeImage())
-        await first.value
-        XCTAssertEqual(saver.calls, 0)
-        XCTAssertTrue(errors.isEmpty)
-        XCTAssertFalse(controller.isBusy)
+
+        XCTAssertEqual(operationCount, 1)
+        XCTAssertEqual(requestCount, 1)
+    }
+
+    @MainActor
+    func testGrantedButStalePermissionRequiresRestartWithoutRequestingAgain() async {
+        var requestCount = 0
+        var operationCount = 0
+        let recovery = ScreenCapturePermissionRecovery(
+            isAccessGranted: { true },
+            requestAccess: {
+                requestCount += 1
+                return true
+            }
+        )
+
+        do {
+            _ = try await recovery.perform {
+                operationCount += 1
+                throw NSError(
+                    domain: SCStreamErrorDomain,
+                    code: SCStreamError.Code.userDeclined.rawValue
+                )
+            }
+            XCTFail("权限缓存未生效时不应返回结果")
+        } catch {
+            XCTAssertEqual(error as? ScreenshotError, .permissionRestartRequired)
+        }
+
+        XCTAssertEqual(operationCount, 1)
+        XCTAssertEqual(requestCount, 0)
+    }
+
+    @MainActor
+    func testNewlyGrantedPermissionStillFailsRequiresRestart() async {
+        var requestCount = 0
+        var operationCount = 0
+        var granted = false
+        let recovery = ScreenCapturePermissionRecovery(
+            isAccessGranted: { granted },
+            requestAccess: {
+                requestCount += 1
+                granted = true
+                return true
+            }
+        )
+
+        do {
+            _ = try await recovery.perform {
+                operationCount += 1
+                throw NSError(
+                    domain: SCStreamErrorDomain,
+                    code: SCStreamError.Code.userDeclined.rawValue
+                )
+            }
+            XCTFail("授权后当前进程仍失败时应要求重启")
+        } catch {
+            XCTAssertEqual(error as? ScreenshotError, .permissionRestartRequired)
+        }
+
+        XCTAssertEqual(operationCount, 2)
+        XCTAssertEqual(requestCount, 1)
+    }
+
+    @MainActor
+    func testNonPermissionFailureDoesNotRequestAccess() async {
+        var requestCount = 0
+        let recovery = ScreenCapturePermissionRecovery(
+            isAccessGranted: { false },
+            requestAccess: {
+                requestCount += 1
+                return true
+            }
+        )
+
+        do {
+            _ = try await recovery.perform {
+                throw ScreenshotError.displayUnavailable
+            }
+            XCTFail("非权限错误不应被当作授权失败")
+        } catch {
+            XCTAssertEqual(error as? ScreenshotError, .displayUnavailable)
+        }
+
+        XCTAssertEqual(requestCount, 0)
     }
 
     func testPNGFilePreservesPixelDimensionsAndCanBeDecoded() async throws {
@@ -109,40 +197,4 @@ private func makeImage() throws -> CGImage {
     context.setFillColor(CGColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1))
     context.fill(CGRect(x: 0, y: 0, width: 32, height: 16))
     return try XCTUnwrap(context.makeImage())
-}
-
-@MainActor
-private final class StubScreenCapturer: ScreenCapturing {
-    let image: CGImage
-    var displayIDs: [CGDirectDisplayID] = []
-
-    init(image: CGImage) { self.image = image }
-
-    func captureDisplay(_ displayID: CGDirectDisplayID) async throws -> CGImage {
-        displayIDs.append(displayID)
-        return image
-    }
-}
-
-@MainActor
-private final class SuspendedScreenCapturer: ScreenCapturing {
-    var calls = 0
-    var continuation: CheckedContinuation<CGImage, Error>?
-
-    func captureDisplay(_ displayID: CGDirectDisplayID) async throws -> CGImage {
-        calls += 1
-        return try await withCheckedThrowingContinuation { continuation = $0 }
-    }
-}
-
-@MainActor
-private final class StubScreenshotSaver: ScreenshotSaving {
-    var calls = 0
-    var error: Error?
-
-    func save(_ image: CGImage) async throws -> URL? {
-        calls += 1
-        if let error { throw error }
-        return nil
-    }
 }

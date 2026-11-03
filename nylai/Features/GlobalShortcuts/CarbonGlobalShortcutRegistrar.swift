@@ -6,24 +6,37 @@ import Carbon
 final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
     private let state = RegistrationState()
 
-    func register(_ shortcut: GlobalShortcut, action: @escaping @MainActor () -> Void) throws {
+    func register(
+        _ shortcut: ShortcutKey,
+        action: @escaping @MainActor () -> Void
+    ) throws -> GlobalShortcutRegistrationToken {
         try state.register(shortcut, action: action)
     }
 
-    func unregisterAll() {
-        state.unregisterAll()
+    func unregister(_ token: GlobalShortcutRegistrationToken) throws {
+        try state.unregister(token)
+    }
+
+    func unregisterAll() throws {
+        try state.unregisterAll()
     }
 
     deinit {
         // 保持 C 回调上下文存活，直到在主线程移除 handler 和所有注册。
         let state = state
-        Task { @MainActor in state.unregisterAll() }
+        Task { @MainActor in
+            do {
+                try state.unregisterAll()
+            } catch {
+                // 析构期间没有 UI 可报告，下一次注册会由系统返回实际状态。
+            }
+        }
     }
 
     @MainActor
     private final class RegistrationState {
         private struct Registration {
-            let shortcut: GlobalShortcut
+            let shortcut: ShortcutKey
             let reference: EventHotKeyRef
             let action: @MainActor () -> Void
         }
@@ -32,12 +45,16 @@ final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
         private static var nextID: UInt32 = 1
         private var handler: EventHandlerRef?
         private var registrations: [UInt32: Registration] = [:]
+        private var tokensByID: [UInt32: GlobalShortcutRegistrationToken] = [:]
+        private var idsByToken: [GlobalShortcutRegistrationToken: UInt32] = [:]
 
-        func register(_ shortcut: GlobalShortcut, action: @escaping @MainActor () -> Void) throws {
-            let supported: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+        func register(
+            _ shortcut: ShortcutKey,
+            action: @escaping @MainActor () -> Void
+        ) throws -> GlobalShortcutRegistrationToken {
             guard shortcut.keyCode <= 127,
                   !shortcut.modifiers.isEmpty,
-                  shortcut.modifiers.subtracting(supported).isEmpty else {
+                  shortcut.modifiers.subtracting(.supported).isEmpty else {
                 throw GlobalShortcutError.invalidShortcut
             }
             guard !registrations.values.contains(where: { $0.shortcut == shortcut }) else {
@@ -57,21 +74,54 @@ final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
                 &reference
             )
             guard result == noErr, let reference else {
-                if registrations.isEmpty { removeHandler() }
+                if registrations.isEmpty { try? removeHandler() }
                 if result == OSStatus(eventHotKeyExistsErr) {
                     throw GlobalShortcutError.occupied
                 }
                 throw GlobalShortcutError.systemFailure(result)
             }
+            let token = GlobalShortcutRegistrationToken()
             registrations[id] = Registration(shortcut: shortcut, reference: reference, action: action)
+            tokensByID[id] = token
+            idsByToken[token] = id
+            return token
         }
 
-        func unregisterAll() {
-            for registration in registrations.values {
-                UnregisterEventHotKey(registration.reference)
+        func unregister(_ token: GlobalShortcutRegistrationToken) throws {
+            guard let id = idsByToken[token], let registration = registrations[id] else {
+                throw GlobalShortcutError.registrationNotFound
             }
-            registrations.removeAll()
-            removeHandler()
+            let result = UnregisterEventHotKey(registration.reference)
+            guard result == noErr else {
+                throw GlobalShortcutError.systemFailure(result)
+            }
+            registrations[id] = nil
+            idsByToken[token] = nil
+            tokensByID[id] = nil
+            if registrations.isEmpty {
+                try removeHandler()
+            }
+        }
+
+        func unregisterAll() throws {
+            var firstFailure: GlobalShortcutError?
+            for token in Array(idsByToken.keys) {
+                do {
+                    try unregister(token)
+                } catch let error as GlobalShortcutError {
+                    if firstFailure == nil { firstFailure = error }
+                } catch {
+                    if firstFailure == nil {
+                        firstFailure = .systemFailure(OSStatus(eventNotHandledErr))
+                    }
+                }
+            }
+            if registrations.isEmpty {
+                try removeHandler()
+            }
+            if let firstFailure {
+                throw firstFailure
+            }
         }
 
         private func installHandlerIfNeeded() throws {
@@ -95,8 +145,12 @@ final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
             guard result == noErr else { throw GlobalShortcutError.systemFailure(result) }
         }
 
-        private func removeHandler() {
-            if let handler { RemoveEventHandler(handler) }
+        private func removeHandler() throws {
+            guard let currentHandler = handler else { return }
+            let result = RemoveEventHandler(currentHandler)
+            guard result == noErr else {
+                throw GlobalShortcutError.systemFailure(result)
+            }
             handler = nil
         }
 
@@ -115,12 +169,12 @@ final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
             return noErr
         }
 
-        private func carbonModifiers(_ flags: NSEvent.ModifierFlags) -> UInt32 {
+        private func carbonModifiers(_ modifiers: ShortcutModifiers) -> UInt32 {
             var result: UInt32 = 0
-            if flags.contains(.command) { result |= UInt32(cmdKey) }
-            if flags.contains(.option) { result |= UInt32(optionKey) }
-            if flags.contains(.control) { result |= UInt32(controlKey) }
-            if flags.contains(.shift) { result |= UInt32(shiftKey) }
+            if modifiers.contains(.command) { result |= UInt32(cmdKey) }
+            if modifiers.contains(.option) { result |= UInt32(optionKey) }
+            if modifiers.contains(.control) { result |= UInt32(controlKey) }
+            if modifiers.contains(.shift) { result |= UInt32(shiftKey) }
             return result
         }
     }
@@ -129,6 +183,7 @@ final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
 enum GlobalShortcutError: LocalizedError, Equatable {
     case occupied
     case invalidShortcut
+    case registrationNotFound
     case systemFailure(OSStatus)
 
     var errorDescription: String? {
@@ -136,7 +191,9 @@ enum GlobalShortcutError: LocalizedError, Equatable {
         case .occupied:
             "快捷键已被占用，请关闭其他应用中的相同快捷键后重试。"
         case .invalidShortcut:
-            "快捷键无效，请使用 Command、Option、Control 或 Shift 修饰键。"
+            "快捷键无效，请使用 Command、Option、Control 或 Shift 修饰键及有效按键。"
+        case .registrationNotFound:
+            "快捷键注册已不存在，无法注销。"
         case .systemFailure(let status):
             "快捷键注册失败（\(status)），请重试。"
         }

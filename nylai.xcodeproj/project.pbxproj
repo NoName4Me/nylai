@@ -238,6 +238,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = nylai;
@@ -248,6 +249,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
+				OTHER_CODE_SIGN_FLAGS = "-r=designated\\ \\=\\>\\ identifier\\ \\\"com.noname4me.nylai\\\"";
 				PRODUCT_BUNDLE_IDENTIFIER = com.noname4me.nylai;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -271,6 +273,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
+				OTHER_CODE_SIGN_FLAGS = "-r=designated\\ \\=\\>\\ identifier\\ \\\"com.noname4me.nylai\\\"";
 				PRODUCT_BUNDLE_IDENTIFIER = com.noname4me.nylai;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};

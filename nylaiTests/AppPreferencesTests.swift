@@ -9,6 +9,12 @@ final class AppPreferencesTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         XCTAssertFalse(AppPreferences(defaults: defaults).showSettingsOnLaunch)
+        XCTAssertFalse(AppPreferences(defaults: defaults).screenshotHistoryEnabled)
+        let preferences = AppPreferences(defaults: defaults)
+        XCTAssertFalse(preferences.screenshotEnabled)
+        XCTAssertFalse(preferences.mouseGesturesEnabled)
+        XCTAssertFalse(preferences.clipboardEnabled)
+        XCTAssertFalse(preferences.windowSwitcherEnabled)
     }
 
     @MainActor
@@ -23,5 +29,18 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertTrue(restored.showSettingsOnLaunch)
         restored.showSettingsOnLaunch = false
         XCTAssertFalse(AppPreferences(defaults: defaults).showSettingsOnLaunch)
+
+        restored.screenshotHistoryEnabled = false
+        XCTAssertFalse(AppPreferences(defaults: defaults).screenshotHistoryEnabled)
+
+        restored.screenshotEnabled = false
+        restored.mouseGesturesEnabled = true
+        restored.clipboardEnabled = true
+        restored.windowSwitcherEnabled = true
+        let modules = AppPreferences(defaults: defaults)
+        XCTAssertFalse(modules.screenshotEnabled)
+        XCTAssertTrue(modules.mouseGesturesEnabled)
+        XCTAssertTrue(modules.clipboardEnabled)
+        XCTAssertTrue(modules.windowSwitcherEnabled)
     }
 }

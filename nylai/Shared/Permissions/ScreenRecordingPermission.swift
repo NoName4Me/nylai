@@ -20,4 +20,31 @@ enum ScreenRecordingPermission {
         }
         return NSWorkspace.shared.open(url)
     }
+
+    static func showApplicationInFinder() {
+        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+    }
+
+    // ScreenCaptureKit can keep a declined state for the lifetime of a process.
+    // Launch a fresh instance before terminating this one so a newly granted
+    // permission takes effect without asking the user to find the app manually.
+    @discardableResult
+    static func relaunchApplication() -> Bool {
+        let bundleURL = Bundle.main.bundleURL
+        guard bundleURL.pathExtension == "app" else { return false }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-n", bundleURL.path]
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            NSApp.terminate(nil)
+        }
+        return true
+    }
 }

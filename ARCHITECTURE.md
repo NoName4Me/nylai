@@ -1,52 +1,138 @@
 # 技术架构
 
+更新：2026-11-03。
+
 ## 选型
 
-采用 Swift 6 语言模式、SwiftUI 界面和 AppKit 生命周期，最低 macOS 14。该版本提供 Observation 和 ScreenCaptureKit 的静态截图 API，减少兼容分支；仍需在最低系统实机验证。
+- Swift 6 语言模式、SwiftUI + AppKit、Observation，最低 macOS 14。
+- 菜单栏、覆盖层、浮动图片、事件 tap 和窗口生命周期使用 AppKit；设置、历史、拼图和剪贴板面板使用 SwiftUI 或 SwiftUI + AppKit 桥接。
+- 单应用 target，按功能目录隔离；测试为独立 target。
+- 本地优先，无账号、后端、遥测、第三方运行时依赖或数据库。
+- JSON 配置与索引使用版本化结构和原子文件写入；大图片独立存放。
 
-AppKit 的 `NSStatusItem` / `NSMenu` 管理菜单栏，`NSWindowController` 托管 SwiftUI 设置界面。相比全 SwiftUI 的 `MenuBarExtra` / `Settings`，多几行桥接代码，但窗口激活、关闭后重开和菜单动作更直接可控。无需引入第三方菜单栏辅助库。
+## 生命周期
 
-单一应用 target，按目录隔离功能；测试独立 target。目前不拆 Swift Package、不引入插件系统、依赖注入框架、全局事件总线或持久化数据库。
+`AppDelegate` 是组合根，负责：
 
-## 运行方式与职责
+1. 创建偏好、快捷键运行服务、截图、手势、剪贴板和窗口切换模块。
+2. 将菜单、全局快捷键和手势统一路由到 `ShortcutAction`。
+3. 根据 `ModuleStateController` 的意愿变化启停实际服务和窗口。
+4. 在截图交互期间锁住设置、历史、拼图、剪贴板面板、应用切换和其他悬浮入口。
+5. 在退出时释放注册、事件 tap、轮询任务、覆盖层和置顶窗口。
 
-- `App/main.swift`：启动 accessory 应用；`LSUIElement` 隐藏 Dock 图标。
-- `AppDelegate`：持有共享偏好、菜单栏、快捷键控制器和懒加载设置窗口；启动注册快捷键，退出注销；关闭设置不退出，重复启动打开设置。
-- `StatusBarController`：仅负责菜单入口与动作转发。
-- `Features/Settings`：原生表单、设置窗口复用、权限展示。当前唯一持久化选项是「打开应用时显示设置」。
-- `Features/GlobalShortcuts`：`CarbonGlobalShortcutRegistrar` 实现注册/注销协议，通用 `GlobalShortcutController` 分别管理 `⌃⌥N`（设置）与 `⌃⌥S`（截图）的状态、重试和动作。使用 `RegisterEventHotKey` 独占注册；重复注册和系统占用返回明确错误。Carbon 事件回调按签名及进程内唯一 ID 路由，各注册器不会误消费其他注册器的事件。
-- `Features/Screenshot`：`ScreenCaptureService` 实现按显示器 ID 返回 `CGImage` 的接口；`ScreenshotController` 编排主显示器捕获、保存、并发保护与错误反馈；`PNGScreenshotSaver` 管理系统保存面板；`PNGImageWriter` actor 执行 PNG 编码和原子写入。
-- `Shared/Preferences`：注入式 UserDefaults，便于隔离测试。
-- `Shared/Permissions`：按能力逐步增加权限支持，启动及设置界面只做屏幕录制预检查；用户主动截图时才请求权限。拒绝或撤销后的错误提供系统设置入口。
+`ModuleStateController` 把持久化的开启意愿与 `ModuleRuntimeStatus` 分开：
 
-快捷键注册、注销和事件处理也限制在主线程。退出显式清理；注册器释放时将清理任务交给主线程，并保留 C 回调上下文直到移除 handler。注册失败且无有效快捷键时也移除 handler。系统注册 API 无法穷尽识别第三方基于原始键盘监听实现的快捷键；后续自定义录入时另行处理系统保留组合与布局显示。
+- 截图、鼠标手势、剪贴板、窗口切换偏好在 `AppPreferences`；全局快捷键沿用绑定配置中的唯一总开关。
+- `off`、`available`、`starting`、`running`、`failed` 表示实际运行状态。
+- 关闭操作幂等，释放资源但不删除绑定、历史或配置。
+- 目标模块关闭时，键盘入口释放系统键位但保留绑定；菜单和手势查询同一可用性规则。
 
-UI、窗口生命周期及捕获编排限制在主线程；ScreenCaptureKit 使用异步 API。PNG 编码与文件写入由独立 actor 处理。取消检查覆盖捕获前后及写入前；用户取消保存不视为错误。捕获任务完成后释放图片，不维持录屏流或后台计时器。
+## 全局快捷键
 
-## 截图约定
+- `CarbonGlobalShortcutRegistrar` 使用 `RegisterEventHotKey` 独占注册，返回不透明 token，支持单项注销和全部注销。
+- `ShortcutBindingStore` 负责版本 8 配置及旧版本迁移。
+- `ShortcutBindingRuntime` 是唯一注册协调层：负责录入期间暂停、单项替换、失败回滚、总开关、逐项状态和动作分发。
+- `ApplicationShortcutHandler` 管理系统文件选择器记录的应用目标，执行启动、后台激活、前台隐藏和并发启动合并。
+- 键盘、菜单和鼠标手势共享动作可用性；目标模块关闭时不执行动作。
 
-默认捕获 `CGMainDisplayID()`，使用 `SCShareableContent` 查找对应显示器，再构造排除本应用的内容过滤器。输出宽高取过滤器 `contentRect × pointPixelScale`，保留 Retina 像素比例；不包含鼠标，显式输出标准 sRGB / BGRA。
+## 截图与标注
 
-图片捕获在保存面板打开之前完成，避免把面板拍入；菜单栏动作先关闭菜单跟踪。文件经 ImageIO 编码为 PNG，再以原子写入提交；取消面板不创建图片文件。全程保持单任务，退出取消未完成任务。系统返回拒绝授权时统一显示权限恢复入口，其他捕获及磁盘错误保留具体原因。
+- `ScreenCaptureService` 使用 ScreenCaptureKit 捕获显示器、枚举前后顺序窗口并独立捕获目标窗口。
+- `ScreenshotOverlayController` 管理单一冻结覆盖层、目标命中、窗口源切换、输出任务和错误恢复。
+- `ScreenshotSession` 管理选择、编辑、输出状态、原图像素选区、标注集合、输出外观和撤销／重做；圆角拖动也是可撤销的会话事务。
+- `ScreenshotGeometry` 集中转换 AppKit 全局屏幕坐标、窗口局部坐标和原图左上角像素坐标。
+- `SelectionGeometry` 负责选区八向缩放、标注四角等比缩放、圆角拖点与两组工具栏的相互避让；`ScreenshotAnnotationGeometry` 负责对象视图映射。
+- `NylaiIcon` 提供无第三方运行时依赖的统一内嵌 SVG 图标；底部工具栏承载标注与阴影，右侧工具栏承载选区、标注选择、编辑历史、滚动和输出，图标按钮通过提示文本说明动作。
+- `ScreenshotColorPicker` 是截图专用颜色弹层：左侧常用色阶，右侧饱和度／亮度、色相和 HEX 输入，不使用系统颜色面板。
+- `ScreenshotMagnifierLayout` 固定正方形采样区域和紧凑内边距，放大镜背景、文字和边框跟随应用明暗外观。
+- 标注工具包括矩形、椭圆、直线、箭头、画笔、文字、步骤和马赛克。预览和导出复用同一对象模型、路径和像素渲染器。
+- `ScreenshotOutputRenderer` 统一执行「源图裁切 → 标注 → 圆角 → 阴影扩边」，复制、保存、置顶、历史和长图都使用合成结果。
+- PNG 编码和用户文件写入由独立 actor 执行；取消保存、写入失败和历史上报失败不会丢失现有编辑会话。
 
-## 公共能力与数据
+窗口与整屏属于同一目标序列：窗口优先，当前显示器作为空白处兜底。窗口截图使用 `SCContentFilter(desktopIndependentWindow:)`，不是裁切显示器画面。截图覆盖层、工具栏和置顶窗口不进入捕获结果。
 
-共享能力随已确认需求增量建立；功能通过小接口访问系统，不互相依赖内部 UI。不提前实现模块管理器或通用权限框架。快捷键配置和截图编辑已进入后续规划，尚未实现；具体边界见 [需求规格](docs/REQUIREMENTS.md) 与 [开发计划](docs/DEVELOPMENT_PLAN.md)。
+## 置顶、历史与拼图
 
-简单偏好用 UserDefaults；后续如有历史记录，优先在 Application Support 下存储，图片由文件管理。只有查询规模和一致性需求明确后再选择 SQLite / SwiftData；敏感凭据如有需求使用 Keychain。
+- `PinnedImageManager` 管理多张独立浮动窗口；每张图有独立透明度，只影响显示，不影响复制和保存像素。
+- `ScreenshotHistoryStore` 在 Application Support 使用版本化索引、独立 PNG 和缩略图，最多 50 条；先写图片再原子提交索引，失败时回滚本次新增文件。
+- 主截图会话成功输出一次即结束；长图编辑器保持打开，但同一编辑会话最多记录一条历史。
+- `CollageDocument` 保存图片对象、层级、缩放与撤销历史；输出按外接边界和透明背景渲染，可再次进入最近截图。
+- 历史、置顶和拼图复制不回写自己的历史记录；若剪贴板模块开启，系统剪贴板监听可独立记录该次复制。
 
-当前不采集遥测、不访问网络。截图先保存在内存，用户确认保存后才写入选择的本地位置。仅在用户触发截图时请求屏幕录制权限；拒绝或撤销时提供恢复路径。普通快捷键是否需要辅助功能取决于实现，不能一律要求授权。
+## 滚动截图
 
-## 开发与发布
+- 滚动截图复用普通截图的选区与窗口来源；工具栏按钮或 `⌃⌘R` 把当前全局选区、显示器和目标应用交给 `ScrollCaptureController`，关闭截图覆盖层后恢复目标应用。
+- `ScrollCaptureController` 以固定显示器区域为采集源，以有界间隔抓取同一区域；选区边框由独立透明 HUD 保持不动。
+- `ScrollCaptureStitcher` 是独立 actor，在主线程外完成灰度匹配、画布扩容和预览生成；向下滚动追加新底部行，向上滚动把新顶部行插入画布开头，通过对比度、最佳／次佳差异和双向匹配拒绝重复帧、大跨度、模糊或无可靠重叠画面。
+- 帧数上限只计算有效拼接帧；重复帧不消耗额度。采集循环不重复激活目标应用，短暂不匹配继续等待后续帧。选区 HUD 只绘制滚动提示和左上角紧凑“完成”按钮；Enter 完成、Esc 取消，完成途中取消不会打开结果编辑器。
+- 拼接 HUD 使用 `ScrollPreviewLayoutSolver` 在选区右侧、左侧、下方、上方依次寻找空位，并避开目标窗口；侧边空间不足时先压缩预览尺寸，所有外部位置都无法容纳才悬浮在选区内部。
+- 预览把完整拼接图按 contain 比例缩放进固定预览区，长图增长时显示整幅结果，不只显示底部切片。
+- 默认上限 100 帧、4000 万像素；达到上限时保留已完成结果并进入编辑。
+- `LongScreenshotEditorWindowController` 使用原选区位置和尺寸的无边框窗口，画布可滚动缩放，复用普通截图的底部标注栏与右侧输出栏；隐藏选区调整和再次滚动截图入口，但保留标注、外观、缩放、复制、保存、置顶和取消。
+- 停止、取消、失败、模块关闭和应用退出都会取消任务、移除窗口和释放长图。
 
-不启用 App Sandbox；不添加未经实际需求验证的 entitlements。当前用 ad-hoc 签名本地运行，无开发者会员依赖。固定 bundle ID 为 `com.noname4me.nylai`；后续评估签名变化对系统权限识别的影响。
+## 鼠标手势
 
-面向 GitHub Releases，先完成可用小版本及许可证选择，再决定 Developer ID 签名、公证和安装包。未签名分发存在系统安装限制，不把本机成功运行视作外部分发验收。自动更新延后。
+- `MouseGestureConfigurationStore` 保存版本化规则、作用域、禁用名单和轨迹开关。
+- `GesturePathRecognizer` 将右键轨迹转换为 1～4 段方向，集中处理 12 点阈值、连续同向合并和超限拒绝。
+- `GestureRuleResolver` 按「应用禁用名单 > 应用专属规则 > 全局规则」解析；专属规则停用或目标不可用时不回落全局规则。
+- `CGEventTapMouseGestureMonitor` 在主运行循环安装主动事件 tap，只处理右键和 Esc；自生成鼠标／键盘事件带固定 user data 标记，避免回环。
+- 短右键通过带标记的合成 down/up 恢复原生菜单；有效手势执行一次动作且不弹菜单。
+- 手势开始时冻结目标应用和规则快照；切换应用、睡眠、超时、监听失败、模块关闭或截图独占时取消。
+- 事件发送由 `CGEventGestureShortcutSender` 完成，只发送一次按下／抬起组合键。
 
-## 原生 API 参考
+真实事件 tap、普通右键菜单恢复、不同应用兼容性和输入权限组合必须人工验证；状态机测试不能替代系统行为验证。
 
-- [NSStatusItem](https://developer.apple.com/documentation/appkit/nsstatusitem)
-- [SCScreenshotManager](https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager)
-- [RegisterEventHotKey](https://developer.apple.com/documentation/carbon/registereventhotkey(_:_:_:_:_:_:))
+## 剪贴板
 
-快捷键 API 的独占语义及线程约束以本机 macOS SDK 的 `HIToolbox.framework/Headers/CarbonEvents.h` 为依据；无需辅助功能或输入监控权限。
+- `SystemClipboardPasteboard` 封装 `NSPasteboard`，在 macOS 15.4+ 读取 `accessBehavior`。
+- `ClipboardMonitor` 每 500ms 检查 changeCount，变化后才读取；读取前后再次校验版本，最多在开启／唤醒时探测一次授权状态，失败后停止轮询。
+- 先检查 Concealed、Transient、AutoGenerated 和自写标记，再读取正文；来源由 `org.nspasteboard.source` 与观察时前台应用尽力推断，任一命中禁用名单即跳过。
+- 文本按 UTF-8 字节、图片按统一 RGBA 像素哈希去重；默认 200 条普通记录，置顶不受数量或天数清理影响。
+- `ClipboardHistoryStore` 使用版本化索引、独立正文和缩略图，原子提交；记录和清理在同一主线程顺序执行。
+- `ClipboardPanelController` 提供置顶／普通分组、搜索、键盘选择、复制、置顶、删除和直接粘贴。
+- `SystemClipboardDirectPaster` 保存初始目标，写入后激活并验证 bundle ID、进程、前台状态和 changeCount，再发送一次 `Command + V`。任一步不满足即停止并提示。
+
+macOS 不保证剪贴板来源身份可信。来源标记和前台应用只用于尽力过滤，不能承诺识别所有后台写入。
+
+## 窗口切换
+
+- `WindowSwitcherEventMonitor` 在主运行循环安装 HID 键盘事件 tap，只接管 `⌘Tab`、`⌘` 加反引号键及会话中的窗口导航键；会话结束、睡眠、模块关闭或退出时取消选择并关闭面板。
+- `WindowSwitcherCatalogProvider` 使用 `WindowCaptureService` 的前后台窗口顺序和当前屏幕范围构建应用分组。当前桌面普通窗口按应用分组，无窗口常规应用仍保留。
+- `WindowSwitcherSession` 是纯状态机，分别保存所选应用与窗口。`⌘Tab` 进入应用模式，直接 `⌘` 加反引号键进入当前应用窗口模式；排序在会话建立时冻结。
+- `WindowSwitcherController` 协调快速按下松键、连按、Shift 反向、Esc、截图与快捷键录入互斥，以及模块启停。快速确认不等待缩略图。
+- `WindowSwitcherPanelController` 使用不抢焦点的全屏 `NSPanel`；macOS 26 及以上使用 `NSGlassEffectView`，旧系统使用 HUD 模糊材质。应用热区和窗口卡片可直接点击，点击结果通过同一会话命令更新或确认选择。
+- `WindowSwitcherActivator` 使用公开 Accessibility API，在激活前按目标窗口 ID 对应的标题和 frame 定位 AX 窗口，再激活应用并聚焦、提升该窗口；无法精确定位时不退回错误窗口。
+
+窗口切换使用辅助功能权限和输入监控权限，并由屏幕录制权限提供缩略图。真实系统键抢占、权限撤销和指定窗口激活仍需人工验收。
+
+## 数据与权限
+
+- `UserDefaults`：通用偏好、模块意愿、截图历史开关。
+- `shortcut-bindings.json`：版本 8 快捷键配置。
+- `mouse-gestures.json`：手势规则和禁用名单。
+- `clipboard-settings.json`、`clipboard/`：剪贴板设置、索引和图片。
+- `ScreenshotHistory/`：最近截图索引、PNG 和缩略图。
+- 损坏或不支持版本的配置与索引保留原文件，不静默替换。
+
+权限按实际能力延迟请求：
+
+- ScreenCaptureKit：屏幕录制。
+- 主动鼠标事件 tap：辅助功能。
+- 窗口切换键盘 tap 与窗口激活：辅助功能、输入监控。
+- 窗口切换缩略图：屏幕录制。
+- 发送组合键／直接粘贴：系统输入事件发送授权。
+- 普通键盘注册、剪贴板读取和截图菜单操作不额外请求无关权限。
+
+## 验证边界
+
+自动测试覆盖纯模型、存储、状态机、fake 系统接口和图像像素结果。以下必须人工或本机真实验证：
+
+- 真实屏幕录制与 TCC 重建后的授权。
+- 真实事件 tap、右键菜单、Esc、睡眠／权限撤销恢复和组合键发送。
+- 窗口切换的系统键独占、权限撤销、遮挡窗口预览与跨应用指定窗口激活。
+- 真实剪贴板访问行为、后台写入来源、敏感标记和直接粘贴竞争。
+- Safari／Chrome 实际长页面拼接。
+- 多显示器、Retina、不同鼠标与键盘布局。
+
+构建、测试和 Release 验证记录见 [ROADMAP.md](ROADMAP.md) 与 [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md)。

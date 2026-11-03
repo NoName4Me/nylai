@@ -1,17 +1,20 @@
-import AppKit
-import Carbon
+import Foundation
 
-struct GlobalShortcut: Equatable {
-    static let openSettings = GlobalShortcut(keyCode: UInt32(kVK_ANSI_N), modifiers: [.control, .option])
-    static let captureMainDisplay = GlobalShortcut(keyCode: UInt32(kVK_ANSI_S), modifiers: [.control, .option])
+struct GlobalShortcutRegistrationToken: Hashable, Sendable {
+    fileprivate let rawValue: UUID
 
-    let keyCode: UInt32
-    let modifiers: NSEvent.ModifierFlags
+    init() {
+        rawValue = UUID()
+    }
 }
 
-// 实现负责报告占用冲突；注销后不再分发动作。
+// 实现负责报告占用冲突；注销后不再分发动作。token 不暴露系统注册句柄。
 @MainActor
 protocol GlobalShortcutRegistering: AnyObject {
-    func register(_ shortcut: GlobalShortcut, action: @escaping @MainActor () -> Void) throws
-    func unregisterAll()
+    func register(
+        _ shortcut: ShortcutKey,
+        action: @escaping @MainActor () -> Void
+    ) throws -> GlobalShortcutRegistrationToken
+    func unregister(_ token: GlobalShortcutRegistrationToken) throws
+    func unregisterAll() throws
 }

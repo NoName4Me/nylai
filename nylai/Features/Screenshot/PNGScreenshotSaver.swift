@@ -38,8 +38,11 @@ final class PNGScreenshotSaver: ScreenshotSaving {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd-HHmmss-SSS"
         panel.nameFieldStringValue = "nylai-\(formatter.string(from: Date())).png"
+        let previousPolicy = NSApp.activationPolicy()
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        guard await panel.begin() == .OK, let url = panel.url else { return nil }
+        defer { NSApp.setActivationPolicy(previousPolicy) }
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
         try Task.checkCancellation()
         try await writer.write(image, to: url)
         return url
