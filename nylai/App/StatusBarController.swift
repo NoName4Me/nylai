@@ -36,7 +36,9 @@ final class StatusBarController: NSObject {
         super.init()
 
         if let button = statusItem.button {
-            let image = NSImage(systemSymbolName: "square.stack.3d.up", accessibilityDescription: "nylai")
+            let image = NSImage(named: NSImage.Name("MenuBarIcon"))
+                ?? NSImage(systemSymbolName: "square.stack.3d.up", accessibilityDescription: "nylai")
+            image?.size = NSSize(width: 18, height: 18)
             image?.isTemplate = true
             button.image = image
             button.toolTip = "nylai"
