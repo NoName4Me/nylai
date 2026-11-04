@@ -54,6 +54,62 @@ struct ScreenshotAnnotationColor: Codable, Equatable, Sendable {
     }
 }
 
+enum ScreenshotArrowStyle: String, Codable, CaseIterable, Sendable {
+    case open, solid, double
+
+    var title: String {
+        switch self {
+        case .open: "开放箭头"
+        case .solid: "实心箭头"
+        case .double: "双向箭头"
+        }
+    }
+}
+
+struct ScreenshotArrowOptions: Codable, Equatable, Sendable {
+    enum Form: String, CaseIterable, Codable, Sendable {
+        case line, body
+        var title: String { self == .line ? "线形" : "面形" }
+    }
+    enum Start: String, CaseIterable, Codable, Sendable {
+        case none, dot, diamond, fork
+        var title: String {
+            switch self { case .none: "无"; case .dot: "圆点"; case .diamond: "菱形"; case .fork: "分叉" }
+        }
+    }
+    enum Tip: String, CaseIterable, Codable, Sendable {
+        case triangle, open, dart
+        var title: String {
+            switch self { case .triangle: "三角"; case .open: "线条"; case .dart: "箭矢" }
+        }
+    }
+    enum Curve: String, CaseIterable, Codable, Sendable {
+        case straight, left, right
+        var title: String {
+            switch self { case .straight: "直线"; case .left: "左弯"; case .right: "右弯" }
+        }
+    }
+
+    var form: Form = .line
+    var start: Start = .none
+    var tip: Tip = .open
+    var curve: Curve = .straight
+    var tapered = false
+    var filled = true
+
+    var allowedStarts: [Start] { form == .line ? [.none, .dot, .diamond] : [.none, .fork] }
+    var allowedTips: [Tip] { form == .line ? [.triangle, .open, .dart] : [.triangle, .dart] }
+
+    func normalized() -> Self {
+        var result = self
+        if !allowedStarts.contains(start) { result.start = .none }
+        if !allowedTips.contains(tip) { result.tip = .triangle }
+        if form == .line { result.tapered = false }
+        if result.tapered { result.filled = true }
+        return result
+    }
+}
+
 struct ScreenshotAnnotationStyle: Codable, Equatable, Sendable {
     static let minimumLineWidth = 1
     static let maximumLineWidth = 24
@@ -67,6 +123,16 @@ struct ScreenshotAnnotationStyle: Codable, Equatable, Sendable {
     var color: ScreenshotAnnotationColor
     var lineWidth: Int
     var lineStyle: ScreenshotAnnotationLineStyle
+    var fillsShape: Bool? = nil
+    var arrowStyle: ScreenshotArrowStyle? = nil
+    var arrowOptions: ScreenshotArrowOptions? = nil
+    var fillsTextBackground: Bool? = nil
+
+    var textColor: NSColor {
+        guard fillsTextBackground == true else { return color.nsColor }
+        let brightness = color.red * 0.2126 + color.green * 0.7152 + color.blue * 0.0722
+        return brightness > 0.56 ? .black : .white
+    }
 
     static let `default` = ScreenshotAnnotationStyle(
         color: .defaultRed,
@@ -173,13 +239,15 @@ extension ScreenshotAnnotationKind {
         case .text:
             "字号"
         case .mosaic:
-            "块"
+            "像素块大小"
         case .step:
             "直径"
         case .rectangle, .ellipse, .line, .arrow, .brush:
             "粗细"
         }
     }
+
+    var supportsFill: Bool { self == .rectangle || self == .ellipse }
 
     var supportsColorControl: Bool {
         self != .mosaic

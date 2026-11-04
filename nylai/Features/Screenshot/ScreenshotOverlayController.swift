@@ -199,6 +199,7 @@ final class ScreenshotOverlayController {
         window.hasShadow = false
         window.isReleasedWhenClosed = false
         window.animationBehavior = .none
+        window.acceptsMouseMovedEvents = true
         window.setFrame(screen.frame, display: false)
         window.onCancel = { [weak self] in self?.cancelFromKeyboard() }
 
@@ -237,6 +238,11 @@ final class ScreenshotOverlayController {
         view.onAnnotationChanged = { [weak self] id, rect, style in
             guard let self else { return }
             try? session.updateAnnotation(id, rect: rect, style: style)
+        }
+        view.onArrowGeometryChanged = { [weak self] annotation in
+            guard let self else { return }
+            try? session.updateArrowGeometry(annotation)
+            refreshOverlayState()
         }
         view.onAnnotationSelected = { [weak self] id in
             self?.finishStyleInteraction()
@@ -302,8 +308,8 @@ final class ScreenshotOverlayController {
         let pointer = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
         if view.bounds.contains(pointer) {
             view.updatePointerLocation(pointer)
-            highlightTarget(at: pointer)
         }
+        highlightTarget(at: pointer)
         refreshOverlayState()
     }
 
@@ -320,8 +326,18 @@ final class ScreenshotOverlayController {
             x: screen.frame.minX + localPoint.x,
             y: screen.frame.maxY - localPoint.y
         )
-        guard session.phase == .selecting,
-              let target = session.target(at: globalPoint) else {
+        guard session.phase == .selecting else {
+            overlayView?.highlightedTargetRect = nil
+            overlayView?.highlightedTargetLabel = nil
+            overlayView?.highlightedTargetIsWindow = false
+            return
+        }
+        let target = session.target(at: globalPoint)
+            ?? session.targets.first { target in
+                if case .display = target { return true }
+                return false
+            }
+        guard let target else {
             overlayView?.highlightedTargetRect = nil
             overlayView?.highlightedTargetLabel = nil
             overlayView?.highlightedTargetIsWindow = false

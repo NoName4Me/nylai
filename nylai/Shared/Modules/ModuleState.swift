@@ -13,7 +13,7 @@ enum NylaiModuleID: String, CaseIterable, Codable, Equatable, Sendable {
         case .screenshot:
             "截图"
         case .globalShortcuts:
-            "全局快捷键"
+            "快捷键"
         case .mouseGestures:
             "鼠标手势"
         case .clipboard:

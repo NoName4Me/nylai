@@ -41,6 +41,11 @@ final class WindowSwitcherActivator: WindowSwitcherActivating {
         ) else {
             throw WindowSwitcherError.windowUnavailable
         }
+        AXUIElementSetAttributeValue(
+            window,
+            kAXMinimizedAttribute as CFString,
+            kCFBooleanFalse
+        )
         guard application.activate(options: [.activateAllWindows]) else {
             throw WindowSwitcherError.targetUnavailable
         }
@@ -66,7 +71,6 @@ final class WindowSwitcherActivator: WindowSwitcherActivating {
         title: String?,
         frame: CGRect?
     ) -> AXUIElement? {
-        guard let frame else { return nil }
         let application = AXUIElementCreateApplication(processIdentifier)
         AXUIElementSetMessagingTimeout(application, 0.5)
         var rawWindows: CFTypeRef?
@@ -78,15 +82,18 @@ final class WindowSwitcherActivator: WindowSwitcherActivating {
         let windows = rawWindows as? [AXUIElement] else {
             return nil
         }
-        let expected = accessibilityFrame(fromAppKitFrame: frame)
-        return windows.first { window in
-            let titleMatches = title == nil
-                || Self.title(of: window) == title
-            let frameMatches = expected.map {
-                Self.frameMatches(Self.frame(of: window), $0)
-            } ?? true
-            return titleMatches && frameMatches
+        let identified = windows.map { ($0, WindowCaptureAccessibilityMatcher.windowID(of: $0)) }
+        if let exact = identified.first(where: { $0.1 == windowID }) {
+            return exact.0
         }
+        guard let frame, let expected = accessibilityFrame(fromAppKitFrame: frame),
+              let title = WindowCaptureAccessibilityMatcher.normalizedTitle(title) else { return nil }
+        let matches = identified.filter { window, identifier in
+            identifier == nil
+                && WindowCaptureAccessibilityMatcher.normalizedTitle(Self.title(of: window)) == title
+                && Self.frameMatches(Self.frame(of: window), expected)
+        }
+        return matches.count == 1 ? matches[0].0 : nil
     }
 
     static func accessibilityFrame(fromAppKitFrame frame: CGRect) -> CGRect? {

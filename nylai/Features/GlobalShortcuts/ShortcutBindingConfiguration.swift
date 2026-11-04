@@ -186,7 +186,7 @@ struct ShortcutBindingConfiguration: Codable, Equatable, Sendable {
 
     static let defaults = ShortcutBindingConfiguration(
         version: currentVersion,
-        isEnabled: false,
+        isEnabled: true,
         bindings: [
             ShortcutBinding(
                 id: .openSettings,

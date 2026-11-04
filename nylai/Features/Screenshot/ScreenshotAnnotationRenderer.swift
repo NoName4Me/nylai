@@ -76,8 +76,13 @@ enum ScreenshotAnnotationRenderer {
             renderAnnotation.end.y = sourceRect.minY + sourceRect.maxY - annotation.end.y
             let path = ScreenshotAnnotationPath.cgPath(
                 for: renderAnnotation,
-                in: contextRect
+                in: contextRect, flipped: false
             )
+            if let fill = ScreenshotAnnotationPath.fillPath(for: renderAnnotation, in: contextRect, flipped: false) {
+                context.addPath(fill)
+                context.setFillColor(annotation.style.color.cgColor)
+                context.fillPath()
+            }
             context.addPath(path)
             context.setStrokeColor(annotation.style.color.cgColor)
             context.setLineWidth(CGFloat(annotation.style.lineWidth))
@@ -104,15 +109,21 @@ enum ScreenshotAnnotationRenderer {
         context: CGContext
     ) {
         guard !annotation.text.isEmpty, rect.width > 0, rect.height > 0 else { return }
+        let filled = annotation.style.fillsTextBackground == true
+        if filled {
+            context.setFillColor(annotation.style.color.cgColor)
+            context.addPath(CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil))
+            context.fillPath()
+        }
         let fontSize = max(CGFloat(annotation.style.lineWidth), 8)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
-            .foregroundColor: annotation.style.color.nsColor,
+            .foregroundColor: annotation.style.textColor,
         ]
         let string = NSAttributedString(string: annotation.text, attributes: attributes)
         let framesetter = CTFramesetterCreateWithAttributedString(string)
         let path = CGPath(
-            rect: rect.insetBy(dx: 1, dy: 1),
+            rect: rect.insetBy(dx: filled ? 4 : 1, dy: filled ? 3 : 1),
             transform: nil
         )
         let frame = CTFramesetterCreateFrame(

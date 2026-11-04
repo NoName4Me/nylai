@@ -1,10 +1,41 @@
 import AppKit
 import CryptoKit
+import SwiftUI
 import XCTest
 @testable import nylai
 
 @MainActor
 final class ClipboardTests: XCTestCase {
+    func testHistoryPanelReopensWithItsRecordsAndClosesAgain() async throws {
+        let fixture = try ClipboardFixture()
+        defer { fixture.remove() }
+        let store = try XCTUnwrap(fixture.store)
+        let record = try XCTUnwrap(store.add(ClipboardCapture(
+            content: .text("剪贴板回归测试"), sourceBundleIdentifier: nil, sourceName: nil,
+            contentHash: try XCTUnwrap(ClipboardContentIdentifier.text("剪贴板回归测试"))
+        )))
+        let controller = ClipboardPanelController(store: store)
+        defer { controller.close() }
+        controller.present()
+        let panel = try XCTUnwrap(controller.window)
+        let host = try XCTUnwrap(panel.contentView as? NSHostingView<ClipboardPanelView>)
+        XCTAssertEqual(host.rootView.model.visibleRecords.map(\.id), [record.id])
+        host.rootView.model.onClose()
+        try await Task.sleep(for: .milliseconds(230))
+        XCTAssertFalse(panel.isVisible)
+        controller.present()
+        XCTAssertTrue(controller.window === panel)
+        let reopened = try XCTUnwrap(panel.contentView as? NSHostingView<ClipboardPanelView>)
+        XCTAssertEqual(reopened.rootView.model.visibleRecords.map(\.id), [record.id])
+        try await Task.sleep(for: .milliseconds(260))
+        controller.toggle()
+        let deadline = ContinuousClock.now + .seconds(1)
+        while panel.isVisible && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(panel.isVisible)
+    }
+
     func testStoreDeduplicatesTextUpdatesTimeAndKeepsPinnedOrder() throws {
         let fixture = try ClipboardFixture()
         defer { fixture.remove() }

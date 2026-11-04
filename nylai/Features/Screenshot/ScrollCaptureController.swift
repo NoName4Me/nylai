@@ -86,122 +86,52 @@ enum ScrollPreviewLayoutSolver {
         selection: CGRect,
         screenFrame: CGRect,
         preferredSize: CGSize = preferredSize,
-        avoiding avoidedRect: CGRect? = nil
+        avoiding avoidedRect: CGRect? = nil,
+        reserving reservedRect: CGRect? = nil
     ) -> ScrollPreviewLayout {
         let safeScreen = screenFrame.insetBy(dx: margin, dy: margin)
-        let candidates: [(ScrollPreviewPosition, CGRect)] = [
-            (
-                .right,
-                CGRect(
-                    x: selection.maxX + gap,
-                    y: selection.midY - preferredSize.height / 2,
-                    width: preferredSize.width,
-                    height: preferredSize.height
-                )
-            ),
-            (
-                .left,
-                CGRect(
-                    x: selection.minX - gap - preferredSize.width,
-                    y: selection.midY - preferredSize.height / 2,
-                    width: preferredSize.width,
-                    height: preferredSize.height
-                )
-            ),
-            (
-                .below,
-                CGRect(
-                    x: selection.midX - preferredSize.width / 2,
-                    y: selection.minY - gap - preferredSize.height,
-                    width: preferredSize.width,
-                    height: preferredSize.height
-                )
-            ),
-            (
-                .above,
-                CGRect(
-                    x: selection.midX - preferredSize.width / 2,
-                    y: selection.maxY + gap,
-                    width: preferredSize.width,
-                    height: preferredSize.height
-                )
-            ),
+        let areas: [(ScrollPreviewPosition, CGRect)] = [
+            (.right, CGRect(x: selection.maxX + gap, y: safeScreen.minY,
+                            width: max(0, safeScreen.maxX - selection.maxX - gap), height: safeScreen.height)),
+            (.left, CGRect(x: safeScreen.minX, y: safeScreen.minY,
+                           width: max(0, selection.minX - gap - safeScreen.minX), height: safeScreen.height)),
+            (.below, CGRect(x: safeScreen.minX, y: safeScreen.minY, width: safeScreen.width,
+                            height: max(0, selection.minY - gap - safeScreen.minY))),
+            (.above, CGRect(x: safeScreen.minX, y: selection.maxY + gap, width: safeScreen.width,
+                            height: max(0, safeScreen.maxY - selection.maxY - gap))),
         ]
-
-        for (position, candidate) in candidates {
-            let clamped = CGRect(
-                x: min(max(candidate.minX, safeScreen.minX), safeScreen.maxX - candidate.width),
-                y: min(max(candidate.minY, safeScreen.minY), safeScreen.maxY - candidate.height),
-                width: candidate.width,
-                height: candidate.height
-            )
-            if safeScreen.contains(clamped),
-               !clamped.intersects(selection),
-               avoidedRect.map({ !clamped.intersects($0) }) ?? true {
-                return ScrollPreviewLayout(frame: clamped, position: position)
-            }
+        func excluding(_ obstacle: CGRect?, from area: CGRect) -> [CGRect] {
+            guard let obstacle else { return [area] }
+            let overlap = area.intersection(obstacle.insetBy(dx: -gap / 2, dy: -gap / 2))
+            guard !overlap.isNull, !overlap.isEmpty else { return [area] }
+            return [
+                CGRect(x: area.minX, y: area.minY, width: overlap.minX - area.minX, height: area.height),
+                CGRect(x: overlap.maxX, y: area.minY, width: area.maxX - overlap.maxX, height: area.height),
+                CGRect(x: area.minX, y: area.minY, width: area.width, height: overlap.minY - area.minY),
+                CGRect(x: area.minX, y: overlap.maxY, width: area.width, height: area.maxY - overlap.maxY),
+            ]
         }
 
-        // 空间不足时先压缩预览，而不是直接盖住选区。
-        for (position, candidate) in candidates {
-            let availableWidth: CGFloat
-            let availableHeight: CGFloat
-            switch position {
-            case .right:
-                availableWidth = safeScreen.maxX - candidate.minX
-                availableHeight = safeScreen.height
-            case .left:
-                availableWidth = candidate.maxX - safeScreen.minX
-                availableHeight = safeScreen.height
-            case .above:
-                availableWidth = safeScreen.width
-                availableHeight = safeScreen.maxY - candidate.minY
-            case .below:
-                availableWidth = safeScreen.width
-                availableHeight = candidate.maxY - safeScreen.minY
-            case .inside:
-                continue
-            }
-            let width = min(preferredSize.width, availableWidth)
-            let height = min(preferredSize.height, availableHeight)
-            guard width >= minimumSize.width, height >= minimumSize.height else {
-                continue
-            }
-            let x: CGFloat
-            let y: CGFloat
-            switch position {
-            case .right:
-                x = selection.maxX + gap
-                y = min(
-                    max(selection.midY - height / 2, safeScreen.minY),
-                    safeScreen.maxY - height
-                )
-            case .left:
-                x = selection.minX - gap - width
-                y = min(
-                    max(selection.midY - height / 2, safeScreen.minY),
-                    safeScreen.maxY - height
-                )
-            case .above:
-                x = min(
-                    max(selection.midX - width / 2, safeScreen.minX),
-                    safeScreen.maxX - width
-                )
-                y = selection.maxY + gap
-            case .below:
-                x = min(
-                    max(selection.midX - width / 2, safeScreen.minX),
-                    safeScreen.maxX - width
-                )
-                y = selection.minY - gap - height
-            case .inside:
-                continue
-            }
-            let adapted = CGRect(x: x, y: y, width: width, height: height)
-            if safeScreen.contains(adapted),
-               !adapted.intersects(selection),
-               avoidedRect.map({ !adapted.intersects($0) }) ?? true {
-                return ScrollPreviewLayout(frame: adapted, position: position)
+        for avoidTarget in [true, false] {
+            for (position, area) in areas {
+                let rooms = excluding(reservedRect, from: area).flatMap {
+                    excluding(avoidTarget ? avoidedRect : nil, from: $0)
+                }
+                let frames = rooms.compactMap { room -> CGRect? in
+                    let width = min(preferredSize.width, room.width)
+                    let height = min(preferredSize.height, room.height)
+                    guard width >= minimumSize.width, height >= minimumSize.height else { return nil }
+                    let idealX = position == .right ? room.minX
+                        : position == .left ? room.maxX - width : selection.midX - width / 2
+                    let idealY = position == .above ? room.minY
+                        : position == .below ? room.maxY - height : selection.midY - height / 2
+                    return CGRect(x: min(max(idealX, room.minX), room.maxX - width),
+                                  y: min(max(idealY, room.minY), room.maxY - height),
+                                  width: width, height: height)
+                }
+                if let frame = frames.max(by: { $0.width * $0.height < $1.width * $1.height }) {
+                    return ScrollPreviewLayout(frame: frame, position: position)
+                }
             }
         }
 
@@ -209,7 +139,7 @@ enum ScrollPreviewLayoutSolver {
         let width = max(1, min(preferredSize.width, available.width))
         let height = max(1, min(preferredSize.height, available.height))
         let frame = CGRect(
-            x: selection.maxX - insideInset - width,
+            x: reservedRect == nil ? selection.maxX - insideInset - width : selection.minX + insideInset,
             y: selection.maxY - insideInset - height,
             width: width,
             height: height
@@ -236,6 +166,9 @@ final class ScrollCaptureController {
     private let regionSelector: any ScrollRegionSelecting
     private let openEditor: @MainActor (CGImage, CGFloat, CGRect?) -> Void
     private let presentError: @MainActor (Error) -> Void
+    private let paster: any ScreenshotPasting
+    private let saver: any ScreenshotSaving
+    private enum Output: Equatable { case edit, copy, save }
     private var selectionSession: (any ScrollRegionSelectionSession)?
     private var selectionCancellationTask: Task<Void, Never>?
     private var completionWindow: ScrollCaptureCompletionWindow?
@@ -280,12 +213,16 @@ final class ScrollCaptureController {
         },
         regionSelector: any ScrollRegionSelecting = ScrollRegionSelectionPresenter.shared,
         openEditor: @escaping @MainActor (CGImage, CGFloat, CGRect?) -> Void,
+        paster: any ScreenshotPasting = PasteboardScreenshotPaster(),
+        saver: any ScreenshotSaving = PNGScreenshotSaver(),
         presentError: @escaping @MainActor (Error) -> Void = ScreenshotErrorPresenter.show
     ) {
         self.displayCapturer = displayCapturer
         self.displayTarget = displayTarget
         self.regionSelector = regionSelector
         self.openEditor = openEditor
+        self.paster = paster
+        self.saver = saver
         self.presentError = presentError
     }
 
@@ -300,7 +237,9 @@ final class ScrollCaptureController {
         phase = .selecting
         statusText = "拖动选择要滚动的内容区域"
         do {
-            let image = try await displayCapturer.captureDisplay(target.displayID)
+            let image = try await displayCapturer.captureDisplayExcludingOwnApplication(
+                target.displayID
+            )
             try Task.checkCancellation()
             guard phase == .selecting else { return }
             let scale = CGFloat(image.width) / target.frame.width
@@ -382,7 +321,10 @@ final class ScrollCaptureController {
             let previewLayout = ScrollPreviewLayoutSolver.layout(
                 selection: request.selectionGlobalRect,
                 screenFrame: request.displayFrame,
-                avoiding: captureWindowFrame
+                avoiding: captureWindowFrame,
+                reserving: ScrollCaptureCompletionWindow.placement(
+                    selection: request.selectionGlobalRect, screen: request.displayFrame
+                )
             )
             showHUD(
                 selectionGlobalRect: request.selectionGlobalRect,
@@ -422,6 +364,10 @@ final class ScrollCaptureController {
     }
 
     func stopAndOpenEditor() async {
+        await finishCapture(.edit)
+    }
+
+    private func finishCapture(_ output: Output) async {
         guard phase == .running || phase == .paused else { return }
         frameTask?.cancel()
         frameTask = nil
@@ -432,18 +378,37 @@ final class ScrollCaptureController {
                 throw ScrollCaptureError.noFrames
             }
             guard phase == .preparing else { return }
+            switch output {
+            case .edit: break
+            case .copy: try paster.copy(result.image)
+            case .save:
+                completionWindow?.orderOut(nil)
+                selectionOutlineWindow?.orderOut(nil)
+                guard try await saver.save(result.image) != nil else {
+                    guard phase == .preparing else { return }
+                    phase = .paused
+                    statusText = "已暂停"
+                    selectionOutlineWindow?.orderFrontRegardless()
+                    completionWindow?.orderFrontRegardless()
+                    updateStatus()
+                    return
+                }
+            }
+            guard phase == .preparing else { return }
             let scale = pixelScale
             let selectionRect = selectionGlobalRect
             closeWindows()
             targetApplication = nil
             phase = .finished
-            openEditor(result.image, scale, selectionRect)
+            if output == .edit { openEditor(result.image, scale, selectionRect) }
             phase = .idle
         } catch {
             guard phase == .preparing else { return }
             lastFailure = error.localizedDescription
             statusText = error.localizedDescription
             phase = .paused
+            selectionOutlineWindow?.orderFrontRegardless()
+            completionWindow?.orderFrontRegardless()
             updateStatus()
             presentError(error)
         }
@@ -536,6 +501,12 @@ final class ScrollCaptureController {
             onComplete: { [weak self] in
                 guard let self else { return }
                 Task { await self.stopAndOpenEditor() }
+            },
+            onCopy: { [weak self] in
+                Task { await self?.finishCapture(.copy) }
+            },
+            onSave: { [weak self] in
+                Task { await self?.finishCapture(.save) }
             },
             onCancel: { [weak self] in
                 self?.cancel()
@@ -660,7 +631,9 @@ final class ScrollCaptureController {
         captureInFlight = true
         defer { captureInFlight = false }
         do {
-            let image = try await displayCapturer.captureDisplay(displayID)
+            let image = try await displayCapturer.captureDisplayExcludingOwnApplication(
+                displayID
+            )
             try Task.checkCancellation()
             guard phase == .running else { return nil }
             guard let cropped = image.cropping(to: selectionPixelRect.cgRect) else {
@@ -864,7 +837,7 @@ private final class ScrollRegionSelectionView: NSView {
             shadow.lineWidth = 5
             shadow.stroke()
 
-            NSColor.controlAccentColor.setStroke()
+            NylaiTheme.accent.setStroke()
             let border = NSBezierPath(rect: selection.insetBy(dx: 1.5, dy: 1.5))
             border.lineWidth = 3
             border.stroke()
@@ -1024,7 +997,7 @@ private final class ScrollCaptureHUDView: NSView {
         shadow.lineWidth = 7
         shadow.stroke()
 
-        NSColor.controlAccentColor.setStroke()
+        NylaiTheme.accent.setStroke()
         let border = NSBezierPath(rect: selectionRect.insetBy(dx: 1.5, dy: 1.5))
         border.lineWidth = 3.5
         border.stroke()
@@ -1160,86 +1133,76 @@ private final class ScrollCaptureHUDView: NSView {
 
 @MainActor
 private final class ScrollCaptureCompletionWindow: NSWindow {
-    private let completionButton = NSButton()
+    private var outputButtons: [NSButton] = []
     private let onComplete: () -> Void
+    private let onCopy: () -> Void
+    private let onSave: () -> Void
     private let onCancel: () -> Void
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
-    init(
-        selectionGlobalRect: CGRect,
-        screenFrame: CGRect,
-        onComplete: @escaping () -> Void,
-        onCancel: @escaping () -> Void
-    ) {
+    static func placement(selection: CGRect, screen: CGRect) -> CGRect {
+        let safe = screen.insetBy(dx: 8, dy: 8)
+        let size = CGSize(width: 54, height: 126)
+        let outside = selection.maxX + 8
+        let x = outside + size.width <= safe.maxX ? outside : selection.maxX - size.width - 8
+        return CGRect(x: min(max(x, safe.minX), safe.maxX - size.width),
+                      y: min(max(selection.midY - size.height / 2, safe.minY), safe.maxY - size.height),
+                      width: size.width, height: size.height)
+    }
+
+    init(selectionGlobalRect: CGRect, screenFrame: CGRect,
+         onComplete: @escaping () -> Void, onCopy: @escaping () -> Void,
+         onSave: @escaping () -> Void, onCancel: @escaping () -> Void) {
         self.onComplete = onComplete
+        self.onCopy = onCopy
+        self.onSave = onSave
         self.onCancel = onCancel
-        let size = CGSize(width: 58, height: 26)
-        let safeScreen = screenFrame.insetBy(dx: 8, dy: 8)
-        let origin = CGPoint(
-            x: min(
-                max(selectionGlobalRect.minX + 10, safeScreen.minX),
-                max(safeScreen.minX, safeScreen.maxX - size.width)
-            ),
-            y: min(
-                max(selectionGlobalRect.maxY - 10 - size.height, safeScreen.minY),
-                max(safeScreen.minY, safeScreen.maxY - size.height)
-            )
-        )
-        super.init(
-            contentRect: CGRect(origin: origin, size: size),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
+        let rect = Self.placement(selection: selectionGlobalRect, screen: screenFrame)
+        super.init(contentRect: rect, styleMask: [.borderless], backing: .buffered, defer: false)
         identifier = NSUserInterfaceItemIdentifier("nylai.scroll-capture-completion")
         level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         animationBehavior = .none
-        hasShadow = false
         backgroundColor = .clear
         isOpaque = false
 
-        completionButton.title = "完成"
-        completionButton.font = .systemFont(ofSize: 12, weight: .semibold)
-        completionButton.bezelStyle = .inline
-        completionButton.isBordered = false
-        completionButton.contentTintColor = .white
-        completionButton.target = self
-        completionButton.action = #selector(completeAction)
-        completionButton.toolTip = "完成滚动截图（Enter）"
-        completionButton.setAccessibilityLabel("完成滚动截图")
-        completionButton.wantsLayer = true
-        completionButton.layer?.backgroundColor = NSColor.black
-            .withAlphaComponent(0.62).cgColor
-        completionButton.layer?.cornerRadius = 6
-        completionButton.frame = CGRect(origin: .zero, size: size)
-        completionButton.autoresizingMask = [.width, .height]
-        completionButton.isEnabled = false
-        contentView = completionButton
+        let surface = FloatingToolbarSurfaceView(frame: CGRect(origin: .zero, size: rect.size))
+        let actions: [(String, Selector)] = [
+            ("编辑", #selector(completeAction)), ("复制", #selector(copyAction)),
+            ("保存", #selector(saveAction)), ("取消", #selector(cancelAction)),
+        ]
+        for (index, entry) in actions.enumerated() {
+            let button = ToolbarIconButton(frame: CGRect(x: 5, y: 96 - index * 29, width: 44, height: 25))
+            button.title = entry.0
+            button.toolTip = entry.0
+            button.font = .systemFont(ofSize: 12, weight: .medium)
+            button.isBordered = false
+            button.layer?.cornerRadius = 5
+            button.target = self
+            button.action = entry.1
+            surface.addSubview(button)
+            if index < 3 { outputButtons.append(button) }
+        }
+        contentView = surface
+        setEnabled(false)
     }
 
-    func setEnabled(_ enabled: Bool) {
-        completionButton.isEnabled = enabled
-    }
-
-    @objc private func completeAction() {
-        onComplete()
-    }
+    func setEnabled(_ enabled: Bool) { outputButtons.forEach { $0.isEnabled = enabled } }
+    @objc private func completeAction() { onComplete() }
+    @objc private func copyAction() { onCopy() }
+    @objc private func saveAction() { onSave() }
+    @objc private func cancelAction() { onCancel() }
 
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
-        case 53:
-            onCancel()
+        case 53: onCancel()
         case 36, 76:
-            if completionButton.isEnabled {
-                completeAction()
-            }
-        default:
-            super.keyDown(with: event)
+            if outputButtons.first?.isEnabled == true { onComplete() }
+        default: super.keyDown(with: event)
         }
     }
 }

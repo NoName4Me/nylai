@@ -8,6 +8,20 @@ final class ScreenshotOverlayWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
+    override func sendEvent(_ event: NSEvent) {
+        if let overlay = contentView?.subviews.compactMap({ $0 as? ScreenshotOverlayView }).first {
+            switch event.type {
+            case .mouseMoved:
+                overlay.updateHoverHint(at: overlay.convert(event.locationInWindow, from: nil))
+            case .leftMouseDown, .rightMouseDown, .leftMouseDragged, .mouseExited:
+                overlay.dismissHoverHint()
+            default:
+                break
+            }
+        }
+        super.sendEvent(event)
+    }
+
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
             onCancel()
@@ -40,6 +54,25 @@ enum ScreenshotMagnifierLayout {
     static let inset: CGFloat = 8
     static let imageSize: CGFloat = 160
 
+    static func panel(for point: CGPoint, in bounds: CGRect) -> CGRect {
+        var origin = CGPoint(x: point.x + 22, y: point.y + 22)
+        if origin.x + panelSize.width > bounds.maxX - 12 {
+            origin.x = point.x - 22 - panelSize.width
+        }
+        if origin.y + panelSize.height > bounds.maxY - 12 {
+            origin.y = point.y - 22 - panelSize.height
+        }
+        origin.x = min(
+            max(origin.x, bounds.minX + 12),
+            bounds.maxX - panelSize.width - 12
+        )
+        origin.y = min(
+            max(origin.y, bounds.minY + 12),
+            bounds.maxY - panelSize.height - 12
+        )
+        return CGRect(origin: origin, size: panelSize)
+    }
+
     static func imageRect(in panel: CGRect) -> CGRect {
         CGRect(
             x: panel.minX + inset,
@@ -47,6 +80,86 @@ enum ScreenshotMagnifierLayout {
             width: imageSize,
             height: imageSize
         )
+    }
+}
+
+@MainActor
+private final class ScreenshotCrosshairGuideView: NSView {
+    private let shadowLayer = CAShapeLayer()
+    private let accentLayer = CAShapeLayer()
+    private var point: CGPoint?
+
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+
+        for guideLayer in [shadowLayer, accentLayer] {
+            guideLayer.fillColor = NSColor.clear.cgColor
+            guideLayer.lineCap = .round
+            guideLayer.isHidden = true
+            guideLayer.actions = [
+                "path": NSNull(),
+                "strokeColor": NSNull(),
+                "hidden": NSNull(),
+            ]
+            layer?.addSublayer(guideLayer)
+        }
+        shadowLayer.lineWidth = 1.5
+        accentLayer.lineWidth = 0.75
+        updateStrokeColors()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("不支持从归档创建截图十字线")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func layout() {
+        super.layout()
+        shadowLayer.frame = bounds
+        accentLayer.frame = bounds
+        updatePath()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateStrokeColors()
+    }
+
+    func setPoint(_ point: CGPoint?) {
+        self.point = point
+        updatePath()
+    }
+
+    private func updatePath() {
+        guard let point, bounds.contains(point) else {
+            shadowLayer.isHidden = true
+            accentLayer.isHidden = true
+            return
+        }
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: bounds.minX, y: point.y))
+        path.addLine(to: CGPoint(x: bounds.maxX, y: point.y))
+        path.move(to: CGPoint(x: point.x, y: bounds.minY))
+        path.addLine(to: CGPoint(x: point.x, y: bounds.maxY))
+        shadowLayer.path = path
+        accentLayer.path = path
+        shadowLayer.isHidden = false
+        accentLayer.isHidden = false
+    }
+
+    private func updateStrokeColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            shadowLayer.strokeColor = NSColor.black.withAlphaComponent(0.42).cgColor
+            accentLayer.strokeColor = NylaiTheme.accent.withAlphaComponent(0.92).cgColor
+        }
     }
 }
 
@@ -60,6 +173,7 @@ final class ScreenshotOverlayView: NSView {
         case adjustingCornerRadius(startRadius: Int, start: CGPoint)
         case creatingAnnotation(start: CGPoint)
         case movingAnnotation(id: UUID, viewOrigin: CGRect, start: CGPoint)
+        case adjustingArrow(id: UUID, handle: Int)
         case resizingAnnotation(
             id: UUID,
             handle: SelectionResizeHandle,
@@ -75,6 +189,7 @@ final class ScreenshotOverlayView: NSView {
     var onAnnotationInteractionBegan: ((UUID?) -> Void)?
     var onAnnotationCreated: ((ScreenshotAnnotation) -> Void)?
     var onAnnotationChanged: ((UUID, PixelRect, ScreenshotAnnotationStyle?) -> Void)?
+    var onArrowGeometryChanged: ((ScreenshotAnnotation) -> Void)?
     var onAnnotationSelected: ((UUID?) -> Void)?
     var onStyleChanged: ((ScreenshotAnnotationStyle) -> Void)?
     var onOutputAppearanceChanged: ((ScreenshotOutputAppearance) -> Void)?
@@ -96,19 +211,33 @@ final class ScreenshotOverlayView: NSView {
     var onDelete: (() -> Void)?
     var onCancel: () -> Void = {}
 
-    private(set) var selection: CGRect?
+    private(set) var selection: CGRect? {
+        didSet { updateCrosshairGuide() }
+    }
     private(set) var dragState = DragState.none
     private(set) var annotations: [ScreenshotAnnotation] = []
     private(set) var selectedAnnotationID: UUID?
     private(set) var activeTool = ScreenshotEditorTool.selection
     var highlightedTargetRect: CGRect? {
-        didSet { needsDisplay = true }
+        didSet {
+            if oldValue != highlightedTargetRect {
+                needsDisplay = true
+            }
+        }
     }
     var highlightedTargetLabel: String? {
-        didSet { needsDisplay = true }
+        didSet {
+            if oldValue != highlightedTargetLabel {
+                needsDisplay = true
+            }
+        }
     }
     var highlightedTargetIsWindow = false {
-        didSet { needsDisplay = true }
+        didSet {
+            if oldValue != highlightedTargetIsWindow {
+                needsDisplay = true
+            }
+        }
     }
     var pixelScale: CGFloat = 1 {
         didSet { updateToolbar() }
@@ -120,7 +249,10 @@ final class ScreenshotOverlayView: NSView {
         didSet { needsDisplay = true }
     }
     var showsColorInspector = false {
-        didSet { needsDisplay = true }
+        didSet {
+            needsDisplay = true
+            updateCrosshairGuide()
+        }
     }
     var outputAppearance = ScreenshotOutputAppearance.default {
         didSet {
@@ -183,6 +315,7 @@ final class ScreenshotOverlayView: NSView {
     private var currentStyle = ScreenshotAnnotationStyle.default
     private var pixelDimensions: (width: Int, height: Int)?
     private var pointerLocation: CGPoint?
+    private lazy var crosshairGuide = ScreenshotCrosshairGuideView(frame: bounds)
     private var minimumSelectionSize: CGFloat {
         1 / max(pixelScale, 1)
     }
@@ -235,6 +368,7 @@ final class ScreenshotOverlayView: NSView {
         )
         addTrackingArea(area)
         trackingArea = area
+        installCrosshairGuideIfNeeded()
     }
 
     func setSelection(_ rect: CGRect?, notify: Bool = true) {
@@ -258,6 +392,7 @@ final class ScreenshotOverlayView: NSView {
         self.annotations = annotations
         selectedAnnotationID = selectedID
         updateDisplayedStyle()
+        updateToolbar()
         needsDisplay = true
     }
 
@@ -385,8 +520,8 @@ final class ScreenshotOverlayView: NSView {
 
         if showsColorInspector,
            selection == nil,
-           let pointerLocation {
-            drawColorInspector(at: pointerLocation)
+           let pointer = currentPointerLocation {
+            drawColorInspector(at: pointer)
         }
 
         guard let selection else { return }
@@ -395,35 +530,35 @@ final class ScreenshotOverlayView: NSView {
         drawSelectionSizeBadge(in: selection)
         guard showsSelectionChrome else { return }
 
-        NSColor.black.withAlphaComponent(0.38).setStroke()
-        let borderShadow = NSBezierPath(rect: selection.insetBy(dx: 1.25, dy: 1.25))
-        borderShadow.lineWidth = 4.5
-        borderShadow.stroke()
-
+        let edge = selection.insetBy(dx: 1.25, dy: 1.25)
+        let border = NSBezierPath()
+        func marks(from start: CGPoint, to end: CGPoint) {
+            let length = hypot(end.x - start.x, end.y - start.y)
+            guard length > 0 else { return }
+            let span = min(15, length * 0.18) / length
+            func point(_ fraction: CGFloat) -> CGPoint {
+                CGPoint(x: start.x + (end.x - start.x) * fraction,
+                        y: start.y + (end.y - start.y) * fraction)
+            }
+            for (first, last) in [(CGFloat.zero, span), (0.5 - span / 2, 0.5 + span / 2), (1 - span, 1)] {
+                border.move(to: point(first))
+                border.line(to: point(last))
+            }
+        }
+        let corners = [
+            CGPoint(x: edge.minX, y: edge.minY), CGPoint(x: edge.maxX, y: edge.minY),
+            CGPoint(x: edge.maxX, y: edge.maxY), CGPoint(x: edge.minX, y: edge.maxY),
+        ]
+        for index in corners.indices {
+            marks(from: corners[index], to: corners[(index + 1) % corners.count])
+        }
+        border.lineCapStyle = .round
+        NSColor.black.withAlphaComponent(0.42).setStroke()
+        border.lineWidth = 4
+        border.stroke()
         NylaiTheme.accent.setStroke()
-        let border = NSBezierPath(rect: selection.insetBy(dx: 1.25, dy: 1.25))
         border.lineWidth = 2.5
         border.stroke()
-
-        let points = SelectionGeometry.handlePoints(in: selection)
-        for point in [
-            points.topLeft, points.top, points.topRight,
-            points.left, points.right,
-            points.bottomLeft, points.bottom, points.bottomRight,
-        ] {
-            let handleRect = CGRect(
-                x: point.x - SelectionGeometry.handleSize / 2,
-                y: point.y - SelectionGeometry.handleSize / 2,
-                width: SelectionGeometry.handleSize,
-                height: SelectionGeometry.handleSize
-            )
-            NSColor.white.setFill()
-            NSBezierPath(roundedRect: handleRect, xRadius: 1.5, yRadius: 1.5).fill()
-            NylaiTheme.accent.setStroke()
-            let outline = NSBezierPath(roundedRect: handleRect, xRadius: 1.5, yRadius: 1.5)
-            outline.lineWidth = 1
-            outline.stroke()
-        }
         drawCornerRadiusControl(in: selection)
 
     }
@@ -458,51 +593,11 @@ final class ScreenshotOverlayView: NSView {
     }
 
     private func drawColorInspector(at point: CGPoint) {
-        let shadow = NSBezierPath()
-        shadow.move(to: CGPoint(x: bounds.minX, y: point.y))
-        shadow.line(to: CGPoint(x: bounds.maxX, y: point.y))
-        shadow.move(to: CGPoint(x: point.x, y: bounds.minY))
-        shadow.line(to: CGPoint(x: point.x, y: bounds.maxY))
-        NSColor.black.withAlphaComponent(0.42).setStroke()
-        shadow.lineWidth = 1.5
-        shadow.stroke()
-
-        let guides = NSBezierPath()
-        guides.move(to: CGPoint(x: bounds.minX, y: point.y))
-        guides.line(to: CGPoint(x: bounds.maxX, y: point.y))
-        guides.move(to: CGPoint(x: point.x, y: bounds.minY))
-        guides.line(to: CGPoint(x: point.x, y: bounds.maxY))
-        NylaiTheme.accent.withAlphaComponent(0.92).setStroke()
-        guides.lineWidth = 0.75
-        guides.stroke()
-
-        let center = NSBezierPath()
-        center.move(to: CGPoint(x: point.x - 6, y: point.y))
-        center.line(to: CGPoint(x: point.x + 6, y: point.y))
-        center.move(to: CGPoint(x: point.x, y: point.y - 6))
-        center.line(to: CGPoint(x: point.x, y: point.y + 6))
-        NSColor.black.withAlphaComponent(0.48).setStroke()
-        center.lineWidth = 3
-        center.stroke()
-        NylaiTheme.accent.setStroke()
-        center.lineWidth = 1.25
-        center.stroke()
-
         guard let sourceImage,
               let viewport = annotationViewport else {
             return
         }
-        let size = ScreenshotMagnifierLayout.panelSize
-        var origin = CGPoint(x: point.x + 22, y: point.y + 22)
-        if origin.x + size.width > bounds.maxX - 12 {
-            origin.x = point.x - 22 - size.width
-        }
-        if origin.y + size.height > bounds.maxY - 12 {
-            origin.y = point.y - 22 - size.height
-        }
-        origin.x = min(max(origin.x, bounds.minX + 12), bounds.maxX - size.width - 12)
-        origin.y = min(max(origin.y, bounds.minY + 12), bounds.maxY - size.height - 12)
-        let panel = CGRect(origin: origin, size: size)
+        let panel = ScreenshotMagnifierLayout.panel(for: point, in: bounds)
         let appearance = NSApp.effectiveAppearance
 
         NSGraphicsContext.saveGraphicsState()
@@ -625,9 +720,9 @@ final class ScreenshotOverlayView: NSView {
         let outer = CGRect(x: center.x - 6, y: center.y - 6, width: 12, height: 12)
         NSColor.black.withAlphaComponent(0.32).setFill()
         NSBezierPath(ovalIn: outer.insetBy(dx: -1.5, dy: -1.5)).fill()
-        NSColor.white.setFill()
+        NylaiPalette.terracotta.setFill()
         NSBezierPath(ovalIn: outer).fill()
-        NylaiTheme.accent.setStroke()
+        NSColor.white.withAlphaComponent(0.9).setStroke()
         let outline = NSBezierPath(ovalIn: outer.insetBy(dx: 0.5, dy: 0.5))
         outline.lineWidth = 1.5
         outline.stroke()
@@ -744,14 +839,20 @@ final class ScreenshotOverlayView: NSView {
             drawStepAnnotation(annotation, in: rect)
             return
         }
+        let scale = min(viewport.scaleX, viewport.scaleY)
+        let path = ScreenshotAnnotationPath.cgPath(for: annotation, in: rect, strokeScale: scale)
         NSColor.black.withAlphaComponent(0.32).setStroke()
-        let shadow = NSBezierPath(cgPath: ScreenshotAnnotationPath.cgPath(for: annotation, in: rect))
-        shadow.lineWidth = CGFloat(annotation.style.lineWidth) / min(viewport.scaleX, viewport.scaleY) + 2
+        let shadow = NSBezierPath(cgPath: path)
+        shadow.lineWidth = CGFloat(annotation.style.lineWidth) * scale + 2
         shadow.stroke()
 
         annotation.style.color.nsColor.setStroke()
-        let border = NSBezierPath(cgPath: ScreenshotAnnotationPath.cgPath(for: annotation, in: rect))
-        border.lineWidth = CGFloat(annotation.style.lineWidth) / min(viewport.scaleX, viewport.scaleY)
+        let border = NSBezierPath(cgPath: path)
+        if let fill = ScreenshotAnnotationPath.fillPath(for: annotation, in: rect, strokeScale: scale) {
+            annotation.style.color.nsColor.setFill()
+            NSBezierPath(cgPath: fill).fill()
+        }
+        border.lineWidth = CGFloat(annotation.style.lineWidth) * scale
         border.lineCapStyle = .round
         border.lineJoinStyle = .round
         if annotation.style.lineStyle == .dashed {
@@ -770,15 +871,20 @@ final class ScreenshotOverlayView: NSView {
             placeholder.stroke()
             return
         }
+        let filled = annotation.style.fillsTextBackground == true
+        if filled {
+            annotation.style.color.nsColor.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+        }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(
                 ofSize: max(CGFloat(annotation.style.lineWidth), 8),
                 weight: .semibold
             ),
-            .foregroundColor: annotation.style.color.nsColor,
+            .foregroundColor: annotation.style.textColor,
         ]
         NSAttributedString(string: annotation.text, attributes: attributes)
-            .draw(in: rect.insetBy(dx: 1, dy: 1))
+            .draw(in: rect.insetBy(dx: filled ? 4 : 1, dy: filled ? 3 : 1))
     }
 
     private func drawStepAnnotation(_ annotation: ScreenshotAnnotation, in rect: CGRect) {
@@ -802,6 +908,21 @@ final class ScreenshotOverlayView: NSView {
     }
 
     private func drawAnnotationSelection(_ annotation: ScreenshotAnnotation, in rect: CGRect) {
+        if annotation.kind == .arrow {
+            for (index, point) in ScreenshotAnnotationPath.arrowHandles(for: annotation, in: rect).enumerated() {
+                let endpoint = index == 0 || index == 3
+                let size: CGFloat = endpoint ? 8 : 9
+                let frame = CGRect(x: point.x - size / 2, y: point.y - size / 2, width: size, height: size)
+                let marker = endpoint ? NSBezierPath(roundedRect: frame, xRadius: 1, yRadius: 1)
+                    : NSBezierPath(ovalIn: frame)
+                NSColor.white.setFill()
+                marker.fill()
+                NylaiTheme.accent.setStroke()
+                marker.lineWidth = 1.5
+                marker.stroke()
+            }
+            return
+        }
         let points = SelectionGeometry.handlePoints(in: rect)
         let handles = annotation.kind == .step
             ? [points.topLeft, points.topRight, points.bottomLeft, points.bottomRight]
@@ -827,6 +948,7 @@ final class ScreenshotOverlayView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        setHoverHint(nil, anchor: .zero)
         guard !isOutputting else { return }
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
@@ -923,7 +1045,11 @@ final class ScreenshotOverlayView: NSView {
            let annotation = annotations.first(where: { $0.id == selectedAnnotationID }),
            let viewport = annotationViewport {
             let rect = viewport.viewRect(for: annotation.rect)
-            if let handle = AnnotationSelectionGeometry.handle(
+            if annotation.kind == .arrow, let handle = arrowHandle(at: point, annotation: annotation, rect: rect) {
+                beginAnnotationDrag(.adjustingArrow(id: annotation.id, handle: handle), at: point)
+                return
+            }
+            if annotation.kind != .arrow, let handle = AnnotationSelectionGeometry.handle(
                 at: point,
                 in: rect,
                 hitSize: 18,
@@ -981,7 +1107,8 @@ final class ScreenshotOverlayView: NSView {
         let id: UUID
         switch state {
         case .movingAnnotation(let annotationID, _, _),
-             .resizingAnnotation(let annotationID, _, _, _, _):
+             .resizingAnnotation(let annotationID, _, _, _, _),
+             .adjustingArrow(let annotationID, _):
             id = annotationID
         default:
             return
@@ -989,6 +1116,44 @@ final class ScreenshotOverlayView: NSView {
         mouseDownPoint = point
         onAnnotationInteractionBegan?(id)
         dragState = state
+    }
+
+    private func arrowHandle(at point: CGPoint, annotation: ScreenshotAnnotation, rect: CGRect) -> Int? {
+        let handles = ScreenshotAnnotationPath.arrowHandles(for: annotation, in: rect)
+        return handles.indices.filter { hypot(handles[$0].x - point.x, handles[$0].y - point.y) <= 9 }
+            .min { hypot(handles[$0].x - point.x, handles[$0].y - point.y)
+                < hypot(handles[$1].x - point.x, handles[$1].y - point.y) }
+    }
+
+    private func adjustArrow(_ id: UUID, handle: Int, at point: CGPoint) {
+        guard let viewport = annotationViewport,
+              let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+        var annotation = annotations[index]
+        if handle == 0 || handle == 3 {
+            var pixel = viewport.pixelPoint(from: point)
+            pixel.x = min(pixel.x, viewport.pixelSize.width - 1)
+            pixel.y = min(pixel.y, viewport.pixelSize.height - 1)
+            if handle == 0 { annotation.start = pixel } else { annotation.end = pixel }
+        } else {
+            let handles = ScreenshotAnnotationPath.arrowHandles(for: annotation, in: viewport.viewRect(for: annotation.rect))
+            guard let start = handles.first, let end = handles.last,
+                  hypot(end.x - start.x, end.y - start.y) > 2 else { return }
+            var anchors = ScreenshotArrowAnchors.resolved(for: annotation)
+            var relative = ScreenshotArrowAnchors.relative(point, start: start, end: end)
+            relative.y = min(1.5, max(-1.5, relative.y))
+            if handle == 1 {
+                relative.x = min(anchors.second.x - 0.04, max(0.04, relative.x))
+                anchors.first = relative
+            } else {
+                relative.x = max(anchors.first.x + 0.04, min(0.96, relative.x))
+                anchors.second = relative
+            }
+            annotation.arrowAnchors = anchors
+        }
+        guard annotation != annotations[index] else { return }
+        annotations[index] = annotation
+        onArrowGeometryChanged?(annotation)
+        needsDisplay = true
     }
 
     private func updateAnnotation(
@@ -1009,7 +1174,20 @@ final class ScreenshotOverlayView: NSView {
         onAnnotationChanged?(id, pixelRect, style)
     }
 
+    private func annotationEndpoint(
+        from start: PixelPoint, to end: PixelPoint, kind: ScreenshotAnnotationKind,
+        modifiers: NSEvent.ModifierFlags
+    ) -> PixelPoint {
+        guard kind.supportsFill, modifiers.contains(.control) else { return end }
+        let horizontal = end.x - start.x
+        let vertical = end.y - start.y
+        let side = min(abs(horizontal), abs(vertical))
+        return PixelPoint(x: start.x + (horizontal < 0 ? -side : side),
+                          y: start.y + (vertical < 0 ? -side : side))
+    }
+
     override func mouseDragged(with event: NSEvent) {
+        setHoverHint(nil, anchor: .zero)
         let point = convert(event.locationInWindow, from: nil)
         switch dragState {
         case .none:
@@ -1050,10 +1228,14 @@ final class ScreenshotOverlayView: NSView {
             outputAppearance = appearance.validated()
             onOutputAppearanceChanged?(outputAppearance)
         case .creatingAnnotation(let start):
+            drawingCursor().set()
             guard let viewport = annotationViewport,
                   let kind = activeTool.annotationKind else { break }
             let startPixel = viewport.pixelPoint(from: start)
-            let endPixel = viewport.pixelPoint(from: point)
+            let endPixel = annotationEndpoint(
+                from: startPixel, to: viewport.pixelPoint(from: point),
+                kind: kind, modifiers: event.modifierFlags
+            )
             if kind == .brush {
                 if draftBrushPoints.isEmpty {
                     draftBrushPoints = [startPixel]
@@ -1083,6 +1265,8 @@ final class ScreenshotOverlayView: NSView {
                 constrainedTo: bounds
             )
             updateAnnotation(id, viewRect: rect, viewport: viewport)
+        case .adjustingArrow(let id, let handle):
+            adjustArrow(id, handle: handle, at: point)
         case .resizingAnnotation(
             let id,
             let handle,
@@ -1149,6 +1333,9 @@ final class ScreenshotOverlayView: NSView {
             }
             onSelectionCommitted?(selection)
             onInteractionEnded?()
+        case .adjustingArrow(let id, let handle):
+            adjustArrow(id, handle: handle, at: point)
+            onInteractionEnded?()
         case .movingAnnotation, .resizingAnnotation:
             onInteractionEnded?()
         case .creatingAnnotation:
@@ -1159,7 +1346,10 @@ final class ScreenshotOverlayView: NSView {
                 return
             }
             let start = viewport.pixelPoint(from: downPoint)
-            let end = viewport.pixelPoint(from: point)
+            let end = annotationEndpoint(
+                from: start, to: viewport.pixelPoint(from: point),
+                kind: kind, modifiers: event.modifierFlags
+            )
             if kind == .brush {
                 if draftBrushPoints.isEmpty {
                     draftBrushPoints = [start]
@@ -1253,7 +1443,11 @@ final class ScreenshotOverlayView: NSView {
             ofSize: max(CGFloat(annotation.style.lineWidth), 8),
             weight: .semibold
         )
-        editor.textColor = annotation.style.color.nsColor
+        editor.textColor = annotation.style.textColor
+        if annotation.style.fillsTextBackground == true {
+            editor.backgroundColor = annotation.style.color.nsColor
+            editor.drawsBackground = true
+        }
         editor.onTextChanged = { [weak self] text in
             guard let self,
                   let index = annotations.firstIndex(where: { $0.id == id }) else { return }
@@ -1347,7 +1541,7 @@ final class ScreenshotOverlayView: NSView {
                 outputAppearance = appearanceBeforeDrag
                 onOutputAppearanceChanged?(appearanceBeforeDrag)
             }
-        case .none, .creatingAnnotation, .movingAnnotation, .resizingAnnotation:
+        case .none, .creatingAnnotation, .movingAnnotation, .resizingAnnotation, .adjustingArrow:
             break
         }
         appearanceBeforeDrag = nil
@@ -1358,29 +1552,173 @@ final class ScreenshotOverlayView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        pointerLocation = point
-        needsDisplay = true
+        updatePointerLocation(point)
         updateCursor(for: point)
+        updateHoverHint(at: point)
         if selection == nil, dragState == .none {
             onTargetHover?(point)
-        } else {
-            onTargetHover?(nil)
         }
     }
 
     override func mouseExited(with event: NSEvent) {
-        pointerLocation = nil
-        needsDisplay = true
+        setHoverHint(nil, anchor: .zero)
+        updatePointerLocation(nil)
         onTargetHover?(nil)
     }
 
     func updatePointerLocation(_ point: CGPoint?) {
+        guard pointerLocation != point else { return }
+        let previousLocation = pointerLocation
         pointerLocation = point
-        needsDisplay = true
+        updateCrosshairGuide()
+        guard selection == nil, showsColorInspector else { return }
+
+        var dirtyRect = CGRect.null
+        if let previousLocation {
+            dirtyRect = dirtyRect.union(
+                ScreenshotMagnifierLayout.panel(for: previousLocation, in: bounds)
+                    .insetBy(dx: -2, dy: -2)
+            )
+        }
+        if let point {
+            dirtyRect = dirtyRect.union(
+                ScreenshotMagnifierLayout.panel(for: point, in: bounds)
+                    .insetBy(dx: -2, dy: -2)
+            )
+        }
+        guard !dirtyRect.isNull else { return }
+        setNeedsDisplay(dirtyRect.intersection(bounds))
+    }
+
+    private var currentPointerLocation: CGPoint? {
+        guard let window else { return pointerLocation }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        return bounds.contains(point) ? point : nil
+    }
+
+    private func installCrosshairGuideIfNeeded() {
+        guard crosshairGuide.superview == nil else {
+            crosshairGuide.frame = bounds
+            return
+        }
+        crosshairGuide.frame = bounds
+        crosshairGuide.autoresizingMask = [.width, .height]
+        addSubview(crosshairGuide, positioned: .below, relativeTo: nil)
+        updateCrosshairGuide()
+    }
+
+    private func updateCrosshairGuide() {
+        installCrosshairGuideIfNeeded()
+        crosshairGuide.setPoint(
+            showsColorInspector && selection == nil ? pointerLocation : nil
+        )
     }
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .arrow)
+    }
+
+    private var hoverHintTask: Task<Void, Never>?
+    private var hoverHintText: String?
+    private var hoverHintAnchor: CGRect = .zero
+    private var hoverHintView: NSView?
+
+    func dismissHoverHint() {
+        setHoverHint(nil, anchor: .zero)
+    }
+
+    func updateHoverHint(at point: CGPoint) {
+        if let selection, activeTool == .selection, selectedAnnotationID == nil,
+           SelectionCornerRadiusGeometry.hitTest(point, selection: selection,
+                                                 radius: outputAppearance.cornerRadius) {
+            let center = SelectionCornerRadiusGeometry.handleCenter(
+                in: selection, radius: outputAppearance.cornerRadius
+            )
+            setHoverHint("拖动调整圆角", anchor: CGRect(x: center.x - 6, y: center.y - 6, width: 12, height: 12))
+            return
+        }
+        for surface in [toolbar as NSView, outputToolbar as NSView] where surface.superview != nil && surface.frame.contains(point) {
+            var hit = surface.hitTest(point)
+            while let view = hit, view !== surface {
+                if let hint = view.toolTip, !hint.isEmpty {
+                    setHoverHint(hint, anchor: convert(view.bounds, from: view))
+                    return
+                }
+                hit = view.superview
+            }
+        }
+        setHoverHint(nil, anchor: .zero)
+    }
+
+    private func setHoverHint(_ text: String?, anchor: CGRect) {
+        guard hoverHintText != text || hoverHintAnchor != anchor else { return }
+        hoverHintTask?.cancel()
+        hoverHintView?.removeFromSuperview()
+        hoverHintView = nil
+        hoverHintText = text
+        hoverHintAnchor = anchor
+        guard let text else { return }
+        hoverHintTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(360))
+            guard !Task.isCancelled, let self, self.window?.isVisible == true else { return }
+            let label = NSTextField(labelWithString: text)
+            label.font = .systemFont(ofSize: 11.5, weight: .medium)
+            label.textColor = NylaiTheme.primaryText(for: self.effectiveAppearance)
+            let size = CGSize(width: label.fittingSize.width + 16, height: label.fittingSize.height + 10)
+            let left = min(max(anchor.midX - size.width / 2, 5), max(5, self.bounds.width - size.width - 5))
+            let top = anchor.minY - size.height - 6
+            let originY = top >= 5 ? top : min(anchor.maxY + 6, self.bounds.height - size.height - 5)
+            let bubble = ScreenshotHoverHintView(frame: CGRect(origin: CGPoint(x: left, y: originY), size: size))
+            bubble.wantsLayer = true
+            bubble.layer?.zPosition = 50
+            bubble.layer?.cornerRadius = 6
+            bubble.layer?.backgroundColor = NylaiTheme.panelBackground(for: self.effectiveAppearance).cgColor
+            bubble.layer?.borderColor = NylaiTheme.border(for: self.effectiveAppearance).cgColor
+            bubble.layer?.borderWidth = 1
+            label.frame = bubble.bounds.insetBy(dx: 8, dy: 5)
+            bubble.addSubview(label)
+            self.addSubview(bubble, positioned: .above, relativeTo: nil)
+            self.hoverHintView = bubble
+        }
+    }
+
+    private var strokeCursor: (diameter: CGFloat, color: ScreenshotAnnotationColor, cursor: NSCursor)?
+
+    private func drawingCursor() -> NSCursor {
+        guard let kind = activeTool.annotationKind, kind.supportsLineStyleControl,
+              let viewport = annotationViewport else { return .crosshair }
+        let diameter = max(1, CGFloat(currentStyle.lineWidth) * min(viewport.scaleX, viewport.scaleY))
+        let color = currentStyle.color
+        if let strokeCursor, strokeCursor.diameter == diameter, strokeCursor.color == color {
+            return strokeCursor.cursor
+        }
+        let size = NSSize(width: max(17, diameter + 8), height: max(17, diameter + 8))
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        let image = NSImage(size: size, flipped: false) { _ in
+            let circle = NSBezierPath(ovalIn: CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2,
+                                                     width: diameter, height: diameter))
+            NSColor.white.withAlphaComponent(0.80).setStroke()
+            circle.lineWidth = 1
+            circle.stroke()
+            color.nsColor.withAlphaComponent(0.90).setFill()
+            circle.fill()
+            let crosshair = NSBezierPath()
+            let arm = max(5, diameter / 2 + 2)
+            crosshair.move(to: CGPoint(x: center.x - arm, y: center.y))
+            crosshair.line(to: CGPoint(x: center.x + arm, y: center.y))
+            crosshair.move(to: CGPoint(x: center.x, y: center.y - arm))
+            crosshair.line(to: CGPoint(x: center.x, y: center.y + arm))
+            NSColor.black.withAlphaComponent(0.82).setStroke()
+            crosshair.lineWidth = 2.5
+            crosshair.stroke()
+            NSColor.white.setStroke()
+            crosshair.lineWidth = 1
+            crosshair.stroke()
+            return true
+        }
+        let cursor = NSCursor(image: image, hotSpot: center)
+        strokeCursor = (diameter, color, cursor)
+        return cursor
     }
 
     private func updateCursor(for point: CGPoint) {
@@ -1394,10 +1732,18 @@ final class ScreenshotOverlayView: NSView {
             NSCursor.crosshair.set()
             return
         }
+        if activeTool != .selection, let selectedAnnotationID,
+           let annotation = annotations.first(where: { $0.id == selectedAnnotationID }),
+           annotation.kind == .arrow, let viewport = annotationViewport,
+           arrowHandle(at: point, annotation: annotation, rect: viewport.viewRect(for: annotation.rect)) != nil {
+            NSCursor.openHand.set()
+            return
+        }
         if activeTool != .selection,
            selection.contains(point),
            let selectedAnnotationID,
            let annotation = annotations.first(where: { $0.id == selectedAnnotationID }),
+           annotation.kind != .arrow,
            let viewport = annotationViewport,
            let handle = AnnotationSelectionGeometry.handle(
                at: point,
@@ -1415,7 +1761,7 @@ final class ScreenshotOverlayView: NSView {
                    selection: selection,
                    radius: outputAppearance.cornerRadius
                ) {
-                NSCursor.crosshair.set()
+                NSCursor.arrow.set()
                 return
             }
             if let handle = SelectionGeometry.handle(at: point, in: selection) {
@@ -1436,7 +1782,7 @@ final class ScreenshotOverlayView: NSView {
            ) != nil {
             NSCursor.openHand.set()
         } else if activeTool.annotationKind != nil, selection.contains(point) {
-            NSCursor.crosshair.set()
+            drawingCursor().set()
         } else {
             NSCursor.arrow.set()
         }
@@ -1508,6 +1854,10 @@ final class ScreenshotOverlayView: NSView {
 }
 
 @MainActor
+private final class ScreenshotHoverHintView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 private final class AnnotationTextEditorView: NSTextView {
     var originalText = ""
     var onTextChanged: ((String) -> Void)?

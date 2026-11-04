@@ -26,20 +26,25 @@ final class ModuleStateTests: XCTestCase {
         controller.onLifecycleChange = { changes.append(($0, $1)) }
 
         XCTAssertFalse(controller.isEnabled(.screenshot))
-        XCTAssertFalse(controller.isEnabled(.globalShortcuts))
+        XCTAssertTrue(controller.isEnabled(.globalShortcuts))
         XCTAssertFalse(controller.isEnabled(.mouseGestures))
         XCTAssertFalse(controller.isEnabled(.clipboard))
         XCTAssertFalse(controller.isEnabled(.windowSwitcher))
-        XCTAssertEqual(controller.status(for: .globalShortcuts), .off)
+        XCTAssertEqual(controller.status(for: .globalShortcuts), .available)
 
+        try controller.setEnabled(false, for: .globalShortcuts)
+        XCTAssertEqual(controller.status(for: .globalShortcuts), .off)
         try controller.setEnabled(true, for: .globalShortcuts)
         XCTAssertEqual(runtime.configuration?.isEnabled, true)
         XCTAssertEqual(controller.status(for: .globalShortcuts), .available)
         try controller.setEnabled(true, for: .screenshot)
         try controller.setEnabled(true, for: .clipboard)
 
-        XCTAssertEqual(changes.map(\.0), [.globalShortcuts, .screenshot, .clipboard])
-        XCTAssertEqual(changes.map(\.1), [true, true, true])
+        XCTAssertEqual(
+            changes.map(\.0),
+            [.globalShortcuts, .globalShortcuts, .screenshot, .clipboard]
+        )
+        XCTAssertEqual(changes.map(\.1), [false, true, true, true])
         XCTAssertTrue(AppPreferences(defaults: defaults).clipboardEnabled)
     }
 

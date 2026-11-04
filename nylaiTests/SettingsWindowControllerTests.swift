@@ -34,6 +34,10 @@ final class SettingsWindowControllerTests: XCTestCase {
         let window = try XCTUnwrap(controller.window)
         defer { controller.close() }
 
+        XCTAssertEqual(window.title, "")
+        XCTAssertEqual(window.titleVisibility, .hidden)
+        XCTAssertTrue(window.titlebarAppearsTransparent)
+        XCTAssertTrue(window.styleMask.contains(.fullSizeContentView))
         controller.present()
         XCTAssertTrue(window.isVisible)
         controller.close()

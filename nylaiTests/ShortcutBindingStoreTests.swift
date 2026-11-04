@@ -21,7 +21,7 @@ final class ShortcutBindingStoreTests: XCTestCase {
             ShortcutKey(keyCode: UInt32(kVK_ANSI_A), modifiers: [.option])
         )
         XCTAssertTrue(configuration.bindings[1].isEnabled)
-        XCTAssertFalse(configuration.isEnabled)
+        XCTAssertTrue(configuration.isEnabled)
         XCTAssertEqual(configuration.bindings[2].id, .screenshotHistory)
         XCTAssertNil(configuration.bindings[2].shortcut)
         XCTAssertEqual(configuration.bindings[3].id, .collage)

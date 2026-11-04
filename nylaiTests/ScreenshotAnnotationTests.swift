@@ -3,6 +3,51 @@ import XCTest
 @testable import nylai
 
 final class ScreenshotAnnotationTests: XCTestCase {
+    func testArrowFormsNormalizeEndpointsAndCurveMirrorsInExport() {
+        let invalid = ScreenshotArrowOptions(form: .body, start: .dot, tip: .open, tapered: true, filled: false)
+        XCTAssertEqual(invalid.normalized().start, .none)
+        XCTAssertEqual(invalid.normalized().tip, .triangle)
+        XCTAssertTrue(invalid.normalized().filled)
+
+        var style = ScreenshotAnnotationStyle.default
+        style.arrowOptions = ScreenshotArrowOptions(form: .body, start: .fork, tip: .dart,
+                                                     curve: .left, filled: false)
+        let annotation = ScreenshotAnnotation(kind: .arrow, start: PixelPoint(x: 0, y: 0),
+                                              end: PixelPoint(x: 180, y: 0), style: style)
+        let bounds = CGRect(x: 0, y: 0, width: 180, height: 1)
+        let screen = ScreenshotAnnotationPath.cgPath(for: annotation, in: bounds).boundingBoxOfPath
+        let export = ScreenshotAnnotationPath.cgPath(for: annotation, in: bounds, flipped: false).boundingBoxOfPath
+        XCTAssertLessThan(screen.minY, -15)
+        XCTAssertGreaterThan(export.maxY, 15)
+        XCTAssertNil(ScreenshotAnnotationPath.fillPath(for: annotation, in: bounds))
+    }
+
+    @MainActor
+    func testArrowCircleHandleBendsShaftWithoutMovingSquareEndpoints() throws {
+        let view = ScreenshotOverlayView(frame: CGRect(x: 0, y: 0, width: 760, height: 540))
+        let window = attachToWindow(view)
+        defer { window.orderOut(nil) }
+        view.sourcePixelSize = try PixelSize(width: 760, height: 540)
+        view.setSelection(CGRect(x: 40, y: 40, width: 620, height: 390), notify: false)
+        view.setTool(.objectSelection)
+        let arrow = ScreenshotAnnotation(kind: .arrow, start: PixelPoint(x: 120, y: 180),
+                                         end: PixelPoint(x: 360, y: 180))
+        view.setAnnotations([arrow], selectedID: arrow.id)
+        var changed: ScreenshotAnnotation?
+        view.onArrowGeometryChanged = { changed = $0 }
+        let first = CGPoint(x: 200, y: 180.5)
+        let moved = CGPoint(x: 208, y: 128)
+        view.mouseDown(with: try mouseEvent(.leftMouseDown, in: view, at: first))
+        view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: view, at: moved))
+        view.mouseUp(with: try mouseEvent(.leftMouseUp, in: view, at: moved))
+        let curved = try XCTUnwrap(changed)
+        XCTAssertEqual(curved.start, arrow.start)
+        XCTAssertEqual(curved.end, arrow.end)
+        let handles = ScreenshotAnnotationPath.arrowHandles(for: curved, in: curved.rect.cgRect)
+        XCTAssertEqual(handles[1].x, moved.x, accuracy: 1)
+        XCTAssertEqual(handles[1].y, moved.y, accuracy: 1)
+    }
+
     func testColorSamplerReturnsHexAndRGBForTheExactPixel() throws {
         let image = try makeCheckerboardImage(width: 4, height: 4)
         let first = try XCTUnwrap(ScreenshotColorSampler.color(
@@ -220,6 +265,27 @@ final class ScreenshotAnnotationTests: XCTestCase {
         }
         XCTAssertGreaterThan(redCount, 100)
         XCTAssertGreaterThan(blueCount, 20)
+    }
+
+    func testFilledShapesRenderTheirStrokeColorAtTheCenter() throws {
+        let source = try makeSource(width: 60, height: 60)
+        let selection = PixelRect(x: 0, y: 0, width: 60, height: 60)
+        for kind in [ScreenshotAnnotationKind.rectangle, .ellipse] {
+            var style = ScreenshotAnnotationStyle.default
+            style.fillsShape = true
+            style.color = ScreenshotAnnotationColor(red: 1, green: 0, blue: 0, alpha: 1)
+            let annotation = ScreenshotAnnotation(kind: kind, start: PixelPoint(x: 10, y: 10),
+                                                  end: PixelPoint(x: 50, y: 50), style: style)
+            let rendered = try ScreenshotAnnotationRenderer.render(
+                source: source, selection: selection, annotations: [annotation]
+            )
+            let bitmap = NSBitmapImageRep(cgImage: rendered)
+            let center = try XCTUnwrap(bitmap.colorAt(x: 30, y: 30)?.usingColorSpace(.sRGB))
+            let stroke = try XCTUnwrap(bitmap.colorAt(x: 30, y: 10)?.usingColorSpace(.sRGB))
+            XCTAssertGreaterThan(center.redComponent, 0.95)
+            XCTAssertEqual(center.greenComponent, stroke.greenComponent, accuracy: 0.02)
+            XCTAssertEqual(center.blueComponent, stroke.blueComponent, accuracy: 0.02)
+        }
     }
 
     func testDashedStyleRendersFewerPixelsAndWidthChangesCoverage() throws {
@@ -613,9 +679,46 @@ final class ScreenshotAnnotationTests: XCTestCase {
             "#FF0000"
         )
         XCTAssertEqual(ScreenshotColorPalette.color(column: 0, row: 0).hexText.count, 7)
+        XCTAssertEqual(ScreenshotColorPalette.rowCount, 8)
+        XCTAssertEqual(ScreenshotColorPalette.brightnessLevels.count, 8)
+        for column in 0..<ScreenshotColorPalette.columnCount {
+            let colors = (0..<ScreenshotColorPalette.rowCount).map {
+                ScreenshotColorPalette.color(column: column, row: $0)
+            }
+            zip(colors, colors.dropFirst()).forEach { lighter, darker in
+                XCTAssertGreaterThan(lighter.red, darker.red)
+                XCTAssertTrue(
+                    [lighter.red, lighter.green, lighter.blue,
+                     darker.red, darker.green, darker.blue]
+                        .allSatisfy { (0...1).contains($0) }
+                )
+            }
+        }
         XCTAssertGreaterThan(
             ScreenshotColorPalette.color(column: 0, row: 0).red,
-            ScreenshotColorPalette.color(column: 0, row: 4).red
+            ScreenshotColorPalette.color(column: 0, row: 6).red
+        )
+    }
+
+    @MainActor
+    func testMosaicHidesColorAndLineStyleControlsButKeepsBlockSize() throws {
+        let toolbar = SelectionToolbarView(
+            frame: CGRect(x: 0, y: 0, width: 330, height: 78)
+        )
+        toolbar.styleControlsEnabled = true
+        toolbar.styleKind = .mosaic
+
+        XCTAssertTrue(
+            try XCTUnwrap(findView(accessibilityLabel: "标注颜色", in: toolbar)).isHidden
+        )
+        XCTAssertTrue(
+            try XCTUnwrap(findView(accessibilityLabel: "实线", in: toolbar)).isHidden
+        )
+        XCTAssertTrue(
+            try XCTUnwrap(findView(accessibilityLabel: "虚线", in: toolbar)).isHidden
+        )
+        XCTAssertFalse(
+            try XCTUnwrap(findView(accessibilityLabel: "标注参数", in: toolbar)).isHidden
         )
     }
 
@@ -648,12 +751,28 @@ final class ScreenshotAnnotationTests: XCTestCase {
         XCTAssertEqual(view.activeTool, .rectangle)
         XCTAssertEqual(try XCTUnwrap(findButton(titled: "选区", in: view)).state, .off)
         XCTAssertEqual(try XCTUnwrap(findButton(titled: "选择标注", in: view)).state, .off)
-        XCTAssertFalse(try XCTUnwrap(findButton(titled: "颜色", in: view)).isHidden)
+        let swatch = try XCTUnwrap(findView(accessibilityLabel: "标注颜色", in: view) as? NSButton)
+        XCTAssertFalse(swatch.isHidden)
+        XCTAssertTrue(swatch.title.isEmpty)
         XCTAssertFalse(try XCTUnwrap(findButton(titled: "实线", in: view)).isHidden)
+    }
+
+    @MainActor
+    func testSelectingAnnotationHighlightsItsToolWithoutChangingDrawingMode() throws {
+        let view = ScreenshotOverlayView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        view.setSelection(CGRect(x: 40, y: 40, width: 600, height: 300), notify: false)
+        view.setTool(.objectSelection)
+        let annotation = ScreenshotAnnotation(kind: .arrow, start: PixelPoint(x: 60, y: 60),
+                                              end: PixelPoint(x: 100, y: 80))
+        view.setAnnotations([annotation], selectedID: annotation.id)
+        XCTAssertEqual(view.activeTool, .objectSelection)
+        XCTAssertEqual(try XCTUnwrap(findButton(titled: "箭头", in: view)).state, .on)
+        XCTAssertEqual(try XCTUnwrap(findButton(titled: "矩形", in: view)).state, .off)
     }
 
     func testAllNylaiIconsRenderAsTemplateImages() {
         for icon in NylaiIcon.allCases {
+            XCTAssertNotNil(NSImage(named: icon.assetName), icon.rawValue)
             let image = icon.image(pointSize: 14)
             XCTAssertTrue(image.isTemplate, icon.rawValue)
             XCTAssertEqual(image.size, NSSize(width: 14, height: 14), icon.rawValue)
@@ -670,6 +789,24 @@ final class ScreenshotAnnotationTests: XCTestCase {
         XCTAssertEqual(imageRect.width, imageRect.height)
         XCTAssertEqual(imageRect.minX - panel.minX, ScreenshotMagnifierLayout.inset)
         XCTAssertEqual(imageRect.minY - panel.minY, ScreenshotMagnifierLayout.inset)
+    }
+
+    func testMagnifierPanelStaysInsideEveryScreenEdge() {
+        let bounds = CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let safeBounds = bounds.insetBy(dx: 12, dy: 12)
+        let points = [
+            CGPoint(x: 0, y: 0),
+            CGPoint(x: 1199, y: 0),
+            CGPoint(x: 0, y: 799),
+            CGPoint(x: 1199, y: 799),
+            CGPoint(x: 600, y: 400),
+        ]
+
+        for point in points {
+            let panel = ScreenshotMagnifierLayout.panel(for: point, in: bounds)
+            XCTAssertEqual(panel.size, ScreenshotMagnifierLayout.panelSize)
+            XCTAssertTrue(safeBounds.contains(panel), "\(point) -> \(panel)")
+        }
     }
 
     @MainActor
@@ -1042,6 +1179,19 @@ final class ScreenshotAnnotationTests: XCTestCase {
         for subview in view.subviews {
             if let button = findButton(titled: title, in: subview) {
                 return button
+            }
+        }
+        return nil
+    }
+
+    @MainActor
+    private func findView(accessibilityLabel: String, in view: NSView) -> NSView? {
+        if view.accessibilityLabel() == accessibilityLabel {
+            return view
+        }
+        for subview in view.subviews {
+            if let match = findView(accessibilityLabel: accessibilityLabel, in: subview) {
+                return match
             }
         }
         return nil

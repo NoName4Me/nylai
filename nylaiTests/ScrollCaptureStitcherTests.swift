@@ -446,6 +446,17 @@ final class ScrollCaptureStitcherTests: XCTestCase {
 }
 
 final class ScrollPreviewLayoutSolverTests: XCTestCase {
+    func testKeepsPreviewLeftOfSelectionEvenWhenTargetWindowCoversThatSpace() {
+        let screen = CGRect(x: 0, y: 0, width: 1200, height: 760)
+        let selection = CGRect(x: 440, y: 38, width: 720, height: 682)
+        let layout = ScrollPreviewLayoutSolver.layout(
+            selection: selection, screenFrame: screen, avoiding: screen
+        )
+        XCTAssertEqual(layout.position, .left)
+        XCTAssertFalse(layout.frame.intersects(selection))
+        XCTAssertTrue(screen.contains(layout.frame))
+    }
+
     func testPrefersRightSideWhenItHasSpace() {
         let screen = CGRect(x: 0, y: 0, width: 1_400, height: 900)
         let selection = CGRect(x: 420, y: 300, width: 400, height: 320)
@@ -749,18 +760,20 @@ final class ScrollCaptureControllerTests: XCTestCase {
     }
 
     @MainActor
-    func testRunningCaptureShowsOnlyCompactCompletionControl() async throws {
+    func testRunningCaptureShowsRightSideOutputControls() async throws {
         let target = ScrollCaptureDisplayTarget(
             displayID: 12,
             frame: CGRect(x: 0, y: 0, width: 640, height: 480)
         )
+        let paster = ScrollCaptureRecordingPaster()
         let controller = ScrollCaptureController(
             displayCapturer: SequenceScrollCapturer(images: [
                 try makePageSlice(width: 640, height: 480, yOffset: 0),
             ]),
             displayTarget: { _ in target },
-            openEditor: { _, _, _ in },
-            presentError: { _ in }
+            openEditor: { _, _, _ in XCTFail("直接复制不应打开编辑器") },
+            paster: paster,
+            presentError: { XCTFail("复制失败：\($0)") }
         )
 
         controller.begin(with: ScrollCaptureStartRequest(
@@ -775,14 +788,20 @@ final class ScrollCaptureControllerTests: XCTestCase {
         let completion = try XCTUnwrap(NSApp.windows.first {
             $0.identifier?.rawValue == "nylai.scroll-capture-completion"
         })
-        let button = try XCTUnwrap(completion.contentView as? NSButton)
-        XCTAssertEqual(button.title, "完成")
+        let buttons = try XCTUnwrap(completion.contentView?.subviews.compactMap { $0 as? NSButton })
+        XCTAssertEqual(buttons.map(\.title), ["编辑", "复制", "保存", "取消"])
+        let button = try XCTUnwrap(buttons.first)
+        XCTAssertGreaterThan(completion.frame.midX, 240)
         XCTAssertFalse(button.isEnabled)
 
         controller.startOrResume(automaticCapture: false)
         Task { _ = await controller.captureFrameNow() }
         try await waitForScrollCondition { button.isEnabled }
         XCTAssertTrue(button.isEnabled)
+        buttons[1].performClick(nil)
+        try await waitForScrollCondition { paster.image != nil && controller.phase == .idle }
+        XCTAssertEqual(paster.image?.width, 400)
+        XCTAssertEqual(paster.image?.height, 280)
     }
 
     func testCancelAndCloseAreIdempotentAndPreventLateSelection() async throws {
@@ -1030,6 +1049,12 @@ final class ScrollCaptureControllerTests: XCTestCase {
         }
         return image
     }
+}
+
+@MainActor
+private final class ScrollCaptureRecordingPaster: ScreenshotPasting {
+    var image: CGImage?
+    func copy(_ image: CGImage) throws { self.image = image }
 }
 
 @MainActor

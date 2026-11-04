@@ -47,15 +47,16 @@ final class WindowSwitcherController {
     func start(requestPermission: Bool) {
         observeSleepIfNeeded()
         onRuntimeStatusChange(.starting)
-        if requestPermission {
-            AccessibilityPermission.requestIfNeeded()
-            InputMonitoringPermission.requestIfNeeded()
-        }
-        guard AccessibilityPermission.isGranted,
-              InputMonitoringPermission.isGranted else {
-            onRuntimeStatusChange(
-                .failed(WindowSwitcherError.inputTapUnavailable.localizedDescription)
-            )
+        let missingPermission = WindowSwitcherPermissionPolicy.firstMissing(
+            accessibilityGranted: AccessibilityPermission.isGranted,
+            inputMonitoringGranted: InputMonitoringPermission.isGranted,
+            screenRecordingGranted: ScreenRecordingPermission.isGranted
+        )
+        if let missingPermission {
+            if requestPermission {
+                request(missingPermission)
+            }
+            onRuntimeStatusChange(.failed(missingPermission.error.localizedDescription))
             return
         }
         do {
@@ -63,6 +64,17 @@ final class WindowSwitcherController {
             onRuntimeStatusChange(.running)
         } catch {
             onRuntimeStatusChange(.failed(error.localizedDescription))
+        }
+    }
+
+    private func request(_ permission: WindowSwitcherPermissionRequirement) {
+        switch permission {
+        case .accessibility:
+            AccessibilityPermission.requestIfNeeded()
+        case .inputMonitoring:
+            InputMonitoringPermission.requestIfNeeded()
+        case .screenRecording:
+            _ = ScreenRecordingPermission.requestAccessIfNeeded()
         }
     }
 

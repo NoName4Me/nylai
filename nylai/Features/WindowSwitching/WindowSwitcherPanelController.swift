@@ -176,7 +176,7 @@ private struct WindowSwitcherPanelView: View {
                             RoundedRectangle(cornerRadius: 18)
                                 .strokeBorder(
                                     isSelected
-                                        ? Color.accentColor.opacity(0.95)
+                                        ? NylaiPalette.accent.opacity(0.95)
                                         : Color.clear,
                                     lineWidth: 2
                                 )
@@ -296,7 +296,7 @@ private struct WindowSwitcherPanelView: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 14)
                     .strokeBorder(
-                        isSelected ? Color.accentColor : Color.clear,
+                        isSelected ? NylaiPalette.accent : Color.clear,
                         lineWidth: isSelected ? 2.5 : 1
                     )
             }
@@ -306,16 +306,39 @@ private struct WindowSwitcherPanelView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 16) {
-            Label("Tab 切换应用", systemImage: "arrow.left.and.right")
-            Label("` 该应用内切换窗口", systemImage: "rectangle.on.rectangle")
+        HStack(spacing: 6) {
+            keycap("Tab")
+            Text("切换应用")
+                .padding(.trailing, 10)
+            keycap("`")
+            Text("切换窗口")
             Spacer()
-            Text("松开 Command 确认 · Esc 取消")
-                .foregroundStyle(.secondary)
+            keycap("⌘")
+            Text("松开确认")
+                .padding(.trailing, 10)
+            keycap("esc")
+            Text("取消")
         }
         .font(.system(size: 11.5))
         .padding(.horizontal, 24)
         .frame(height: 44)
+    }
+
+    private func keycap(_ label: String) -> some View {
+        Text(label)
+            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 7)
+            .frame(minWidth: 24, minHeight: 21)
+            .background {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Color.primary.opacity(colorScheme == .dark ? 0.13 : 0.07))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.24 : 0.16))
+            }
+            .shadow(color: .black.opacity(colorScheme == .dark ? 0.2 : 0.08), radius: 0.5, y: 1)
     }
 
     private func applicationIcon(_ application: WindowSwitcherApplication) -> some View {

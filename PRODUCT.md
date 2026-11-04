@@ -4,7 +4,7 @@
 
 ## Platform
 
-原生 macOS 菜单栏应用。
+原生 macOS 菜单栏应用，适配浅色与深色外观。
 
 ## Stack
 
@@ -20,7 +20,7 @@
 
 ## Capabilities and Constraints
 
-本地优先、菜单栏常驻、功能按目录隔离；无账号、云端或服务器。不默认启用 App Sandbox。应用分组窗口切换首版已接入：同一面板内切应用与应用内窗口，限定当前桌面普通窗口并使用内存预览缓存；自动检查通过，真实系统技术验收尚未开始。详见 [需求规格](docs/REQUIREMENTS.md) 与 [开发计划](docs/DEVELOPMENT_PLAN.md)。Todo 需求尚未确定。
+本地优先、菜单栏常驻、功能按目录隔离；无账号、云端或服务器。不默认启用 App Sandbox。应用分组窗口切换首版已接入：同一面板内切应用与应用内窗口，覆盖当前桌面普通窗口和最小化窗口并使用内存预览缓存；视觉支持跟随系统、日间与夜间。应用名在简体中文系统显示“拈来”，其他语言显示“Nylai”。详见 [需求规格](docs/REQUIREMENTS.md) 与 [开发计划](docs/DEVELOPMENT_PLAN.md)。Todo 需求尚未确定。
 
 ## Product Principles
 

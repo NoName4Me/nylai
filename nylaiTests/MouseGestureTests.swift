@@ -1,8 +1,82 @@
+import Carbon
 import XCTest
 @testable import nylai
 
 @MainActor
 final class MouseGestureTests: XCTestCase {
+    func testNoisyDiagonalAndOppositeOrderOfLStrokes() {
+        func recognize(_ points: [CGPoint]) -> GesturePath? {
+            var recognizer = GesturePathRecognizer()
+            recognizer.begin(at: points[0])
+            for point in points.dropFirst() { recognizer.move(to: point) }
+            return recognizer.recognizedPath()
+        }
+
+        XCTAssertEqual(recognize([.zero, CGPoint(x: 10, y: 8), CGPoint(x: 25, y: 28),
+                                  CGPoint(x: 48, y: 47)]), GesturePath([.upRight]))
+        let elbow = [CGPoint(x: 0, y: 50), .zero, CGPoint(x: 50, y: 0)]
+        XCTAssertEqual(recognize(elbow), GesturePath([.down, .right]))
+        XCTAssertEqual(recognize(Array(elbow.reversed())), GesturePath([.left, .up]))
+    }
+
+    func testCircleDirectionAndLegacyPathDecoding() throws {
+        for circle in [GestureCircle.clockwise, .counterclockwise] {
+            let sign: CGFloat = circle == .clockwise ? -1 : 1
+            let points = (0...40).map { index in
+                let angle = 0.7 + sign * CGFloat(index) / 40 * 2 * .pi
+                return CGPoint(x: 60 * cos(angle), y: 30 * sin(angle))
+            }
+            var recognizer = GesturePathRecognizer()
+            recognizer.begin(at: points[0])
+            for point in points.dropFirst() { recognizer.move(to: point) }
+            let path = try XCTUnwrap(recognizer.recognizedPath())
+            XCTAssertEqual(path, GesturePath(circle: circle))
+            XCTAssertEqual(try JSONDecoder().decode(GesturePath.self, from: JSONEncoder().encode(path)), path)
+        }
+        let oldPath = Data(#"{"directions":["right"]}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(GesturePath.self, from: oldPath), GesturePath([.right]))
+    }
+
+    func testControlRightShortcutSendsModifierPressAndRelease() throws {
+        let shortcut = ShortcutKey(keyCode: UInt32(kVK_RightArrow), modifiers: [.control])
+        let events = try XCTUnwrap(CGEventGestureShortcutSender.keyboardEvents(
+            for: shortcut, source: nil, heldFlags: []
+        ))
+        XCTAssertEqual(events.map(\.type), [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+        XCTAssertEqual(events.map { $0.getIntegerValueField(.keyboardEventKeycode) },
+                       [kVK_Control, kVK_RightArrow, kVK_RightArrow, kVK_Control].map(Int64.init))
+        XCTAssertEqual(events.map { $0.flags.contains(.maskControl) }, [true, true, true, false])
+        XCTAssertEqual(CGEventGestureShortcutSender.sourceState(for: shortcut), .hidSystemState)
+        let arrowFlags: CGEventFlags = [.maskControl, .maskSecondaryFn, .maskNumericPad]
+        XCTAssertEqual(events[1].flags, arrowFlags)
+        XCTAssertEqual(events[2].flags, arrowFlags)
+        XCTAssertEqual(events[0].flags, [.maskControl])
+        XCTAssertEqual(events[3].flags, [])
+
+        let held = try XCTUnwrap(CGEventGestureShortcutSender.keyboardEvents(
+            for: shortcut, source: nil, heldFlags: [.maskControl]
+        ))
+        XCTAssertEqual(held.map(\.type), [.keyDown, .keyUp])
+        XCTAssertTrue(held.allSatisfy { $0.flags.contains(.maskControl) })
+    }
+
+    func testInterceptedCoordinatesPreserveMovementAcrossDisplays() {
+        let start = CGEventTapMouseGestureMonitor.appKitPoint(
+            for: CGPoint(x: -20, y: 100), primaryDisplayHeight: 900
+        )
+        let right = CGEventTapMouseGestureMonitor.appKitPoint(
+            for: CGPoint(x: 20, y: 100), primaryDisplayHeight: 900
+        )
+        let up = CGEventTapMouseGestureMonitor.appKitPoint(
+            for: CGPoint(x: 20, y: 60), primaryDisplayHeight: 900
+        )
+        var recognizer = GesturePathRecognizer()
+        recognizer.begin(at: start)
+        _ = recognizer.move(to: right)
+        _ = recognizer.move(to: up)
+        XCTAssertEqual(recognizer.recognizedPath(), GesturePath([.right, .up]))
+    }
+
     func testRecognizerSupportsFourDirectionsAndIgnoresMovementBelowThreshold() {
         var recognizer = GesturePathRecognizer()
         recognizer.begin(at: CGPoint(x: 100, y: 100))
@@ -34,6 +108,64 @@ final class MouseGestureTests: XCTestCase {
         _ = recognizer.move(to: CGPoint(x: 60, y: 75))
         XCTAssertTrue(recognizer.hasExceededSegmentLimit)
         XCTAssertNil(recognizer.recognizedPath())
+    }
+
+    @MainActor
+    func testPathRecorderCapturesRightMouseDrag() throws {
+        let view = GesturePathRecorderView(
+            frame: NSRect(x: 0, y: 0, width: 260, height: 112)
+        )
+        let window = NSWindow(
+            contentRect: view.frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        defer { window.orderOut(nil) }
+
+        var recordedPath: GesturePath?
+        view.onChange = { recordedPath = $0 }
+
+        let down = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .rightMouseDown,
+            location: CGPoint(x: 30, y: 56),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1
+        ))
+        let dragged = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .rightMouseDragged,
+            location: CGPoint(x: 100, y: 56),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1
+        ))
+        let up = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .rightMouseUp,
+            location: CGPoint(x: 100, y: 56),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 0
+        ))
+
+        view.rightMouseDown(with: down)
+        view.rightMouseDragged(with: dragged)
+        view.rightMouseUp(with: up)
+
+        XCTAssertEqual(recordedPath, GesturePath([.right]))
     }
 
     func testResolverPrefersScopedRuleAndNeverFallsBackFromUnavailableScopedRule() {
@@ -176,6 +308,13 @@ final class MouseGestureTests: XCTestCase {
         await waitForActions(1, actions: { actions.count })
         XCTAssertEqual(actions, [.openSettings])
         XCTAssertEqual(monitor.restoredClicks, [])
+
+        controller.setRuleEditing(true)
+        XCTAssertFalse(monitor.send(.rightMouseDown(CGPoint(x: 100, y: 100))))
+        XCTAssertFalse(monitor.send(.rightMouseDragged(CGPoint(x: 150, y: 100))))
+        XCTAssertFalse(monitor.send(.rightMouseUp(CGPoint(x: 150, y: 100))))
+        XCTAssertEqual(actions, [.openSettings])
+        controller.setRuleEditing(false)
 
         XCTAssertTrue(monitor.send(.rightMouseDown(CGPoint(x: 200, y: 200))))
         XCTAssertTrue(monitor.send(.rightMouseUp(CGPoint(x: 201, y: 200))))

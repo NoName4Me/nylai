@@ -1,7 +1,137 @@
 import AppKit
+import SwiftUI
 
 @MainActor
-final class SelectionToolbarView: NSVisualEffectView {
+class FloatingToolbarSurfaceView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 10
+        layer?.masksToBounds = true
+        layer?.borderWidth = 0.5
+        layer?.zPosition = 20
+        updateBorderColor()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("不支持从归档创建截图工具栏")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateBorderColor()
+    }
+
+    private func updateBorderColor() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NylaiTheme.isDark(effectiveAppearance)
+                ? NSColor(srgbRed: 0.16, green: 0.18, blue: 0.13, alpha: 1).cgColor
+                : NSColor(srgbRed: 0.995, green: 0.992, blue: 0.982, alpha: 1).cgColor
+            layer?.borderColor = NylaiTheme.border(for: effectiveAppearance).cgColor
+        }
+    }
+}
+
+@MainActor
+final class ToolbarIconButton: NSButton, NSViewToolTipOwner {
+    private var trackingArea: NSTrackingArea?
+    private var isHovered = false {
+        didSet { updateSurface() }
+    }
+
+    override var isEnabled: Bool {
+        didSet { updateSurface() }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        updateSurface()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("不支持从归档创建截图工具按钮")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+        removeAllToolTips()
+        addToolTip(bounds, owner: self, userData: nil)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateOverlayHint(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateOverlayHint(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        overlayView?.dismissHoverHint()
+        super.mouseDown(with: event)
+    }
+
+    private var overlayView: ScreenshotOverlayView? {
+        var ancestor = superview
+        while let view = ancestor {
+            if let overlay = view as? ScreenshotOverlayView { return overlay }
+            ancestor = view.superview
+        }
+        return nil
+    }
+
+    private func updateOverlayHint(with event: NSEvent) {
+        guard let overlay = overlayView else { return }
+        overlay.updateHoverHint(at: overlay.convert(event.locationInWindow, from: nil))
+    }
+
+    func refreshSurface() {
+        updateSurface()
+    }
+
+    func view(
+        _ view: NSView,
+        stringForToolTip tag: NSView.ToolTipTag,
+        point: NSPoint,
+        userData data: UnsafeMutableRawPointer?
+    ) -> String {
+        toolTip ?? ""
+    }
+
+    private func updateSurface() {
+        guard let layer else { return }
+        let color: NSColor
+        if !isEnabled {
+            color = .clear
+        } else if state == .on {
+            color = NylaiTheme.accent.withAlphaComponent(0.18)
+        } else if isHovered {
+            color = NSColor.labelColor.withAlphaComponent(0.10)
+        } else {
+            color = .clear
+        }
+        layer.backgroundColor = color.cgColor
+    }
+}
+
+@MainActor
+final class SelectionToolbarView: FloatingToolbarSurfaceView {
     var onToolChanged: ((ScreenshotEditorTool) -> Void)?
     var onStyleChanged: ((ScreenshotAnnotationStyle) -> Void)?
     var onAppearanceChanged: ((ScreenshotOutputAppearance) -> Void)?
@@ -16,6 +146,7 @@ final class SelectionToolbarView: NSVisualEffectView {
     var styleKind: ScreenshotAnnotationKind? {
         didSet {
             updateStyleControlRanges()
+            updateToolSelection()
             updateEnabledState()
         }
     }
@@ -33,7 +164,7 @@ final class SelectionToolbarView: NSVisualEffectView {
     }
 
     var preferredContentSize: CGSize {
-        CGSize(width: 330, height: styleControlsEnabled ? 78 : 44)
+        CGSize(width: 330, height: styleControlsEnabled ? (styleKind == .arrow ? 128 : 78) : 44)
     }
 
     private let tools: [ScreenshotEditorTool] = [
@@ -41,12 +172,15 @@ final class SelectionToolbarView: NSVisualEffectView {
     ]
     private var toolButtons: [(ScreenshotEditorTool, NSButton)] = []
     private let colorButton = ScreenshotColorSwatchButton()
-    private let widthCaption = NSTextField(labelWithString: "粗细")
     private let widthLabel = NSTextField(labelWithString: "3")
     private let widthStepper = NSStepper()
-    private let solidButton = NSButton()
-    private let dashedButton = NSButton()
-    private let shadowButton = NSButton()
+    private var arrowOptionsHost: NSHostingView<ArrowOptionsView>?
+    private let textStyleControl = NSSegmentedControl(labels: ["A", "A"],
+                                                       trackingMode: .selectOne, target: nil, action: nil)
+    private let solidButton = ToolbarIconButton()
+    private let dashedButton = ToolbarIconButton()
+    private let fillButton = NSButton(checkboxWithTitle: "填充", target: nil, action: nil)
+    private let shadowButton = ToolbarIconButton()
     private lazy var styleRow = NSStackView()
     private var colorPopover: NSPopover?
     private var shadowPopover: NSPopover?
@@ -75,22 +209,29 @@ final class SelectionToolbarView: NSVisualEffectView {
         configureStyleControls()
         styleRow.orientation = .horizontal
         styleRow.alignment = .centerY
-        styleRow.spacing = 8
+        styleRow.spacing = 5
         styleRow.edgeInsets = NSEdgeInsets(top: 0, left: 2, bottom: 0, right: 2)
         styleRow.isHidden = true
 
-        let stack = NSStackView(views: [toolRow, styleRow])
+        let arrowOptionsHost = NSHostingView(rootView: makeArrowOptionsView())
+        arrowOptionsHost.widthAnchor.constraint(equalToConstant: 310).isActive = true
+        arrowOptionsHost.heightAnchor.constraint(equalToConstant: 47).isActive = true
+        arrowOptionsHost.isHidden = true
+        self.arrowOptionsHost = arrowOptionsHost
+        let stack = NSStackView(views: [toolRow, styleRow, arrowOptionsHost])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 5
         stack.edgeInsets = NSEdgeInsets(top: 7, left: 10, bottom: 7, right: 10)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        let bottom = stack.bottomAnchor.constraint(equalTo: bottomAnchor)
+        bottom.priority = .defaultHigh
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            bottom,
         ])
         updateStyleControls()
         updateStyleControlRanges()
@@ -113,25 +254,20 @@ final class SelectionToolbarView: NSVisualEffectView {
         addCursorRect(bounds, cursor: .arrow)
     }
 
-    private func configureSurface() {
-        material = .hudWindow
-        blendingMode = .withinWindow
-        state = .active
-        wantsLayer = true
-        layer?.cornerRadius = 10
-        layer?.masksToBounds = true
-    }
+    private func configureSurface() {}
 
     private func configureStyleControls() {
         colorButton.size = 24
-        colorButton.title = "颜色"
+        colorButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        colorButton.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        fillButton.controlSize = .small
+        fillButton.target = self
+        fillButton.action = #selector(fillChanged)
         colorButton.target = self
         colorButton.action = #selector(colorClicked)
         colorButton.toolTip = "标注颜色"
         colorButton.setAccessibilityLabel("标注颜色")
 
-        widthCaption.font = .systemFont(ofSize: 11)
-        widthCaption.textColor = .secondaryLabelColor
         widthLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         widthLabel.alignment = .right
         widthLabel.widthAnchor.constraint(equalToConstant: 24).isActive = true
@@ -155,14 +291,29 @@ final class SelectionToolbarView: NSVisualEffectView {
             action: #selector(lineStyleChanged(_:)),
             target: self
         )
+        textStyleControl.controlSize = .small
+        textStyleControl.target = self
+        textStyleControl.action = #selector(annotationVariantChanged)
+        textStyleControl.toolTip = "文字样式"
+        for (index, symbol) in ["a.square", "a.square.fill"].enumerated() {
+            if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
+                textStyleControl.setImage(image, forSegment: index)
+                textStyleControl.setLabel("", forSegment: index)
+            } else {
+                textStyleControl.setLabel(index == 0 ? "普通" : "填充", forSegment: index)
+            }
+            textStyleControl.setToolTip(index == 0 ? "普通文字" : "填充文字背景", forSegment: index)
+        }
+        fillButton.toolTip = "使用描边颜色填充"
         styleRow = NSStackView(views: [
-            colorButton, widthCaption, widthLabel, widthStepper, solidButton, dashedButton,
+            colorButton, widthLabel, widthStepper, solidButton, dashedButton, fillButton,
+            textStyleControl,
         ])
     }
 
     private func updateToolSelection() {
         for (tool, button) in toolButtons {
-            Self.setSelected(button, selected: tool == selectedTool)
+            Self.setSelected(button, selected: tool.annotationKind == styleKind || (styleKind == nil && tool == selectedTool))
         }
     }
 
@@ -171,24 +322,31 @@ final class SelectionToolbarView: NSVisualEffectView {
             button.isEnabled = !isOutputting
         }
         let stylesEnabled = !isOutputting && styleControlsEnabled
-        colorButton.isEnabled = stylesEnabled && (styleKind?.supportsColorControl ?? false)
+        let supportsColor = styleKind?.supportsColorControl ?? false
+        colorButton.isHidden = !supportsColor
+        colorButton.isEnabled = stylesEnabled && supportsColor
         widthStepper.isEnabled = stylesEnabled && styleKind != .step
         widthLabel.textColor = widthStepper.isEnabled ? .labelColor : .tertiaryLabelColor
-        widthCaption.textColor = widthStepper.isEnabled ? .secondaryLabelColor : .tertiaryLabelColor
-        let supportsLine = stylesEnabled && (styleKind?.supportsLineStyleControl ?? false)
-        solidButton.isEnabled = supportsLine
-        dashedButton.isEnabled = supportsLine
+        let supportsLine = styleKind != .arrow && (styleKind?.supportsLineStyleControl ?? false)
+        solidButton.isHidden = !supportsLine
+        dashedButton.isHidden = !supportsLine
+        solidButton.isEnabled = stylesEnabled && supportsLine
+        dashedButton.isEnabled = stylesEnabled && supportsLine
+        fillButton.isHidden = styleKind?.supportsFill != true
+        fillButton.isEnabled = stylesEnabled
+        arrowOptionsHost?.isHidden = !styleControlsEnabled || styleKind != .arrow
+        arrowOptionsHost?.rootView = makeArrowOptionsView()
+        textStyleControl.isHidden = styleKind != .text
+        textStyleControl.isEnabled = stylesEnabled
         shadowButton.isEnabled = !isOutputting
     }
 
     private func updateStyleControlRanges() {
         guard let styleKind else {
-            widthCaption.stringValue = "参数"
             widthLabel.stringValue = ""
             return
         }
         let range = styleKind.lineWidthRange
-        widthCaption.stringValue = styleKind.lineWidthControlTitle
         widthStepper.minValue = Double(range.lowerBound)
         widthStepper.maxValue = Double(range.upperBound)
         widthStepper.toolTip = "\(styleKind.lineWidthControlTitle) \(range.lowerBound)–\(range.upperBound)"
@@ -196,12 +354,15 @@ final class SelectionToolbarView: NSVisualEffectView {
 
     private func updateStyleControls() {
         isUpdatingStyleControls = true
+        fillButton.state = style.fillsShape == true ? .on : .off
+        textStyleControl.selectedSegment = style.fillsTextBackground == true ? 1 : 0
         colorButton.color = style.color
         widthStepper.integerValue = style.lineWidth
         widthLabel.stringValue = "\(style.lineWidth)"
         let solid = style.lineStyle == .solid
         Self.setSelected(solidButton, selected: solid)
         Self.setSelected(dashedButton, selected: !solid)
+        arrowOptionsHost?.rootView = makeArrowOptionsView()
         isUpdatingStyleControls = false
     }
 
@@ -244,6 +405,40 @@ final class SelectionToolbarView: NSVisualEffectView {
         let validated = styleKind.map { updated.validated(for: $0) } ?? updated.validated()
         style = validated
         onStyleChanged?(validated)
+    }
+
+    private func makeArrowOptionsView() -> ArrowOptionsView {
+        let options = style.arrowOptions ?? (style.arrowStyle == .solid
+            ? ScreenshotArrowOptions(form: .body, tip: .triangle)
+            : ScreenshotArrowOptions())
+        return ArrowOptionsView(
+            options: options.normalized(), lineStyle: style.lineStyle,
+            enabled: !isOutputting && styleControlsEnabled
+        ) { [weak self] options, lineStyle in
+            guard let self, self.styleKind == .arrow else { return }
+            var updated = self.style
+            updated.arrowOptions = options
+            updated.arrowStyle = nil
+            updated.lineStyle = lineStyle
+            self.style = updated
+            self.onStyleChanged?(updated)
+        }
+    }
+
+    @objc private func annotationVariantChanged(_ sender: NSSegmentedControl) {
+        var updated = style
+        if sender === textStyleControl {
+            updated.fillsTextBackground = sender.selectedSegment == 1 ? true : nil
+        }
+        style = updated
+        onStyleChanged?(updated)
+    }
+
+    @objc private func fillChanged() {
+        var updated = style
+        updated.fillsShape = fillButton.state == .on ? true : nil
+        style = updated
+        onStyleChanged?(updated)
     }
 
     @objc private func colorClicked() {
@@ -317,7 +512,7 @@ final class SelectionToolbarView: NSVisualEffectView {
     }
 
     static func iconButton(icon: NylaiIcon, label: String) -> NSButton {
-        let button = NSButton()
+        let button = ToolbarIconButton()
         button.title = label
         button.image = icon.image(pointSize: 15)
         button.imagePosition = .imageOnly
@@ -336,9 +531,7 @@ final class SelectionToolbarView: NSVisualEffectView {
     static func setSelected(_ button: NSButton, selected: Bool) {
         button.state = selected ? .on : .off
         button.contentTintColor = selected ? NylaiTheme.accent : .labelColor
-        button.layer?.backgroundColor = selected
-            ? NylaiTheme.accent.withAlphaComponent(0.15).cgColor
-            : NSColor.clear.cgColor
+        (button as? ToolbarIconButton)?.refreshSurface()
     }
 
     static func separator(orientation: NSUserInterfaceLayoutOrientation) -> NSBox {
@@ -354,8 +547,60 @@ final class SelectionToolbarView: NSVisualEffectView {
     }
 }
 
+private struct ArrowOptionsView: View {
+    let options: ScreenshotArrowOptions
+    let lineStyle: ScreenshotAnnotationLineStyle
+    let enabled: Bool
+    let onChange: (ScreenshotArrowOptions, ScreenshotAnnotationLineStyle) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                choices("形状", [.line, .body], \.form, title: { $0.title })
+                Picker("线型", selection: Binding(get: { lineStyle }, set: { onChange(options, $0) })) {
+                    Text("实线").tag(ScreenshotAnnotationLineStyle.solid)
+                    Text("虚线").tag(ScreenshotAnnotationLineStyle.dashed)
+                }
+                .pickerStyle(.segmented)
+                if options.form == .body {
+                    choices("比例", [false, true], \.tapered, title: { $0 ? "渐宽" : "常规" })
+                    if !options.tapered {
+                        choices("填充", [false, true], \.filled, title: { $0 ? "填充" : "描边" })
+                    }
+                }
+            }
+            HStack(spacing: 5) {
+                choices("起点", options.allowedStarts, \.start, title: { $0.title })
+                choices("末端", options.allowedTips, \.tip, title: { $0.title })
+            }
+        }
+        .labelsHidden()
+        .controlSize(.mini)
+        .font(.system(size: 10))
+        .disabled(!enabled)
+        .tint(NylaiPalette.accent)
+    }
+
+    private func choices<Value: Hashable>(_ label: String, _ values: [Value],
+                                          _ keyPath: WritableKeyPath<ScreenshotArrowOptions, Value>,
+                                          title: @escaping (Value) -> String) -> some View {
+        Picker(label, selection: Binding(
+            get: { options[keyPath: keyPath] },
+            set: { value in
+                var updated = options
+                updated[keyPath: keyPath] = value
+                onChange(updated.normalized(), lineStyle)
+            }
+        )) {
+            ForEach(values, id: \.self) { value in Text(title(value)).tag(value) }
+        }
+        .pickerStyle(.segmented)
+        .help(label)
+    }
+}
+
 @MainActor
-final class ScreenshotOutputToolbarView: NSVisualEffectView {
+final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
     var onCancel: () -> Void = {}
     var onUndo: () -> Void = {}
     var onRedo: () -> Void = {}
@@ -384,44 +629,30 @@ final class ScreenshotOutputToolbarView: NSVisualEffectView {
 
     var preferredContentSize: CGSize {
         let groups = activeGroups
-        let rows = groups.reduce(0) { $0 + ($1.count + 1) / 2 }
-        let height = 18
-            + CGFloat(rows * 29)
-            + CGFloat(max(0, rows - groups.count) * 4)
-            + CGFloat(max(0, groups.count - 1) * 9)
-        return CGSize(width: 80, height: height)
+        let buttons = groups.reduce(0) { $0 + $1.count }
+        let separators = max(0, groups.count - 1)
+        let height = 14 + buttons * 26 + (buttons + separators - 1) * 3 + separators
+        return CGSize(width: 40, height: height)
     }
 
-    private let cropButton = NSButton()
-    private let cursorButton = NSButton()
-    private let undoButton = NSButton()
-    private let redoButton = NSButton()
-    private let deleteButton = NSButton()
-    private let scrollButton = NSButton()
-    private let reselectButton = NSButton()
-    private let copyButton = NSButton()
-    private let saveButton = NSButton()
-    private let pinButton = NSButton()
-    private let cancelButton = NSButton()
-    private let zoomOutButton = NSButton()
-    private let zoomInButton = NSButton()
-    private let fitButton = NSButton()
+    private let cropButton = ToolbarIconButton()
+    private let cursorButton = ToolbarIconButton()
+    private let scrollButton = ToolbarIconButton()
+    private let reselectButton = ToolbarIconButton()
+    private let copyButton = ToolbarIconButton()
+    private let saveButton = ToolbarIconButton()
+    private let pinButton = ToolbarIconButton()
+    private let cancelButton = ToolbarIconButton()
+    private let zoomOutButton = ToolbarIconButton()
+    private let zoomInButton = ToolbarIconButton()
+    private let fitButton = ToolbarIconButton()
     private var stack: NSStackView?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        material = .hudWindow
-        blendingMode = .withinWindow
-        state = .active
-        wantsLayer = true
-        layer?.cornerRadius = 10
-        layer?.masksToBounds = true
 
         configure(cropButton, icon: .crop, action: #selector(cropClicked))
         configure(cursorButton, icon: .cursor, action: #selector(cursorClicked))
-        configure(undoButton, icon: .undo, action: #selector(undoClicked))
-        configure(redoButton, icon: .redo, action: #selector(redoClicked))
-        configure(deleteButton, icon: .trash, action: #selector(deleteClicked))
         configure(scrollButton, icon: .scroll, action: #selector(scrollCaptureClicked))
         configure(reselectButton, icon: .reselect, action: #selector(reselectClicked))
         configure(copyButton, icon: .copy, action: #selector(copyClicked))
@@ -455,7 +686,7 @@ final class ScreenshotOutputToolbarView: NSVisualEffectView {
         if showsSelectionTool {
             selectionGroup.append(cropButton)
         }
-        selectionGroup.append(contentsOf: [cursorButton, undoButton, redoButton, deleteButton])
+        selectionGroup.append(cursorButton)
         groups.append(selectionGroup)
         let scrollGroup = [
             showsScrollCaptureButton ? scrollButton : nil,
@@ -476,24 +707,15 @@ final class ScreenshotOutputToolbarView: NSVisualEffectView {
         let container = NSStackView()
         container.orientation = .vertical
         container.alignment = .leading
-        container.spacing = 8
-        container.edgeInsets = NSEdgeInsets(top: 9, left: 9, bottom: 9, right: 9)
+        container.spacing = 3
+        container.edgeInsets = NSEdgeInsets(top: 7, left: 7, bottom: 7, right: 7)
         for (index, group) in activeGroups.enumerated() {
             if index > 0 {
                 let separator = SelectionToolbarView.separator(orientation: .horizontal)
-                separator.widthAnchor.constraint(equalToConstant: 62).isActive = true
+                separator.widthAnchor.constraint(equalToConstant: 26).isActive = true
                 container.addArrangedSubview(separator)
             }
-            var offset = 0
-            while offset < group.count {
-                let end = min(offset + 2, group.count)
-                let row = NSStackView(views: Array(group[offset..<end]))
-                row.orientation = .horizontal
-                row.alignment = .centerY
-                row.spacing = 4
-                container.addArrangedSubview(row)
-                offset = end
-            }
+            for button in group { container.addArrangedSubview(button) }
         }
         container.translatesAutoresizingMaskIntoConstraints = false
         addSubview(container)
@@ -521,8 +743,8 @@ final class ScreenshotOutputToolbarView: NSVisualEffectView {
         button.setAccessibilityLabel(icon.accessibilityLabel)
         button.target = self
         button.action = action
-        button.widthAnchor.constraint(equalToConstant: 29).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 29).isActive = true
+        button.widthAnchor.constraint(equalToConstant: 26).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 26).isActive = true
     }
 
     private func updateToolSelection() {
@@ -538,9 +760,6 @@ final class ScreenshotOutputToolbarView: NSVisualEffectView {
         ] {
             button.isEnabled = !isOutputting
         }
-        undoButton.isEnabled = !isOutputting && canUndo
-        redoButton.isEnabled = !isOutputting && canRedo
-        deleteButton.isEnabled = !isOutputting && canDelete
     }
 
     @objc private func cropClicked() {
@@ -553,9 +772,6 @@ final class ScreenshotOutputToolbarView: NSVisualEffectView {
         onToolChanged?(.objectSelection)
     }
 
-    @objc private func undoClicked() { onUndo() }
-    @objc private func redoClicked() { onRedo() }
-    @objc private func deleteClicked() { onDelete() }
     @objc private func scrollCaptureClicked() { onScrollCapture() }
     @objc private func reselectClicked() { onReselect() }
     @objc private func copyClicked() { onCopy() }

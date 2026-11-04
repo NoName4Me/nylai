@@ -14,7 +14,7 @@ final class WindowSwitcherCatalogProvider: WindowSwitcherCatalogProviding {
     }
 
     func makeSnapshot() async throws -> WindowSwitcherSnapshot {
-        let candidates = try await windowCapturer.windowCandidates()
+        let candidates = try await windowCapturer.switchableWindowCandidates()
         let runningApplications = NSWorkspace.shared.runningApplications.compactMap { application -> WindowSwitcherRunningApplication? in
             guard application.activationPolicy == .regular,
                   application.processIdentifier != ProcessInfo.processInfo.processIdentifier else {

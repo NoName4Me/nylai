@@ -11,6 +11,7 @@ struct ScreenshotAnnotation: Identifiable, Equatable {
     var text: String
     var stepNumber: Int?
     var style: ScreenshotAnnotationStyle
+    var arrowAnchors: ScreenshotArrowAnchors? = nil
 
     init(
         id: UUID = UUID(),
@@ -346,6 +347,21 @@ final class ScreenshotSession {
         }
         mutateContent {
             annotations[index].style = style.validated(for: annotations[index].kind)
+        }
+    }
+
+    func updateArrowGeometry(_ updated: ScreenshotAnnotation) throws {
+        guard let source, phase == .editing, updated.kind == .arrow,
+              let index = annotations.firstIndex(where: { $0.id == updated.id && $0.kind == .arrow }) else {
+            throw ScreenshotSessionError.invalidPhase
+        }
+        guard updated.rect.clamped(to: source.geometry.pixelSize) == updated.rect else {
+            throw ScreenshotGeometryError.selectionOutsideSource
+        }
+        mutateContent {
+            annotations[index].start = updated.start
+            annotations[index].end = updated.end
+            annotations[index].arrowAnchors = updated.arrowAnchors
         }
     }
 

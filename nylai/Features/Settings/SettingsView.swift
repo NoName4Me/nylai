@@ -10,6 +10,7 @@ struct SettingsView: View {
     var clipboardMonitor: ClipboardMonitor?
     var clipboardLoadError: String?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var screenRecordingGranted = false
     @State private var accessibilityGranted = false
     @State private var inputMonitoringGranted = false
@@ -20,22 +21,29 @@ struct SettingsView: View {
     @State private var keyCaptureMessage: String?
     @State private var keyboardLayoutRevision = 0
     @State private var editingGestureRule: MouseGestureRule?
-    @State private var isNewGestureRule = false
     @State private var gestureErrorMessage: String?
     @State private var clipboardLimitDraft = ""
     @State private var clipboardRetentionDaysDraft = ""
     @State private var clipboardErrorMessage: String?
     @State private var confirmsClearClipboard = false
 
+    @State private var pullFrames: [MenuPullAnchor: CGRect] = [:]
+    @State private var menuPull: SidebarMenuPull?
+
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-            Divider()
+            Rectangle()
+                .fill(theme.border)
+                .frame(width: 1)
+                .frame(maxHeight: .infinity)
+                .ignoresSafeArea(.container, edges: .top)
             VStack(spacing: 0) {
                 pageHeader
                 Divider().opacity(0.6)
                 ScrollView {
                     pageContent
+                        .background(ThinScrollIndicatorInstaller())
                         .padding(.horizontal, 28)
                         .padding(.top, 20)
                         .padding(.bottom, 28)
@@ -45,6 +53,27 @@ struct SettingsView: View {
             .background(theme.page)
         }
         .frame(width: 760, height: 580)
+        .coordinateSpace(name: MenuPullAnchor.space)
+        .onPreferenceChange(MenuPullFrames.self) { pullFrames = $0 }
+        .overlay(alignment: .topLeading) {
+            if let menuPull {
+                SidebarMenuPullOverlay(pull: menuPull)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .task(id: menuPull?.started) {
+            guard let menuPull else { return }
+            do {
+                try await Task.sleep(for: .seconds(SidebarMenuPull.duration))
+                guard self.menuPull?.started == menuPull.started else { return }
+                self.menuPull = nil
+            } catch {}
+        }
+        .onChange(of: selectedSection) {
+            menuPull = nil
+        }
+        .tint(NylaiPalette.accent)
         .onAppear {
             refreshPermission()
             syncClipboardDrafts()
@@ -73,6 +102,10 @@ struct SettingsView: View {
             cancelRecording()
             syncClipboardDrafts()
         }
+        .onChange(of: visibleSections) { _, sections in
+            guard !sections.contains(selectedSection) else { return }
+            selectedSection = .modules
+        }
         .onDisappear {
             shortcutRuntime.endTransientRecording()
             cancelRecording()
@@ -99,10 +132,13 @@ struct SettingsView: View {
         } message: {
             Text("这会同时删除置顶记录，但不会修改系统剪贴板当前内容。")
         }
-        .sheet(item: $editingGestureRule) { rule in
+        .sheet(item: $editingGestureRule, onDismiss: {
+            mouseGestureController.setRuleEditing(false)
+        }) { rule in
+            let isNew = rule.path.isEmpty
             GestureRuleEditorView(
                 rule: rule,
-                isNew: isNewGestureRule,
+                isNew: isNew,
                 onBeginShortcutRecording: {
                     cancelRecording()
                     do {
@@ -117,11 +153,14 @@ struct SettingsView: View {
                     shortcutRuntime.endTransientRecording()
                 }
             ) { updated in
-                if isNewGestureRule {
+                if isNew {
                     try mouseGestureController.addRule(updated)
                 } else {
                     try mouseGestureController.updateRule(updated)
                 }
+            }
+            .onDisappear {
+                mouseGestureController.setRuleEditing(false)
             }
         }
     }
@@ -129,19 +168,15 @@ struct SettingsView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.12))
-                    .frame(width: 30, height: 30)
-                    .overlay {
-                        Image(systemName: "command")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color.accentColor)
-                    }
+                Image("BrandIcon")
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 36, height: 36)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("nylai")
+                    Text("拈来")
                         .font(.system(size: 14, weight: .semibold))
-                    Text("快捷启动与截图")
+                    Text("Nylai")
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                 }
@@ -157,21 +192,46 @@ struct SettingsView: View {
                 .padding(.bottom, 7)
 
             VStack(spacing: 3) {
-                ForEach(SettingsSection.allCases, id: \.self) { section in
-                    SidebarItem(
-                        section: section,
-                        isSelected: selectedSection == section
-                    ) {
-                        selectedSection = section
-                    }
+                sidebarItem(.modules)
+                if moduleStateController.isEnabled(.screenshot) {
+                    sidebarItem(.screenshot)
                 }
+                if moduleStateController.isEnabled(.globalShortcuts) {
+                    sidebarItem(.shortcuts)
+                }
+                if moduleStateController.isEnabled(.mouseGestures) {
+                    sidebarItem(.gestures)
+                }
+                if moduleStateController.isEnabled(.clipboard) {
+                    sidebarItem(.clipboard)
+                }
+                sidebarItem(.general)
+                sidebarItem(.permissions)
             }
+            .reportMenuPullFrame(.sidebar)
             .padding(.horizontal, 10)
+            .animation(
+                reduceMotion
+                    ? .easeOut(duration: 0.12)
+                    : .easeInOut(duration: 0.24).delay(0.28),
+                value: visibleSections
+            )
 
             Spacer(minLength: 20)
         }
         .frame(width: 196)
         .background(theme.sidebar)
+    }
+
+    private func sidebarItem(_ section: SettingsSection) -> some View {
+        SidebarItem(
+            section: section,
+            isSelected: selectedSection == section
+        ) {
+            selectedSection = section
+        }
+        .opacity(menuPull?.section == section ? 0 : 1)
+        .transition(reduceMotion ? .opacity : .identity)
     }
 
     private var pageHeader: some View {
@@ -193,6 +253,8 @@ struct SettingsView: View {
         switch selectedSection {
         case .modules:
             modulesPage
+        case .screenshot:
+            screenshotPage
         case .shortcuts:
             shortcutsPage
         case .gestures:
@@ -213,7 +275,9 @@ struct SettingsView: View {
                 SettingsCard {
                     if let configuration = shortcutRuntime.configuration {
                         let bindings = configuration.bindings.filter {
-                            $0.isInternal && $0.action != .scrollCapture
+                            $0.isInternal
+                                && $0.action != .scrollCapture
+                                && $0.action != .openSettings
                         }
                         ForEach(Array(bindings.enumerated()), id: \.element.id) { index, binding in
                             bindingRow(binding, isLast: index == bindings.count - 1)
@@ -226,16 +290,41 @@ struct SettingsView: View {
 
             VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 8) {
-                    sectionTitle("应用")
+                    sectionTitle("打开/切换应用")
                     Spacer()
-                    Button {
-                        chooseApplication()
+                    Menu {
+                        ForEach(runningApplications) { application in
+                            Button {
+                                addApplication(
+                                    bundleIdentifier: application.bundleIdentifier,
+                                    path: application.path
+                                )
+                            } label: {
+                                Label {
+                                    Text(application.name)
+                                } icon: {
+                                    Image(nsImage: application.icon)
+                                }
+                            }
+                            .disabled(
+                                boundApplicationBundleIdentifiers.contains(
+                                    application.bundleIdentifier
+                                )
+                            )
+                        }
+                        if !runningApplications.isEmpty {
+                            Divider()
+                        }
+                        Button("浏览应用程序…") {
+                            chooseApplication()
+                        }
                     } label: {
                         Label("添加应用", systemImage: "plus")
                             .font(.system(size: 11.5, weight: .medium))
                     }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(Color.accentColor)
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .foregroundStyle(NylaiPalette.accent)
                     .disabled(shortcutRuntime.configuration == nil)
                 }
 
@@ -272,7 +361,14 @@ struct SettingsView: View {
         let status = moduleStateController.status(for: module)
         return VStack(spacing: 0) {
             HStack(spacing: 12) {
-                ActionIcon(symbol: module.symbolName)
+                ActionIcon(
+                    symbol: module.symbolName,
+                    isEnabled: status != .off,
+                    slashDelay: menuPull.flatMap { pull in
+                        SettingsSection(module: module) == pull.section ? pull.slashDelay : nil
+                    } ?? 0
+                )
+                .reportMenuPullFrame(.icon(module))
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 7) {
                         Text(module.title)
@@ -294,8 +390,7 @@ struct SettingsView: View {
                 Spacer(minLength: 12)
                 Toggle("", isOn: moduleEnabledBinding(module))
                     .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
+                    .compactSettingsSwitch()
                     .disabled(module == .globalShortcuts && shortcutRuntime.loadError != nil)
                     .accessibilityLabel(module.title)
             }
@@ -351,8 +446,7 @@ struct SettingsView: View {
                         Spacer()
                         Toggle("", isOn: showsGestureTraceBinding)
                             .labelsHidden()
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
+                            .compactSettingsSwitch()
                     }
                     .padding(14)
                 }
@@ -363,7 +457,7 @@ struct SettingsView: View {
                     sectionTitle("手势规则")
                     Spacer()
                     Button {
-                        isNewGestureRule = true
+                        mouseGestureController.setRuleEditing(true)
                         editingGestureRule = MouseGestureRule(
                             path: GesturePath(),
                             action: .nylai(.openSettings)
@@ -535,8 +629,7 @@ struct SettingsView: View {
                                     .foregroundStyle(.secondary)
                                 Toggle("", isOn: clipboardRetentionBinding)
                                     .labelsHidden()
-                                    .toggleStyle(.switch)
-                                    .controlSize(.small)
+                                    .compactSettingsSwitch()
                                 Button("应用") {
                                     applyClipboardLimits()
                                 }
@@ -633,12 +726,15 @@ struct SettingsView: View {
     private func gestureRuleRow(_ rule: MouseGestureRule, isLast: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Text(rule.path.display)
-                    .font(.system(size: 20, weight: .semibold, design: .monospaced))
-                    .frame(width: 92, alignment: .leading)
+                GesturePathThumbnail(path: rule.path)
+                    .frame(width: 74, height: 42)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(rule.action.title)
-                        .font(.system(size: 13, weight: .medium))
+                    if case .sendShortcut(let shortcut) = rule.action {
+                        ShortcutKeycaps(shortcut: shortcut)
+                    } else {
+                        Text(rule.action.title)
+                            .font(.system(size: 13, weight: .medium))
+                    }
                     Text(rule.scopeBundleIdentifier == nil
                         ? "所有应用"
                         : applicationName(rule.scopeBundleIdentifier))
@@ -647,7 +743,7 @@ struct SettingsView: View {
                 }
                 Spacer()
                 Button("编辑") {
-                    isNewGestureRule = false
+                    mouseGestureController.setRuleEditing(true)
                     editingGestureRule = rule
                 }
                 .buttonStyle(.borderless)
@@ -684,24 +780,21 @@ struct SettingsView: View {
     private var generalPage: some View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 9) {
-                sectionTitle("截图")
+                sectionTitle("外观")
                 SettingsCard {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("记录最近截图")
+                            Text("视觉模式")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("复制、保存或置顶成功后保留一张缩略图和 PNG。关闭不会删除已有记录。")
+                            Text("只影响 \(AppName.current) 的窗口与面板。")
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(.secondary)
                         }
 
                         Spacer(minLength: 12)
 
-                        Toggle("", isOn: $preferences.screenshotHistoryEnabled)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .accessibilityLabel("记录最近截图")
+                        AppearanceModePicker(selection: appearanceModeBinding)
+                        .frame(width: 230)
                     }
                     .padding(14)
                 }
@@ -714,7 +807,7 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("打开应用时显示设置")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("启动 nylai 后自动打开此窗口。")
+                            Text("启动 \(AppName.current) 后自动打开此窗口。")
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(.secondary)
                         }
@@ -723,12 +816,36 @@ struct SettingsView: View {
 
                         Toggle("", isOn: $preferences.showSettingsOnLaunch)
                             .labelsHidden()
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
+                            .compactSettingsSwitch()
                             .accessibilityLabel("打开应用时显示设置")
                     }
                     .padding(14)
                 }
+            }
+        }
+    }
+
+    private var screenshotPage: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            sectionTitle("历史")
+            SettingsCard {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("记录最近截图")
+                            .font(.system(size: 13, weight: .medium))
+                        Text("复制、保存或置顶成功后保留一张缩略图和 PNG。关闭不会删除已有记录。")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    Toggle("", isOn: $preferences.screenshotHistoryEnabled)
+                        .labelsHidden()
+                        .compactSettingsSwitch()
+                        .accessibilityLabel("记录最近截图")
+                }
+                .padding(14)
             }
         }
     }
@@ -755,7 +872,7 @@ struct SettingsView: View {
                                         .font(.system(size: 13, weight: .medium))
                                     permissionBadge(granted: screenRecordingGranted)
                                 }
-                                Text("用于截取屏幕内容。修改授权后可能需要重新启动 nylai。")
+                                Text("用于截取屏幕内容。修改授权后可能需要重新启动 \(AppName.current)。")
                                     .font(.system(size: 11.5))
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -763,12 +880,22 @@ struct SettingsView: View {
 
                             Spacer(minLength: 12)
 
-                            Button("打开系统设置…") {
-                                missingSettingsPage = "屏幕录制"
-                                showSettingsError = !ScreenRecordingPermission.openSystemSettings()
+                            HStack(spacing: 8) {
+                                if !screenRecordingGranted {
+                                    Button("请求权限") {
+                                        _ = ScreenRecordingPermission.requestAccessIfNeeded()
+                                        refreshPermission()
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                }
+                                Button("系统设置…") {
+                                    missingSettingsPage = "屏幕录制"
+                                    showSettingsError = !ScreenRecordingPermission.openSystemSettings()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
                         }
                         .padding(14)
 
@@ -781,7 +908,7 @@ struct SettingsView: View {
                                 refreshPermission()
                             }
                             .buttonStyle(.borderless)
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(NylaiPalette.accent)
                         }
                         .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
@@ -798,7 +925,11 @@ struct SettingsView: View {
                         title: "辅助功能",
                         icon: "accessibility",
                         description: "用于定位并激活所选窗口。",
-                        isGranted: accessibilityGranted
+                        isGranted: accessibilityGranted,
+                        requestPermission: {
+                            _ = AccessibilityPermission.requestIfNeeded()
+                            refreshPermission()
+                        }
                     ) {
                         missingSettingsPage = "辅助功能"
                         showSettingsError = !AccessibilityPermission.openSystemSettings()
@@ -808,7 +939,11 @@ struct SettingsView: View {
                         title: "输入监控",
                         icon: "keyboard",
                         description: "用于接管 Command-Tab 和 Command-反引号键。",
-                        isGranted: inputMonitoringGranted
+                        isGranted: inputMonitoringGranted,
+                        requestPermission: {
+                            _ = InputMonitoringPermission.requestIfNeeded()
+                            refreshPermission()
+                        }
                     ) {
                         missingSettingsPage = "输入监控"
                         showSettingsError = !InputMonitoringPermission.openSystemSettings()
@@ -823,6 +958,7 @@ struct SettingsView: View {
         icon: String,
         description: String,
         isGranted: Bool,
+        requestPermission: @escaping () -> Void,
         openSettings: @escaping () -> Void
     ) -> some View {
         HStack(spacing: 12) {
@@ -845,9 +981,16 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 12)
-            Button("打开系统设置…", action: openSettings)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+            HStack(spacing: 8) {
+                if !isGranted {
+                    Button("请求权限", action: requestPermission)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
+                Button("系统设置…", action: openSettings)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
         }
         .padding(14)
     }
@@ -877,8 +1020,7 @@ struct SettingsView: View {
 
                 Toggle("", isOn: bindingEnabledBinding(binding))
                     .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
+                    .compactSettingsSwitch()
                     .accessibilityLabel("启用「\(ShortcutBindingRuntime.title(for: binding.action))」")
             }
             .padding(.horizontal, 14)
@@ -904,6 +1046,14 @@ struct SettingsView: View {
                         .truncationMode(.tail)
                         .help(target?.path ?? "")
 
+                    if let target {
+                        Toggle("再次触发时隐藏", isOn: hidesOnRepeatBinding(binding.id, fallback: target.hidesOnRepeatTrigger))
+                            .toggleStyle(.checkbox)
+                            .controlSize(.small)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+
                     statusLine(status, id: binding.id)
 
                     if let target, !FileManager.default.fileExists(atPath: target.path) {
@@ -912,7 +1062,7 @@ struct SettingsView: View {
                                 .foregroundStyle(theme.danger)
                             Button("重新定位…") { relocateApplication(binding.id) }
                                 .buttonStyle(.borderless)
-                                .foregroundStyle(Color.accentColor)
+                                .foregroundStyle(NylaiPalette.accent)
                         }
                         .font(.system(size: 11))
                     }
@@ -930,8 +1080,7 @@ struct SettingsView: View {
 
                 Toggle("", isOn: bindingEnabledBinding(binding))
                     .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
+                    .compactSettingsSwitch()
                     .accessibilityLabel("启用「\(applicationName(for: target))」")
 
                 Button {
@@ -950,22 +1099,7 @@ struct SettingsView: View {
                 .accessibilityLabel("删除「\(applicationName(for: target))」")
             }
             .padding(.horizontal, 14)
-            .padding(.top, 11)
-            .padding(.bottom, 8)
-
-            if let target {
-                HStack {
-                    Toggle("再次触发时隐藏", isOn: hidesOnRepeatBinding(binding.id, fallback: target.hidesOnRepeatTrigger))
-                        .toggleStyle(.checkbox)
-                        .controlSize(.small)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(.leading, 54)
-                .padding(.trailing, 82)
-                .padding(.bottom, 10)
-            }
+            .padding(.vertical, 9)
 
             if !isLast {
                 Divider().padding(.leading, 54)
@@ -1021,16 +1155,10 @@ struct SettingsView: View {
         .id("\(binding.id.rawValue)-\(keyboardLayoutRevision)")
     }
 
+    @ViewBuilder
     private func statusLine(_ status: ShortcutBindingStatus, id: ShortcutBindingID) -> some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(statusColor(status))
-                .frame(width: 5, height: 5)
-
-            Text(status.title)
-                .foregroundStyle(statusColor(status))
-
-            if case .failed(let reason) = status {
+        if case .failed(let reason) = status {
+            HStack(spacing: 5) {
                 Text(reason)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -1041,10 +1169,10 @@ struct SettingsView: View {
                     shortcutRuntime.retry(id)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(NylaiPalette.accent)
             }
+            .font(.system(size: 11))
         }
-        .font(.system(size: 11))
     }
 
     private func sectionTitle(_ title: String) -> some View {
@@ -1058,7 +1186,10 @@ struct SettingsView: View {
             get: { moduleStateController.isEnabled(module) },
             set: { value in
                 do {
+                    guard moduleStateController.isEnabled(module) != value else { return }
+                    let pull = makeMenuPull(module: module, appearing: value)
                     try moduleStateController.setEnabled(value, for: module)
+                    menuPull = pull
                 } catch {
                     handle(error)
                 }
@@ -1075,6 +1206,16 @@ struct SettingsView: View {
                 } catch {
                     gestureErrorMessage = error.localizedDescription
                 }
+            }
+        )
+    }
+
+    private var appearanceModeBinding: Binding<AppAppearanceMode> {
+        Binding(
+            get: { preferences.appearanceMode },
+            set: { mode in
+                preferences.appearanceMode = mode
+                mode.apply()
             }
         )
     }
@@ -1256,14 +1397,57 @@ struct SettingsView: View {
             }
             return
         }
+        addApplication(
+            bundleIdentifier: bundleIdentifier,
+            path: url.path(percentEncoded: false)
+        )
+    }
+
+    private func addApplication(bundleIdentifier: String, path: String) {
         do {
             _ = try shortcutRuntime.addApplicationBinding(
                 bundleIdentifier: bundleIdentifier,
-                path: url.path(percentEncoded: false)
+                path: path
             )
         } catch {
             handle(error)
         }
+    }
+
+    private var runningApplications: [RunningApplicationMenuItem] {
+        var applications: [String: RunningApplicationMenuItem] = [:]
+        for application in NSWorkspace.shared.runningApplications
+        where application.activationPolicy == .regular {
+            guard !application.isTerminated,
+                  let bundleIdentifier = application.bundleIdentifier,
+                  let url = application.bundleURL
+                    ?? NSWorkspace.shared.urlForApplication(
+                        withBundleIdentifier: bundleIdentifier
+                    )
+            else {
+                continue
+            }
+            let name = application.localizedName
+                ?? url.deletingPathExtension().lastPathComponent
+            applications[bundleIdentifier] = RunningApplicationMenuItem(
+                bundleIdentifier: bundleIdentifier,
+                path: url.path(percentEncoded: false),
+                name: name,
+                icon: NSWorkspace.shared.icon(forFile: url.path)
+            )
+        }
+        return applications.values.sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+
+    private var boundApplicationBundleIdentifiers: Set<String> {
+        Set(
+            shortcutRuntime.configuration?.bindings.compactMap { binding in
+                guard case .application(let target) = binding.action else { return nil }
+                return target.bundleIdentifier
+            } ?? []
+        )
     }
 
     private func relocateApplication(_ id: ShortcutBindingID) {
@@ -1348,19 +1532,6 @@ struct SettingsView: View {
         shortcutRuntime.showError(error)
     }
 
-    private func statusColor(_ status: ShortcutBindingStatus) -> Color {
-        switch status {
-        case .registered:
-            theme.success
-        case .failed:
-            theme.danger
-        case .recording:
-            Color.accentColor
-        case .unbound, .disabled, .globallyDisabled, .targetModuleDisabled, .paused:
-            .secondary
-        }
-    }
-
     private func moduleStatusColor(_ status: ModuleRuntimeStatus) -> Color {
         switch status {
         case .running, .available:
@@ -1383,20 +1554,46 @@ struct SettingsView: View {
     private var theme: SettingsTheme {
         SettingsTheme(colorScheme: colorScheme)
     }
+
+    private func makeMenuPull(module: NylaiModuleID, appearing: Bool) -> SidebarMenuPull? {
+        guard !reduceMotion, selectedSection == .modules,
+              let section = SettingsSection(module: module),
+              let sidebar = pullFrames[.sidebar],
+              let icon = pullFrames[.icon(module)] else { return nil }
+        let orderedModules = NylaiModuleID.allCases.prefix { $0 != module }
+        let row = 1 + orderedModules.filter {
+            SettingsSection(module: $0) != nil && moduleStateController.isEnabled($0)
+        }.count
+        let slot = CGRect(x: sidebar.minX, y: sidebar.minY + CGFloat(row) * 37,
+                          width: sidebar.width, height: 34)
+        return SidebarMenuPull(section: section, slot: slot, icon: icon, appearing: appearing)
+    }
+
+    private var visibleSections: [SettingsSection] {
+        let moduleSections: [SettingsSection] = NylaiModuleID.allCases.compactMap {
+            module -> SettingsSection? in
+            guard moduleStateController.isEnabled(module) else { return nil }
+            return SettingsSection(module: module)
+        }
+        return [.modules] + moduleSections + [.general, .permissions]
+    }
 }
 
-private enum SettingsSection: CaseIterable {
+private enum SettingsSection: Hashable {
     case modules
+    case screenshot
+    case general
+    case permissions
     case shortcuts
     case gestures
     case clipboard
-    case general
-    case permissions
 
     var title: String {
         switch self {
         case .modules:
             "功能"
+        case .screenshot:
+            "截图"
         case .shortcuts:
             "快捷键"
         case .gestures:
@@ -1413,7 +1610,9 @@ private enum SettingsSection: CaseIterable {
     var subtitle: String {
         switch self {
         case .modules:
-            "启用或停用 nylai 的功能模块。"
+            "启用或停用 \(AppName.current) 的功能模块。"
+        case .screenshot:
+            "管理最近截图的记录方式。"
         case .shortcuts:
             "为截图等内置功能或常用应用分配快捷键。"
         case .gestures:
@@ -1421,7 +1620,7 @@ private enum SettingsSection: CaseIterable {
         case .clipboard:
             "管理剪贴板历史、来源屏蔽和保留期限。"
         case .general:
-            "控制 nylai 启动时的行为。"
+            "控制 \(AppName.current) 的视觉模式与启动行为。"
         case .permissions:
             "查看屏幕录制、辅助功能和输入监控的授权状态。"
         }
@@ -1431,6 +1630,8 @@ private enum SettingsSection: CaseIterable {
         switch self {
         case .modules:
             "square.grid.2x2"
+        case .screenshot:
+            "viewfinder"
         case .shortcuts:
             "keyboard"
         case .gestures:
@@ -1441,6 +1642,21 @@ private enum SettingsSection: CaseIterable {
             "gearshape"
         case .permissions:
             "lock.shield"
+        }
+    }
+
+    init?(module: NylaiModuleID) {
+        switch module {
+        case .screenshot:
+            self = .screenshot
+        case .globalShortcuts:
+            self = .shortcuts
+        case .mouseGestures:
+            self = .gestures
+        case .clipboard:
+            self = .clipboard
+        case .windowSwitcher:
+            return nil
         }
     }
 }
@@ -1468,6 +1684,7 @@ private struct SidebarItem: View {
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
     @State private var isHovered = false
+    @State private var selectionTrigger = 0
 
     var body: some View {
         Button(action: action) {
@@ -1476,6 +1693,11 @@ private struct SidebarItem: View {
                     .font(.system(size: 13, weight: .medium))
                     .frame(width: 18)
                     .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                    .symbolEffect(
+                        .bounce,
+                        options: .nonRepeating,
+                        value: selectionTrigger
+                    )
 
                 Text(section.title)
                     .font(.system(size: 13, weight: isSelected ? .medium : .regular))
@@ -1486,19 +1708,19 @@ private struct SidebarItem: View {
             .padding(.horizontal, 10)
             .frame(height: 34)
             .background {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(backgroundColor)
-                    .shadow(color: isSelected ? Color.black.opacity(0.08) : .clear, radius: 1.5, y: 1)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(isSelected ? theme.selectedBorder : .clear, lineWidth: 0.5)
+                selectionShape.fill(backgroundColor)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+        .onChange(of: isSelected) { wasSelected, isSelected in
+            guard isSelected, !wasSelected else { return }
+            selectionTrigger &+= 1
+        }
     }
+
+    private var selectionShape: RoundedRectangle { RoundedRectangle(cornerRadius: 10, style: .continuous) }
 
     private var backgroundColor: Color {
         if isSelected {
@@ -1512,7 +1734,144 @@ private struct SidebarItem: View {
     }
 }
 
-private struct SettingsCard<Content: View>: View {
+private enum MenuPullAnchor: Hashable, Sendable {
+    static let space = "settings.menuPull"
+    case sidebar
+    case icon(NylaiModuleID)
+}
+
+private struct MenuPullFrames: PreferenceKey {
+    static let defaultValue: [MenuPullAnchor: CGRect] = [:]
+
+    static func reduce(value: inout [MenuPullAnchor: CGRect], nextValue: () -> [MenuPullAnchor: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
+private struct SidebarMenuPull {
+    static let duration = 0.72
+    static let catchTime = 0.23
+    static let landing = 0.70
+    let section: SettingsSection
+    let slot: CGRect
+    let icon: CGRect
+    let appearing: Bool
+    let started = Date()
+
+    var slashDelay: Double {
+        Self.duration * (appearing ? Self.catchTime : Self.landing)
+    }
+}
+
+private struct SidebarMenuPullOverlay: View {
+    let pull: SidebarMenuPull
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let time = clamp(timeline.date.timeIntervalSince(pull.started) / SidebarMenuPull.duration)
+            let sidebar = CGPoint(x: pull.slot.midX, y: pull.slot.midY)
+            let icon = CGPoint(x: pull.icon.midX, y: pull.icon.midY)
+            let iconAnchor = CGPoint(x: pull.icon.minX + 2, y: pull.icon.minY + 2)
+            let throwOrigin = pull.appearing ? sidebar : icon
+            let catchPoint = pull.appearing ? icon : sidebar
+            let ropeOrigin = pull.appearing ? sidebar : iconAnchor
+            let ropeTarget = pull.appearing ? iconAnchor : sidebar
+            let travel = clamp((time - 0.30) / 0.40)
+            let tug = pow(travel, 2.35)
+            let impact = clamp((time - SidebarMenuPull.landing) / 0.25)
+            let recoil = sin(impact * .pi * 4) * pow(1 - impact, 2) * 7
+            let tension = sin(.pi * clamp((time - 0.21) / 0.18))
+            let center = CGPoint(
+                x: mix(catchPoint.x, throwOrigin.x, tug) + (pull.appearing ? -recoil : recoil),
+                y: mix(catchPoint.y, throwOrigin.y, tug) - sin(.pi * travel) * 9
+            )
+            let scale = pull.appearing ? mix(0.18, 1, tug) : mix(1, 0.18, tug)
+            let cast = clamp(time / SidebarMenuPull.catchTime)
+            let castEase = 1 - pow(1 - cast, 2)
+            let lineTip = cast < 1
+                ? CGPoint(x: mix(ropeOrigin.x, ropeTarget.x, castEase),
+                          y: mix(ropeOrigin.y, ropeTarget.y, castEase) - sin(.pi * cast) * 19)
+                : CGPoint(x: center.x + (pull.appearing ? (iconAnchor.x - icon.x) * (1 - tug) : 0),
+                          y: center.y + (pull.appearing ? (iconAnchor.y - icon.y) * (1 - tug) : 0))
+            let release = clamp((time - 0.65) / 0.24)
+            let lineStart = pull.appearing
+                ? CGPoint(x: mix(ropeOrigin.x, lineTip.x, release),
+                          y: mix(ropeOrigin.y, lineTip.y, release))
+                : ropeOrigin
+
+            ZStack(alignment: .topLeading) {
+                HStack(spacing: 9) {
+                    Image(systemName: pull.section.symbol)
+                        .font(.system(size: 13, weight: .medium))
+                        .frame(width: 18)
+                        .foregroundStyle(.secondary)
+                    Text(pull.section.title)
+                        .font(.system(size: 13))
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .frame(width: pull.slot.width, height: pull.slot.height)
+                .background(SettingsTheme(colorScheme: colorScheme).sidebar,
+                            in: RoundedRectangle(cornerRadius: 8))
+                .scaleEffect(x: scale * (1 + tension * 0.055), y: scale * (1 - tension * 0.07))
+                .position(center)
+                .opacity(pull.appearing
+                         ? clamp((time - 0.19) / 0.10)
+                         : 1 - clamp((time - 0.79) / 0.18))
+
+                Path { path in
+                    path.move(to: lineStart)
+                    path.addQuadCurve(
+                        to: lineTip,
+                        control: CGPoint(
+                            x: (lineStart.x + lineTip.x) / 2,
+                            y: (lineStart.y + lineTip.y) / 2
+                                + (sin(.pi * cast) * 22 - tension * 6 + 4) * (1 - release)
+                        )
+                    )
+                }
+                .stroke(NylaiPalette.accent.opacity(0.76 * (1 - release)),
+                        style: StrokeStyle(lineWidth: 1.25 + tension * 0.65, lineCap: .round))
+
+                Circle()
+                    .fill(NylaiPalette.accent)
+                    .frame(width: 4, height: 4)
+                    .position(lineTip)
+                    .opacity((1 - release) * min(1, cast * 10))
+            }
+        }
+    }
+
+    private func mix(_ start: Double, _ end: Double, _ fraction: Double) -> Double {
+        start + (end - start) * fraction
+    }
+
+    private func clamp(_ value: Double) -> Double {
+        min(1, max(0, value))
+    }
+}
+
+private extension View {
+    func reportMenuPullFrame(_ anchor: MenuPullAnchor) -> some View {
+        background {
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: MenuPullFrames.self,
+                    value: [anchor: geometry.frame(in: .named(MenuPullAnchor.space))]
+                )
+            }
+        }
+    }
+
+    func compactSettingsSwitch() -> some View {
+        toggleStyle(.switch)
+            .controlSize(.small)
+            .scaleEffect(0.8, anchor: .trailing)
+    }
+}
+
+struct SettingsCard<Content: View>: View {
     let content: Content
     @Environment(\.colorScheme) private var colorScheme
 
@@ -1541,17 +1900,116 @@ private struct SettingsCard<Content: View>: View {
 
 private struct ActionIcon: View {
     let symbol: String
+    var isEnabled = true
+    var slashDelay: Double = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         RoundedRectangle(cornerRadius: 7, style: .continuous)
             .fill(Color.primary.opacity(0.06))
             .frame(width: 28, height: 28)
             .overlay {
-                Image(systemName: symbol)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
+                ZStack {
+                    Image(systemName: symbol)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .opacity(isEnabled ? 1 : 0.7)
+
+                    Path { path in
+                        path.move(to: CGPoint(x: 5, y: 5))
+                        path.addLine(to: CGPoint(x: 23, y: 23))
+                    }
+                        .trim(from: 0, to: isEnabled ? 0 : 1)
+                        .stroke(Color.secondary, style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
+                        .frame(width: 28, height: 28)
+                        .opacity(isEnabled ? 0 : 0.9)
+                        .animation(
+                            reduceMotion
+                                ? .easeOut(duration: 0.12)
+                                : .easeInOut(duration: 0.18).delay(slashDelay),
+                            value: isEnabled
+                        )
+                }
             }
+            .accessibilityHidden(true)
     }
+}
+
+private struct AppearanceModePicker: View {
+    @Binding var selection: AppAppearanceMode
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        GeometryReader { geometry in
+            let inset: CGFloat = 4
+            let segmentWidth = (geometry.size.width - inset * 2)
+                / CGFloat(AppAppearanceMode.allCases.count)
+            let selectedIndex = AppAppearanceMode.allCases.firstIndex(of: selection) ?? 0
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.055))
+
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(NylaiPalette.accent.opacity(colorScheme == .dark ? 0.24 : 0.16))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .strokeBorder(
+                                NylaiPalette.accent.opacity(colorScheme == .dark ? 0.38 : 0.24),
+                                lineWidth: 0.5
+                            )
+                    }
+                    .frame(
+                        width: max(0, segmentWidth - 8),
+                        height: max(0, geometry.size.height - inset * 2)
+                    )
+                    .position(
+                        x: inset + segmentWidth * (CGFloat(selectedIndex) + 0.5),
+                        y: geometry.size.height / 2
+                    )
+                    .animation(
+                        reduceMotion
+                            ? .easeOut(duration: 0.12)
+                            : .spring(response: 0.32, dampingFraction: 0.86),
+                        value: selection
+                    )
+
+                HStack(spacing: 0) {
+                    ForEach(AppAppearanceMode.allCases) { mode in
+                        Button {
+                            selection = mode
+                        } label: {
+                            Text(mode.title)
+                                .font(.system(
+                                    size: 11.5,
+                                    weight: selection == mode ? .semibold : .regular
+                                ))
+                                .foregroundStyle(
+                                    selection == mode ? Color.primary : Color.secondary
+                                )
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(mode.title)
+                        .accessibilityAddTraits(selection == mode ? .isSelected : [])
+                    }
+                }
+                .padding(inset)
+            }
+        }
+        .frame(height: 30)
+    }
+}
+
+private struct RunningApplicationMenuItem: Identifiable {
+    let bundleIdentifier: String
+    let path: String
+    let name: String
+    let icon: NSImage
+
+    var id: String { bundleIdentifier }
 }
 
 private struct ApplicationIconView: View {
@@ -1589,6 +2047,39 @@ private extension ShortcutBinding {
     }
 }
 
+
+struct ThinScrollIndicatorInstaller: NSViewRepresentable {
+    func makeNSView(context: Context) -> ScrollProbe { ScrollProbe() }
+    func updateNSView(_ view: ScrollProbe, context: Context) {}
+
+    final class ScrollProbe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async { [weak self] in
+                guard let scroll = self?.enclosingScrollView,
+                      scroll.hasVerticalScroller,
+                      !(scroll.verticalScroller is ThinScroller) else { return }
+                scroll.verticalScroller = ThinScroller()
+            }
+        }
+    }
+
+    private final class ThinScroller: NSScroller {
+        override class var isCompatibleWithOverlayScrollers: Bool { true }
+
+        override func drawKnob() {
+            let knob = rect(for: .knob)
+            let width: CGFloat = 4
+            let shape = CGRect(x: knob.maxX - width - 1, y: knob.minY + 1,
+                               width: width, height: max(0, knob.height - 2))
+            NSColor.labelColor.withAlphaComponent(0.40).setFill()
+            NSBezierPath(roundedRect: shape, xRadius: width / 2, yRadius: width / 2).fill()
+        }
+
+        override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
+    }
+}
+
 private extension ShortcutAction {
     var iconName: String {
         switch self {
@@ -1610,7 +2101,7 @@ private extension ShortcutAction {
     }
 }
 
-private struct SettingsTheme {
+struct SettingsTheme {
     let page: Color
     let sidebar: Color
     let card: Color
@@ -1624,25 +2115,25 @@ private struct SettingsTheme {
     init(colorScheme: ColorScheme) {
         switch colorScheme {
         case .dark:
-            page = Color(red: 0.105, green: 0.105, blue: 0.118)
-            sidebar = Color(red: 0.125, green: 0.125, blue: 0.141)
-            card = Color(red: 0.149, green: 0.149, blue: 0.165)
-            border = Color.white.opacity(0.07)
-            selected = Color.white.opacity(0.10)
-            selectedBorder = Color.white.opacity(0.08)
-            success = Color(red: 0.435, green: 0.851, blue: 0.608)
-            warning = Color(red: 0.949, green: 0.71, blue: 0.267)
-            danger = Color(red: 0.949, green: 0.545, blue: 0.51)
+            page = Color(red: 0.10, green: 0.11, blue: 0.08)
+            sidebar = Color(red: 0.12, green: 0.14, blue: 0.10)
+            card = Color(red: 0.16, green: 0.18, blue: 0.13)
+            border = Color(red: 0.96, green: 0.94, blue: 0.90).opacity(0.08)
+            selected = Color(red: 0.96, green: 0.94, blue: 0.90).opacity(0.09)
+            selectedBorder = NylaiPalette.accent.opacity(0.38)
+            success = Color(red: 0.67, green: 0.78, blue: 0.55)
+            warning = Color(red: 0.82, green: 0.57, blue: 0.22)
+            danger = Color(red: 0.95, green: 0.52, blue: 0.48)
         default:
-            page = .white
-            sidebar = Color(red: 0.949, green: 0.949, blue: 0.961)
-            card = Color(red: 0.969, green: 0.969, blue: 0.98)
-            border = Color.black.opacity(0.055)
-            selected = .white
-            selectedBorder = Color.black.opacity(0.06)
-            success = Color(red: 0.082, green: 0.541, blue: 0.294)
-            warning = Color(red: 0.706, green: 0.325, blue: 0.035)
-            danger = Color(red: 0.78, green: 0.16, blue: 0.18)
+            page = Color(red: 0.985, green: 0.98, blue: 0.965)
+            sidebar = Color(red: 0.95, green: 0.945, blue: 0.925)
+            card = Color(red: 0.995, green: 0.992, blue: 0.982)
+            border = Color(nsColor: NylaiPalette.olive).opacity(0.08)
+            selected = .white.opacity(0.92)
+            selectedBorder = NylaiPalette.accent.opacity(0.24)
+            success = Color(nsColor: NylaiPalette.olive)
+            warning = Color(red: 0.66, green: 0.39, blue: 0.12)
+            danger = Color(red: 0.72, green: 0.17, blue: 0.16)
         }
     }
 }

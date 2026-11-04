@@ -36,7 +36,7 @@ enum ClipboardPasteboardError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .readFailed:
-            "系统剪贴板访问被拒绝或读取失败。请在系统设置的剪贴板权限中允许 nylai。"
+            "系统剪贴板访问被拒绝或读取失败。请在系统设置的剪贴板权限中允许 \(AppName.current)。"
         case .writeFailed:
             "无法写入系统剪贴板。"
         case .accessNotGranted:

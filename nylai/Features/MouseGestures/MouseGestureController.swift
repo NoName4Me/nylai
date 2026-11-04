@@ -1,9 +1,11 @@
 import AppKit
 import Observation
+import OSLog
 
 @MainActor
 @Observable
 final class MouseGestureController {
+    private let logger = Logger(subsystem: "com.noname4me.nylai", category: "MouseGestures")
     private struct ActiveSession {
         let revision: Int
         let targetBundleIdentifier: String
@@ -27,6 +29,7 @@ final class MouseGestureController {
     private let notificationCenter: NotificationCenter
     private let traceWindow = MouseGestureTraceWindow()
     private var isActive = false
+    private var isEditingRule = false
     private var session: ActiveSession?
     private var sessionRevision = 0
     private var workspaceObservers: [NSObjectProtocol] = []
@@ -194,6 +197,11 @@ final class MouseGestureController {
         cancelSession()
     }
 
+    func setRuleEditing(_ isEditing: Bool) {
+        isEditingRule = isEditing
+        if isEditing { cancelSession() }
+    }
+
     func refreshActionAvailability() {
         ensureMonitorState()
     }
@@ -298,7 +306,7 @@ final class MouseGestureController {
     }
 
     private func handle(_ input: MouseGestureInput) -> Bool {
-        if isInputSuppressed() {
+        if isEditingRule || isInputSuppressed() {
             cancelSession()
             return false
         }
@@ -392,6 +400,7 @@ final class MouseGestureController {
         case .passThrough:
             eventMonitor.restoreRightClick(at: point)
         case .consumedWithoutMatch:
+            logger.info("Gesture ended without a matching enabled rule: \(path.display, privacy: .public)")
             break
         case .matched(let rule):
             Task { @MainActor [weak self] in
@@ -415,6 +424,7 @@ final class MouseGestureController {
         case .application(let target):
             performNylaiAction(.application(target))
         case .sendShortcut(let shortcut):
+            logger.info("Matched gesture shortcut: keyCode=\(shortcut.keyCode, privacy: .public)")
             guard frontmostApplicationMatches(target) else {
                 presentError(MouseGestureExecutionError.cannotSendShortcut)
                 return
@@ -430,6 +440,7 @@ final class MouseGestureController {
                 presentError(MouseGestureExecutionError.cannotSendShortcut)
                 return
             }
+            logger.info("Gesture shortcut events posted to macOS")
         }
     }
 

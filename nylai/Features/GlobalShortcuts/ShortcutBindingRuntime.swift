@@ -659,7 +659,7 @@ enum ShortcutOperationError: LocalizedError, Equatable {
         case .applicationIdentityMismatch:
             "所选应用与原绑定不是同一个应用，请选择原应用的新位置。"
         case .internalBindingCannotBeRemoved:
-            "nylai 内置动作不能删除。"
+            "\(AppName.current) 内置动作不能删除。"
         case .rollbackUnregisterFailed(let persistence, let registration):
             "保存失败：\(persistence)；撤销新注册也失败：\(registration)。旧快捷键仍保持生效。"
         }

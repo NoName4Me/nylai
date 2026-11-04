@@ -1,0 +1,134 @@
+name: 缺陷报告 / Bug report
+description: 报告可以复现的崩溃、错误行为或视觉问题。
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先搜索现有 issue，并尽量使用 GitHub Release 中的最新版本。
+
+        剪贴板、截图或文件名可能包含隐私内容。粘贴日志和附件前请先遮盖敏感信息。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 issue，没有发现相同问题。
+          required: true
+        - label: 我已确认问题能在当前版本中再次出现。
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 用一到两句话说明发生了什么。
+      placeholder: 例如：启用鼠标手势后，右键拖动没有显示轨迹，也不会执行动作。
+    validations:
+      required: true
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: 功能模块
+      options:
+        - 截图
+        - 剪贴板历史
+        - 鼠标手势
+        - 快捷键
+        - 窗口切换
+        - 设置与外观
+        - 启动与菜单栏
+        - 安装与更新
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: Nylai 版本
+      description: 设置页、关于窗口或应用包中显示的版本。
+      placeholder: 例如：0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS 版本
+      placeholder: 例如：macOS 15.5
+    validations:
+      required: true
+
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: Mac 芯片
+      options:
+        - Apple Silicon
+        - Intel
+        - 不确定
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: 安装来源
+      options:
+        - GitHub Release 中的 DMG
+        - 本地 Xcode 构建
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请提供能够稳定触发问题的操作顺序。
+      placeholder: |
+        1. 打开……
+        2. 设置……
+        3. 执行……
+        4. 观察到……
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+    validations:
+      required: true
+
+  - type: dropdown
+    id: permissions
+    attributes:
+      label: 相关系统权限
+      description: 在“系统设置 → 隐私与安全性”中检查。
+      options:
+        - 所需权限均已允许
+        - 部分权限被拒绝
+        - 尚未请求或不确定
+        - 此问题不需要系统权限
+    validations:
+      required: true
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: 截图、录屏与日志
+      description: 提交 issue 后可直接将文件拖入描述框。请移除敏感内容。
+      placeholder: 可附上录屏、异常界面截图或控制台日志。

@@ -1,0 +1,23 @@
+changelog:
+  exclude:
+    labels:
+      - duplicate
+      - invalid
+      - skip-changelog
+      - wontfix
+  categories:
+    - title: 新功能
+      labels:
+        - enhancement
+    - title: 问题修复
+      labels:
+        - bug
+    - title: 可访问性
+      labels:
+        - accessibility
+    - title: 文档
+      labels:
+        - documentation
+    - title: 其他变更
+      labels:
+        - "*"

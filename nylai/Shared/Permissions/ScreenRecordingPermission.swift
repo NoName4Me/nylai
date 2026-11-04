@@ -3,6 +3,8 @@ import CoreGraphics
 
 @MainActor
 enum ScreenRecordingPermission {
+    private static var hasPromptedInThisLaunch = false
+
     // 只检查当前授权，不在启动或打开设置时触发授权请求。
     static var isGranted: Bool {
         CGPreflightScreenCaptureAccess()
@@ -10,7 +12,18 @@ enum ScreenRecordingPermission {
 
     // 仅由用户主动触发截图的路径调用。
     static func requestAccessIfNeeded() -> Bool {
-        isGranted || CGRequestScreenCaptureAccess()
+        if isGranted {
+            return true
+        }
+        guard !hasPromptedInThisLaunch else {
+            return false
+        }
+        hasPromptedInThisLaunch = true
+        return CGRequestScreenCaptureAccess()
+    }
+
+    static func resetPromptStateForTesting() {
+        hasPromptedInThisLaunch = false
     }
 
     @discardableResult

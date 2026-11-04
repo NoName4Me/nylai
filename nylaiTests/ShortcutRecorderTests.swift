@@ -4,6 +4,15 @@ import XCTest
 @testable import nylai
 
 final class ShortcutRecorderTests: XCTestCase {
+    @MainActor
+    func testRecorderDrawsShiftCommandOneKeycap() throws {
+        let view = ShortcutRecorderView(frame: CGRect(x: 0, y: 0, width: 112, height: 28))
+        view.shortcut = ShortcutKey(keyCode: UInt32(kVK_ANSI_1), modifiers: [.shift, .command])
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        XCTAssertEqual(view.accessibilityValue() as? String, "⇧⌘1")
+    }
+
     func testDisplayUsesCurrentPhysicalKeyCode() {
         let shortcut = ShortcutKey(
             keyCode: UInt32(kVK_ANSI_N),
@@ -32,6 +41,7 @@ final class ShortcutRecorderTests: XCTestCase {
         view.keyDown(with: event)
         XCTAssertNil(captured)
 
+        view.interceptsSystemEvents = false
         view.isRecording = true
         view.keyDown(with: event)
         XCTAssertEqual(captured, ShortcutKey(keyCode: UInt32(kVK_ANSI_N), modifiers: [.control, .option]))
@@ -53,6 +63,42 @@ final class ShortcutRecorderTests: XCTestCase {
         XCTAssertEqual(
             ShortcutRecorderEvent.keyAction(for: makeEvent(keyCode: UInt32(kVK_ANSI_N), modifiers: [])),
             .invalid
+        )
+    }
+
+    func testControlUpArrowIsCapturedInsteadOfPassingThrough() {
+        let shortcut = ShortcutKey(
+            keyCode: UInt32(kVK_UpArrow),
+            modifiers: [.control]
+        )
+        XCTAssertEqual(
+            ShortcutRecorderEvent.keyAction(
+                for: makeEvent(
+                    keyCode: UInt32(kVK_UpArrow),
+                    modifiers: [.control]
+                )
+            ),
+            .capture(shortcut)
+        )
+        XCTAssertEqual(ShortcutDisplayFormatter.string(for: shortcut), "⌃↑")
+    }
+
+    func testSessionLevelRecorderConsumesAndCapturesControlUpArrow() throws {
+        let event = try XCTUnwrap(CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: CGKeyCode(kVK_UpArrow),
+            keyDown: true
+        ))
+        event.flags = [.maskControl]
+
+        XCTAssertTrue(ShortcutRecordingEventMonitor.shouldConsume(type: .keyDown))
+        XCTAssertTrue(ShortcutRecordingEventMonitor.shouldConsume(type: .keyUp))
+        XCTAssertEqual(
+            ShortcutRecorderEvent.keyAction(for: event),
+            .capture(ShortcutKey(
+                keyCode: UInt32(kVK_UpArrow),
+                modifiers: [.control]
+            ))
         )
     }
 

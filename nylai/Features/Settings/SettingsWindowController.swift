@@ -22,9 +22,20 @@ final class SettingsWindowController: NSWindowController {
             clipboardLoadError: clipboardLoadError
         ))
         let window = NSWindow(contentViewController: hostingController)
-        window.title = "nylai 设置"
+        window.title = ""
         window.identifier = NSUserInterfaceItemIdentifier("nylai.settings")
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.styleMask = [
+            .titled,
+            .closable,
+            .miniaturizable,
+            .fullSizeContentView
+        ]
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        window.backgroundColor = NylaiTheme.panelBackground()
+        window.isMovableByWindowBackground = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
         window.setContentSize(NSSize(width: 760, height: 580))
         window.isReleasedWhenClosed = false
         super.init(window: window)

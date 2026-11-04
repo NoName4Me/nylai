@@ -2,13 +2,15 @@ import AppKit
 
 enum ScreenshotColorPalette {
     static let columnCount = 7
-    static let rowCount = 5
+    static let rowCount = 8
+
+    static let brightnessLevels: [CGFloat] = [1, 0.97, 0.94, 0.89, 0.78, 0.66, 0.48, 0.28]
 
     static func color(column: Int, row: Int) -> ScreenshotAnnotationColor {
         let safeColumn = min(max(column, 0), columnCount - 1)
         let safeRow = min(max(row, 0), rowCount - 1)
+        let brightness = brightnessLevels[safeRow]
         if safeColumn == columnCount - 1 {
-            let brightness = 1 - CGFloat(safeRow) * 0.19
             return ScreenshotAnnotationColor(
                 red: Double(brightness),
                 green: Double(brightness),
@@ -17,8 +19,7 @@ enum ScreenshotColorPalette {
             )
         }
         let hue = [0.0, 0.075, 0.14, 0.36, 0.58, 0.73][safeColumn]
-        let brightness = 1 - CGFloat(safeRow) * 0.18
-        let saturation = safeRow == 0 ? 0.56 : 0.82
+        let saturation: CGFloat = [0.24, 0.45, 0.70, 0.90, 0.90, 0.90, 0.90, 0.90][safeRow]
         return NSColor(
             hue: hue,
             saturation: saturation,
@@ -102,7 +103,7 @@ final class ScreenshotColorPopoverViewController: NSViewController {
         saturation = s
         brightness = b
         super.init(nibName: nil, bundle: nil)
-        preferredContentSize = NSSize(width: 404, height: 242)
+        preferredContentSize = NSSize(width: 404, height: 264)
     }
 
     @available(*, unavailable)

@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var scrollCaptureController: ScrollCaptureController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        preferences.appearanceMode.apply()
         installMainMenu()
         statusBarController = StatusBarController(
             openSettings: { [weak self] in self?.showSettings() },
@@ -112,7 +113,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               windowSwitcherController != nil else {
             return
         }
-        windowSwitcherController?.start(requestPermission: false)
+        // Returning from System Settings advances to the next missing TCC
+        // permission. Requesting them together can hide the later prompt.
+        windowSwitcherController?.start(requestPermission: true)
     }
 
     @objc private func captureScreenshot() {
@@ -123,7 +126,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         windowSwitcherController?.cancel()
         mouseGestureController?.cancelCurrentSession()
-        dismissNonScreenshotWindows()
         let controller = ensureScreenshotOverlayController()
         screenshotTask = Task { [weak self] in
             guard let self else { return }
@@ -161,7 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             return
         }
-        panelController.present()
+        panelController.toggle()
     }
 
     private func showLongScreenshotEditor(
@@ -248,13 +250,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .clipboardHistory:
             moduleStateController.isEnabled(.clipboard)
         }
-    }
-
-    private func dismissNonScreenshotWindows() {
-        settingsWindowController?.close()
-        screenshotHistoryWindowController?.close()
-        collageWindowController?.close()
-        clipboardPanelController?.close()
     }
 
     private func applyLifecycleChange(module: NylaiModuleID, enabled: Bool) {
@@ -476,9 +471,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installMainMenu() {
         let mainMenu = NSMenu()
         let applicationItem = NSMenuItem()
-        let applicationMenu = NSMenu(title: "nylai")
+        let applicationMenu = NSMenu(title: AppName.current)
         applicationMenu.delegate = self
-        applicationMenu.addItem(withTitle: "关于 nylai", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        applicationMenu.addItem(
+            withTitle: "关于 \(AppName.current)",
+            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+            keyEquivalent: ""
+        )
         let interactiveItem = applicationMenu.addItem(withTitle: "截图…", action: #selector(captureScreenshot), keyEquivalent: "")
         interactiveItem.target = self
         let historyItem = applicationMenu.addItem(
@@ -505,7 +504,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenshotMenuItems = [interactiveItem, historyItem, collageItem]
         clipboardMenuItem = clipboardItem
         applicationMenu.addItem(.separator())
-        applicationMenu.addItem(withTitle: "退出 nylai", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        applicationMenu.addItem(
+            withTitle: "退出 \(AppName.current)",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
         applicationItem.submenu = applicationMenu
         mainMenu.addItem(applicationItem)
 

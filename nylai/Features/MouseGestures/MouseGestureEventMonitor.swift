@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 @preconcurrency import CoreGraphics
 
 enum MouseGestureInput: Equatable {
@@ -40,7 +41,7 @@ enum MouseGestureEventMonitorError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .accessibilityPermissionRequired:
-            "需要“辅助功能”权限才能识别并接管右键手势。请在系统设置中允许 nylai.app，然后重试。"
+            "需要“辅助功能”权限才能识别并接管右键手势。请在系统设置中允许 \(AppName.current)，然后重试。"
         case .eventTapCreationFailed:
             "无法创建鼠标事件监听。请检查系统设置中的辅助功能权限后重试。"
         case .runLoopSourceCreationFailed:
@@ -142,9 +143,6 @@ final class CGEventTapMouseGestureMonitor: MouseGestureEventMonitoring {
     }
 
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        if event.getIntegerValueField(.eventSourceUserData) == GestureEventMarker.userData {
-            return Unmanaged.passUnretained(event)
-        }
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
@@ -159,15 +157,18 @@ final class CGEventTapMouseGestureMonitor: MouseGestureEventMonitoring {
             }
             return Unmanaged.passUnretained(event)
         }
+        if event.getIntegerValueField(.eventSourceUserData) == GestureEventMarker.userData {
+            return Unmanaged.passUnretained(event)
+        }
 
         let input: MouseGestureInput?
         switch type {
         case .rightMouseDown:
-            input = .rightMouseDown(NSEvent.mouseLocation)
+            input = .rightMouseDown(Self.appKitPoint(for: event.location))
         case .rightMouseDragged:
-            input = .rightMouseDragged(NSEvent.mouseLocation)
+            input = .rightMouseDragged(Self.appKitPoint(for: event.location))
         case .rightMouseUp:
-            input = .rightMouseUp(NSEvent.mouseLocation)
+            input = .rightMouseUp(Self.appKitPoint(for: event.location))
         case .keyDown where event.getIntegerValueField(.keyboardEventKeycode) == 53:
             input = .escape
         default:
@@ -179,6 +180,15 @@ final class CGEventTapMouseGestureMonitor: MouseGestureEventMonitoring {
         return handler?(input) == true
             ? nil
             : Unmanaged.passUnretained(event)
+    }
+
+    // Read the position carried by the intercepted event, even when the
+    // window server has not yet delivered that event to AppKit.
+    nonisolated static func appKitPoint(
+        for location: CGPoint,
+        primaryDisplayHeight: CGFloat = CGDisplayBounds(CGMainDisplayID()).height
+    ) -> CGPoint {
+        CGPoint(x: location.x, y: primaryDisplayHeight - location.y)
     }
 
     private static let callback: CGEventTapCallBack = { _, type, event, userInfo in
@@ -220,39 +230,84 @@ final class CGEventGestureShortcutSender: GestureShortcutSending {
 
     func send(_ shortcut: ShortcutKey) -> Bool {
         guard canSend,
-              let source = CGEventSource(stateID: .combinedSessionState) else {
+              let source = CGEventSource(stateID: Self.sourceState(for: shortcut)) else {
             return false
         }
         source.setLocalEventsFilterDuringSuppressionState(
             [.permitLocalMouseEvents, .permitLocalKeyboardEvents],
             state: .eventSuppressionStateSuppressionInterval
         )
-        guard let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(shortcut.keyCode), keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(shortcut.keyCode), keyDown: false) else {
+        let heldFlags = CGEventSource.flagsState(.hidSystemState)
+        guard let events = Self.keyboardEvents(for: shortcut, source: source, heldFlags: heldFlags) else {
             return false
         }
-        let flags = Self.flags(for: shortcut.modifiers)
-        down.flags = flags
-        up.flags = flags
-        down.setIntegerValueField(
-            .eventSourceUserData,
-            value: GestureEventMarker.userData
-        )
-        up.setIntegerValueField(
-            .eventSourceUserData,
-            value: GestureEventMarker.userData
-        )
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
+        for event in events {
+            event.setIntegerValueField(.eventSourceUserData, value: GestureEventMarker.userData)
+            event.post(tap: .cghidEventTap)
+        }
         return true
     }
 
-    private static func flags(for modifiers: ShortcutModifiers) -> CGEventFlags {
+    static func sourceState(for shortcut: ShortcutKey) -> CGEventSourceStateID {
+        usesSystemArrowEvents(shortcut) ? .hidSystemState : .combinedSessionState
+    }
+
+    private static func usesSystemArrowEvents(_ shortcut: ShortcutKey) -> Bool {
+        guard shortcut.modifiers == [.control] else { return false }
+        switch Int(shortcut.keyCode) {
+        case kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow: return true
+        default: return false
+        }
+    }
+
+    static func keyboardEvents(
+        for shortcut: ShortcutKey,
+        source: CGEventSource?,
+        heldFlags: CGEventFlags
+    ) -> [CGEvent]? {
+        let modifiers: [(ShortcutModifiers, CGEventFlags, Int)] = [
+            (.control, .maskControl, kVK_Control),
+            (.option, .maskAlternate, kVK_Option),
+            (.shift, .maskShift, kVK_Shift),
+            (.command, .maskCommand, kVK_Command),
+        ]
         var flags: CGEventFlags = []
-        if modifiers.contains(.command) { flags.insert(.maskCommand) }
-        if modifiers.contains(.option) { flags.insert(.maskAlternate) }
-        if modifiers.contains(.control) { flags.insert(.maskControl) }
-        if modifiers.contains(.shift) { flags.insert(.maskShift) }
-        return flags
+        var pressed: [(CGEventFlags, CGKeyCode)] = []
+        var events: [CGEvent] = []
+
+        func append(_ code: CGKeyCode, down: Bool, modifier: Bool = false) -> Bool {
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else {
+                return false
+            }
+            if modifier { event.type = .flagsChanged }
+            event.flags = flags
+            events.append(event)
+            return true
+        }
+
+        for (modifier, flag, _) in modifiers where shortcut.modifiers.contains(modifier) {
+            if heldFlags.contains(flag) { flags.insert(flag) }
+        }
+        for (modifier, flag, code) in modifiers where shortcut.modifiers.contains(modifier) {
+            guard !flags.contains(flag) else { continue }
+            flags.insert(flag)
+            let keyCode = CGKeyCode(code)
+            guard append(keyCode, down: true, modifier: true) else { return nil }
+            pressed.append((flag, keyCode))
+        }
+
+        let keyCode = CGKeyCode(shortcut.keyCode)
+        let modifierFlags = flags
+        if usesSystemArrowEvents(shortcut) {
+            flags.formUnion([.maskSecondaryFn, .maskNumericPad])
+        }
+        guard append(keyCode, down: true), append(keyCode, down: false) else { return nil }
+        flags = modifierFlags
+
+        for (flag, code) in pressed.reversed() {
+            flags.remove(flag)
+            guard append(code, down: false, modifier: true) else { return nil }
+        }
+        return events
     }
 }

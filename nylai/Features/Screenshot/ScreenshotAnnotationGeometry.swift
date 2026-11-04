@@ -66,7 +66,8 @@ struct ScreenshotAnnotationViewport: Equatable, Sendable {
             let visibleRect = viewRect.intersection(selection)
             if !visibleRect.isNull,
                selection.contains(point),
-               ScreenshotAnnotationPath.hitTest(point, annotation: annotation, in: viewRect) {
+               ScreenshotAnnotationPath.hitTest(point, annotation: annotation, in: viewRect,
+                                                strokeScale: min(viewport.scaleX, viewport.scaleY)) {
                 return annotation.id
             }
         }

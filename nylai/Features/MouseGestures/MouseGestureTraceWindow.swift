@@ -68,7 +68,7 @@ private final class MouseGestureTraceView: NSView {
         path.lineJoinStyle = .round
         path.stroke()
 
-        (isCancelled ? NSColor.systemRed : NSColor.controlAccentColor).setStroke()
+        (isCancelled ? NSColor.systemRed : NylaiTheme.accent).setStroke()
         path.lineWidth = 4
         path.stroke()
 

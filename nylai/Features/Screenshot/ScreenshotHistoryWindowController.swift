@@ -210,7 +210,7 @@ private struct ScreenshotHistoryView: View {
             Button("清空", role: .destructive) { model.clear() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("这会删除 nylai 管理的全部历史图片，不会删除已保存到其他位置的文件。")
+            Text("这会删除 \(AppName.current) 管理的全部历史图片，不会删除已保存到其他位置的文件。")
         }
     }
 

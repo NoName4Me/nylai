@@ -168,6 +168,9 @@ enum WindowSwitcherError: LocalizedError, Equatable {
     case noCurrentWindows
     case inputTapUnavailable
     case accessibilityUnavailable
+    case accessibilityPermissionRequired
+    case inputMonitoringPermissionRequired
+    case screenRecordingPermissionRequired
     case targetUnavailable
     case windowUnavailable
 
@@ -180,14 +183,56 @@ enum WindowSwitcherError: LocalizedError, Equatable {
         case .noCurrentWindows:
             "当前应用没有可切换的窗口。"
         case .inputTapUnavailable:
-            "无法接管键盘切换。请在系统设置中允许 nylai 使用辅助功能和输入监控。"
+            "无法接管键盘切换。请在系统设置中允许 \(AppName.current) 使用辅助功能和输入监控。"
         case .accessibilityUnavailable:
-            "无法定位目标窗口。请在系统设置中允许 nylai 使用辅助功能。"
+            "无法定位目标窗口。请在系统设置中允许 \(AppName.current) 使用辅助功能。"
+        case .accessibilityPermissionRequired:
+            "窗口切换需要辅助功能权限，请按系统提示完成授权。"
+        case .inputMonitoringPermissionRequired:
+            "窗口切换需要输入监控权限，请按系统提示完成授权。"
+        case .screenRecordingPermissionRequired:
+            "窗口预览需要屏幕录制权限，请按系统提示完成授权并重新启动 \(AppName.current)。"
         case .targetUnavailable:
             "目标应用已关闭，未执行切换。"
         case .windowUnavailable:
             "目标窗口已关闭或无法激活。"
         }
+    }
+}
+
+enum WindowSwitcherPermissionRequirement: Equatable, Sendable {
+    case accessibility
+    case inputMonitoring
+    case screenRecording
+
+    var error: WindowSwitcherError {
+        switch self {
+        case .accessibility:
+            .accessibilityPermissionRequired
+        case .inputMonitoring:
+            .inputMonitoringPermissionRequired
+        case .screenRecording:
+            .screenRecordingPermissionRequired
+        }
+    }
+}
+
+enum WindowSwitcherPermissionPolicy {
+    static func firstMissing(
+        accessibilityGranted: Bool,
+        inputMonitoringGranted: Bool,
+        screenRecordingGranted: Bool
+    ) -> WindowSwitcherPermissionRequirement? {
+        if !accessibilityGranted {
+            return .accessibility
+        }
+        if !inputMonitoringGranted {
+            return .inputMonitoring
+        }
+        if !screenRecordingGranted {
+            return .screenRecording
+        }
+        return nil
     }
 }
 

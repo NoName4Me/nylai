@@ -11,17 +11,96 @@ enum SelectionResizeHandle: CaseIterable, Equatable, Sendable {
     case bottom
     case bottomRight
 
-    var cursor: NSCursor {
+    var resizeCursorStyle: SelectionResizeCursorStyle {
         switch self {
         case .top, .bottom:
-            .resizeUpDown
+            .vertical
         case .left, .right:
-            .resizeLeftRight
+            .horizontal
         case .topLeft, .bottomRight:
-            .crosshair
+            .diagonalTopLeftBottomRight
         case .topRight, .bottomLeft:
-            .crosshair
+            .diagonalTopRightBottomLeft
         }
+    }
+
+    @MainActor
+    var cursor: NSCursor {
+        switch resizeCursorStyle {
+        case .vertical:
+            .resizeUpDown
+        case .horizontal:
+            .resizeLeftRight
+        case .diagonalTopLeftBottomRight:
+            SelectionResizeCursorCache.diagonalTopLeftBottomRight
+        case .diagonalTopRightBottomLeft:
+            SelectionResizeCursorCache.diagonalTopRightBottomLeft
+        }
+    }
+}
+
+enum SelectionResizeCursorStyle: Equatable, Sendable {
+    case vertical
+    case horizontal
+    case diagonalTopLeftBottomRight
+    case diagonalTopRightBottomLeft
+}
+
+@MainActor
+private enum SelectionResizeCursorCache {
+    static let diagonalTopLeftBottomRight = makeCursor(
+        from: CGPoint(x: 6, y: 18),
+        to: CGPoint(x: 18, y: 6)
+    )
+    static let diagonalTopRightBottomLeft = makeCursor(
+        from: CGPoint(x: 18, y: 18),
+        to: CGPoint(x: 6, y: 6)
+    )
+
+    private static func makeCursor(from start: CGPoint, to end: CGPoint) -> NSCursor {
+        let image = NSImage(size: NSSize(width: 24, height: 24))
+        image.lockFocus()
+        NSColor.clear.setFill()
+        NSRect(x: 0, y: 0, width: 24, height: 24).fill()
+
+        let path = NSBezierPath()
+        path.move(to: start)
+        path.line(to: end)
+        path.move(to: start)
+        path.line(to: CGPoint(
+            x: start.x + (end.x > start.x ? 5 : -5),
+            y: start.y
+        ))
+        path.move(to: start)
+        path.line(to: CGPoint(
+            x: start.x,
+            y: start.y + (end.y > start.y ? 5 : -5)
+        ))
+        path.move(to: end)
+        path.line(to: CGPoint(
+            x: end.x + (start.x > end.x ? 5 : -5),
+            y: end.y
+        ))
+        path.move(to: end)
+        path.line(to: CGPoint(
+            x: end.x,
+            y: end.y + (start.y > end.y ? 5 : -5)
+        ))
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+
+        NSColor.black.withAlphaComponent(0.9).setStroke()
+        path.lineWidth = 4
+        path.stroke()
+        NSColor.white.setStroke()
+        path.lineWidth = 2
+        path.stroke()
+        image.unlockFocus()
+
+        return NSCursor(
+            image: image,
+            hotSpot: NSPoint(x: 12, y: 12)
+        )
     }
 }
 

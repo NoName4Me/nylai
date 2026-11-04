@@ -50,6 +50,27 @@ final class SelectionGeometryTests: XCTestCase {
         XCTAssertEqual(SelectionGeometry.handle(at: points.left, in: bounds), .left)
     }
 
+    func testSelectionCornerHandlesUseDiagonalResizeCursors() {
+        XCTAssertEqual(
+            SelectionResizeHandle.topLeft.resizeCursorStyle,
+            .diagonalTopLeftBottomRight
+        )
+        XCTAssertEqual(
+            SelectionResizeHandle.bottomRight.resizeCursorStyle,
+            .diagonalTopLeftBottomRight
+        )
+        XCTAssertEqual(
+            SelectionResizeHandle.topRight.resizeCursorStyle,
+            .diagonalTopRightBottomLeft
+        )
+        XCTAssertEqual(
+            SelectionResizeHandle.bottomLeft.resizeCursorStyle,
+            .diagonalTopRightBottomLeft
+        )
+        XCTAssertEqual(SelectionResizeHandle.top.resizeCursorStyle, .vertical)
+        XCTAssertEqual(SelectionResizeHandle.left.resizeCursorStyle, .horizontal)
+    }
+
     func testAnnotationSelectionUsesEightFreeHandlesAndOptionalProportionalResize() {
         let rect = CGRect(x: 20, y: 20, width: 100, height: 50)
         let points = SelectionGeometry.handlePoints(in: rect)

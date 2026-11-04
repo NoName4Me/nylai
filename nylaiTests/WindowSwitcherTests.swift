@@ -179,6 +179,7 @@ final class WindowSwitcherTests: XCTestCase {
                 candidate(id: 21, pid: 2, title: "Front", frame: CGRect(x: 10, y: 10, width: 300, height: 200)),
                 candidate(id: 22, pid: 2, title: "Back", frame: CGRect(x: 30, y: 30, width: 300, height: 200)),
                 candidate(id: 11, pid: 1, title: "Current", frame: CGRect(x: 100, y: 100, width: 300, height: 200)),
+                candidate(id: 999, pid: 999, title: "Nylai", frame: CGRect(x: 120, y: 120, width: 300, height: 200)),
                 candidate(id: 91, pid: 9, title: "Offscreen", frame: CGRect(x: 2000, y: 2000, width: 100, height: 100)),
             ],
             currentProcessIdentifier: 999,
@@ -190,6 +191,40 @@ final class WindowSwitcherTests: XCTestCase {
         XCTAssertEqual(snapshot.applications[0].windows.map(\.id), [21, 22])
         XCTAssertEqual(snapshot.applications[1].windows.map(\.id), [11])
         XCTAssertTrue(snapshot.applications[2].windows.isEmpty)
+    }
+
+    func testPermissionPolicyRequestsOneMissingPermissionAtATime() {
+        XCTAssertEqual(
+            WindowSwitcherPermissionPolicy.firstMissing(
+                accessibilityGranted: false,
+                inputMonitoringGranted: false,
+                screenRecordingGranted: false
+            ),
+            .accessibility
+        )
+        XCTAssertEqual(
+            WindowSwitcherPermissionPolicy.firstMissing(
+                accessibilityGranted: true,
+                inputMonitoringGranted: false,
+                screenRecordingGranted: false
+            ),
+            .inputMonitoring
+        )
+        XCTAssertEqual(
+            WindowSwitcherPermissionPolicy.firstMissing(
+                accessibilityGranted: true,
+                inputMonitoringGranted: true,
+                screenRecordingGranted: false
+            ),
+            .screenRecording
+        )
+        XCTAssertNil(
+            WindowSwitcherPermissionPolicy.firstMissing(
+                accessibilityGranted: true,
+                inputMonitoringGranted: true,
+                screenRecordingGranted: true
+            )
+        )
     }
 
     func testSnapshotBuilderIncludesWindowsFromEveryVisibleDisplay() {
@@ -224,6 +259,49 @@ final class WindowSwitcherTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.applications[0].windows.map(\.id), [21, 22])
+    }
+
+    func testAccessibilityMatcherOnlyKeepsExistingWindowFrames() {
+        let existingWindow = WindowCaptureAccessibilityWindow(
+            title: "Document",
+            frame: CGRect(x: 40, y: 60, width: 800, height: 600)
+        )
+
+        XCTAssertTrue(
+            WindowCaptureAccessibilityMatcher.contains(
+                candidateTitle: "Document",
+                candidateFrame: CGRect(x: 42, y: 59, width: 799, height: 601),
+                in: [existingWindow]
+            )
+        )
+        XCTAssertFalse(
+            WindowCaptureAccessibilityMatcher.contains(
+                candidateTitle: nil,
+                candidateFrame: CGRect(x: 40, y: 60, width: 800, height: 600),
+                in: [existingWindow]
+            )
+        )
+        let untitled = WindowCaptureAccessibilityWindow(windowID: 42, title: nil, frame: existingWindow.frame)
+        XCTAssertTrue(WindowCaptureAccessibilityMatcher.contains(
+            candidateID: 42, candidateTitle: nil, candidateFrame: untitled.frame, in: [untitled]
+        ))
+        XCTAssertFalse(WindowCaptureAccessibilityMatcher.contains(
+            candidateID: 43, candidateTitle: nil, candidateFrame: untitled.frame, in: [untitled]
+        ))
+        XCTAssertFalse(
+            WindowCaptureAccessibilityMatcher.contains(
+                candidateTitle: "Closed Window",
+                candidateFrame: CGRect(x: 40, y: 60, width: 800, height: 600),
+                in: [existingWindow]
+            )
+        )
+        XCTAssertFalse(
+            WindowCaptureAccessibilityMatcher.contains(
+                candidateTitle: "Document",
+                candidateFrame: CGRect(x: 120, y: 60, width: 800, height: 600),
+                in: [existingWindow]
+            )
+        )
     }
 
     @MainActor

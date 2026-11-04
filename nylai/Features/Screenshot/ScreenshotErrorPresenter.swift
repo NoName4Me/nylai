@@ -10,22 +10,22 @@ enum ScreenshotErrorPresenter {
             rawValue: NSWindow.Level.screenSaver.rawValue + 1
         )
         if error as? ScreenshotError == .permissionRestartRequired {
-            alert.messageText = "需要重新启动 nylai"
-            alert.informativeText = "屏幕录制权限已经开启，但当前运行中的 nylai 尚未取得权限。重新启动后即可截图。"
-            alert.addButton(withTitle: "重新启动 nylai")
+            alert.messageText = "需要重新启动 \(AppName.current)"
+            alert.informativeText = "屏幕录制权限已经开启，但当前运行中的 \(AppName.current) 尚未取得权限。重新启动后即可截图。"
+            alert.addButton(withTitle: "重新启动 \(AppName.current)")
             alert.addButton(withTitle: "稍后")
             NSApp.activate(ignoringOtherApps: true)
             if alert.runModal() == .alertFirstButtonReturn,
                !ScreenRecordingPermission.relaunchApplication() {
                 let failureAlert = NSAlert()
-                failureAlert.messageText = "无法重新启动 nylai"
-                failureAlert.informativeText = "请退出 nylai 后重新打开。"
+                failureAlert.messageText = "无法重新启动 \(AppName.current)"
+                failureAlert.informativeText = "请退出 \(AppName.current) 后重新打开。"
                 failureAlert.runModal()
             }
         } else if error as? ScreenshotError == .permissionRequired {
             alert.messageText = "需要屏幕录制权限"
             alert.informativeText = """
-            请在系统设置中允许 nylai 录制屏幕。若列表中已没有 nylai，请点击列表下方的「+」，选择：
+            请在系统设置中允许 \(AppName.current) 录制屏幕。若列表中已没有 \(AppName.current)，请点击列表下方的「+」，选择：
             \(Bundle.main.bundleURL.path)
             """
             alert.addButton(withTitle: "打开系统设置…")

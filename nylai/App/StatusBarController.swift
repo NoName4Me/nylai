@@ -37,12 +37,15 @@ final class StatusBarController: NSObject {
 
         if let button = statusItem.button {
             let image = NSImage(named: NSImage.Name("MenuBarIcon"))
-                ?? NSImage(systemSymbolName: "square.stack.3d.up", accessibilityDescription: "nylai")
+                ?? NSImage(
+                    systemSymbolName: "square.stack.3d.up",
+                    accessibilityDescription: AppName.current
+                )
             image?.size = NSSize(width: 18, height: 18)
             image?.isTemplate = true
             button.image = image
-            button.toolTip = "nylai"
-            button.setAccessibilityLabel("nylai")
+            button.toolTip = AppName.current
+            button.setAccessibilityLabel(AppName.current)
         }
 
         let menu = NSMenu()
@@ -73,7 +76,11 @@ final class StatusBarController: NSObject {
         self.settingsItem = settingsItem
         screenshotItems = [interactiveItem, historyItem, collageItem]
         menu.addItem(.separator())
-        menu.addItem(withTitle: "退出 nylai", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(
+            withTitle: "退出 \(AppName.current)",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
         statusItem.menu = menu
     }
 

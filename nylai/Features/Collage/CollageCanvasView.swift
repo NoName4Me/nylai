@@ -211,7 +211,7 @@ final class CollageCanvasView: NSView {
     }
 
     private func drawSelection(around frame: CGRect) {
-        NSColor.controlAccentColor.withAlphaComponent(0.95).setStroke()
+        NylaiTheme.accent.withAlphaComponent(0.95).setStroke()
         let border = NSBezierPath(rect: frame)
         border.lineWidth = 2
         border.stroke()
@@ -230,7 +230,7 @@ final class CollageCanvasView: NSView {
             )
             NSColor.white.setFill()
             NSBezierPath(roundedRect: handle, xRadius: 2, yRadius: 2).fill()
-            NSColor.controlAccentColor.setStroke()
+            NylaiTheme.accent.setStroke()
             let outline = NSBezierPath(roundedRect: handle, xRadius: 2, yRadius: 2)
             outline.lineWidth = 1.25
             outline.stroke()

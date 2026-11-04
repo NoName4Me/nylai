@@ -1,0 +1,116 @@
+name: Release macOS app
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the v prefix, for example 0.2.0"
+        required: true
+        type: string
+      publish:
+        description: "Publish a GitHub Release after building the DMG"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INPUT_VERSION: ${{ inputs.version }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Prepare version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$INPUT_VERSION"
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Version must look like 1.2.3 or 1.2.3-beta.1."
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=v$VERSION" >> "$GITHUB_ENV"
+
+      - name: Archive universal app
+        shell: bash
+        run: |
+          ARCHIVE_PATH="$RUNNER_TEMP/nylai.xcarchive"
+          xcodebuild archive \
+            -project nylai.xcodeproj \
+            -scheme nylai \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -archivePath "$ARCHIVE_PATH" \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            MARKETING_VERSION="$VERSION" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            ENABLE_HARDENED_RUNTIME=YES
+          echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
+
+      - name: Package ad-hoc signed DMG
+        id: package
+        shell: bash
+        run: |
+          APP_PATH="$ARCHIVE_PATH/Products/Applications/nylai.app"
+          STAGING_PATH="$RUNNER_TEMP/nylai-dmg"
+          DMG_PATH="$RUNNER_TEMP/nylai-$VERSION-macOS-universal.dmg"
+          mkdir -p "$STAGING_PATH"
+          ditto "$APP_PATH" "$STAGING_PATH/nylai.app"
+          ln -s /Applications "$STAGING_PATH/Applications"
+          hdiutil create \
+            -volname "nylai $VERSION" \
+            -srcfolder "$STAGING_PATH" \
+            -ov -format UDZO \
+            "$DMG_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign -dv --verbose=4 "$APP_PATH" 2>&1 | tee "$RUNNER_TEMP/codesign-info.txt"
+          grep -q 'Signature=adhoc' "$RUNNER_TEMP/codesign-info.txt"
+          lipo -archs "$APP_PATH/Contents/MacOS/nylai" | tee "$RUNNER_TEMP/architectures.txt"
+          grep -qw arm64 "$RUNNER_TEMP/architectures.txt"
+          grep -qw x86_64 "$RUNNER_TEMP/architectures.txt"
+          shasum -a 256 "$DMG_PATH" | tee "$DMG_PATH.sha256"
+          echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
+          echo "dmg_path=$DMG_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nylai-macOS-universal
+          path: |
+            ${{ steps.package.outputs.dmg_path }}
+            ${{ steps.package.outputs.dmg_path }}.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'push' || inputs.publish
+        shell: bash
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DMG_PATH" "$DMG_PATH.sha256" --clobber
+          else
+            gh release create "$TAG" "$DMG_PATH" "$DMG_PATH.sha256" \
+              --target "$GITHUB_SHA" \
+              --title "Nylai $VERSION" \
+              --generate-notes
+          fi
