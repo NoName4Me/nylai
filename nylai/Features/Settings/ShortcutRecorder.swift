@@ -179,7 +179,7 @@ final class ShortcutRecorderView: NSView {
         var attributes: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.labelColor]
         for (index, label) in labels.enumerated() {
             let modifier = index < labels.count - 1
-            attributes[.font] = modifier ? NSFont.systemFont(ofSize: 14.5, weight: .medium)
+            attributes[.font] = modifier ? NSFont.systemFont(ofSize: 17, weight: .semibold)
                 : NSFont(name: "Menlo", size: 11)
             let rect = CGRect(x: start + CGFloat(index) * (width + gap), y: bounds.midY - height / 2,
                               width: width, height: height)
@@ -384,7 +384,8 @@ struct ShortcutKeycaps: View {
             let keys = ShortcutDisplayFormatter.keycaps(for: shortcut)
             ForEach(Array(keys.enumerated()), id: \.offset) { index, key in
                 Text(key)
-                    .font(.system(size: index < keys.count - 1 ? 14.5 : 11, weight: .medium,
+                    .font(.system(size: index < keys.count - 1 ? 17 : 11,
+                                  weight: index < keys.count - 1 ? .semibold : .medium,
                                   design: index < keys.count - 1 ? .default : .monospaced))
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
