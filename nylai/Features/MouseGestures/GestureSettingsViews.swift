@@ -31,7 +31,7 @@ final class GesturePathRecorderView: NSView {
     private var rightMouseLocalMonitor: Any?
 
     override var acceptsFirstResponder: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: 260, height: 224) }
+    override var intrinsicContentSize: NSSize { NSSize(width: 260, height: 196) }
 
     isolated deinit {
         if let rightMouseLocalMonitor {
@@ -327,7 +327,7 @@ struct GestureRuleEditorView: View {
                 draft.path = path
                 errorMessage = nil
             }
-            .frame(height: 224)
+            .frame(height: 196)
 
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
