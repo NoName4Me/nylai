@@ -177,25 +177,34 @@ enum WindowSwitcherError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .noApplications:
-            "没有可切换的应用。"
+            L10n.shared.string("没有可切换的应用。")
         case .noCurrentApplication:
-            "无法识别当前应用。"
+            L10n.shared.string("无法识别当前应用。")
         case .noCurrentWindows:
-            "当前应用没有可切换的窗口。"
+            L10n.shared.string("当前应用没有可切换的窗口。")
         case .inputTapUnavailable:
-            "无法接管键盘切换。请在系统设置中允许 \(AppName.current) 使用辅助功能和输入监控。"
+            L10n.shared.string(
+                "无法接管键盘切换。请在系统设置中允许 %@ 使用辅助功能和输入监控。",
+                AppName.current
+            )
         case .accessibilityUnavailable:
-            "无法定位目标窗口。请在系统设置中允许 \(AppName.current) 使用辅助功能。"
+            L10n.shared.string(
+                "无法定位目标窗口。请在系统设置中允许 %@ 使用辅助功能。",
+                AppName.current
+            )
         case .accessibilityPermissionRequired:
-            "窗口切换需要辅助功能权限，请按系统提示完成授权。"
+            L10n.shared.string("窗口切换需要辅助功能权限，请按系统提示完成授权。")
         case .inputMonitoringPermissionRequired:
-            "窗口切换需要输入监控权限，请按系统提示完成授权。"
+            L10n.shared.string("窗口切换需要输入监控权限，请按系统提示完成授权。")
         case .screenRecordingPermissionRequired:
-            "窗口预览需要屏幕录制权限，请按系统提示完成授权并重新启动 \(AppName.current)。"
+            L10n.shared.string(
+                "窗口预览需要屏幕录制权限，请按系统提示完成授权并重新启动 %@。",
+                AppName.current
+            )
         case .targetUnavailable:
-            "目标应用已关闭，未执行切换。"
+            L10n.shared.string("目标应用已关闭，未执行切换。")
         case .windowUnavailable:
-            "目标窗口已关闭或无法激活。"
+            L10n.shared.string("目标窗口已关闭或无法激活。")
         }
     }
 }

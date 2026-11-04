@@ -182,15 +182,15 @@ enum ScreenshotGeometryError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidSourceSize:
-            "图像尺寸无效。"
+            L10n.shared.string("图像尺寸无效。")
         case .invalidSourceGeometry:
-            "截图源的位置或像素比例无效。"
+            L10n.shared.string("截图源的位置或像素比例无效。")
         case .imageSizeMismatch:
-            "截图源尺寸与图像像素尺寸不一致。"
+            L10n.shared.string("截图源尺寸与图像像素尺寸不一致。")
         case .emptySelection:
-            "拖出的区域没有有效面积。"
+            L10n.shared.string("拖出的区域没有有效面积。")
         case .selectionOutsideSource:
-            "选区必须位于图像范围内。"
+            L10n.shared.string("选区必须位于图像范围内。")
         }
     }
 }

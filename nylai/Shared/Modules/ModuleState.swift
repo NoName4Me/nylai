@@ -11,30 +11,30 @@ enum NylaiModuleID: String, CaseIterable, Codable, Equatable, Sendable {
     var title: String {
         switch self {
         case .screenshot:
-            "截图"
+            L10n.shared.string("截图")
         case .globalShortcuts:
-            "快捷键"
+            L10n.shared.string("快捷键")
         case .mouseGestures:
-            "鼠标手势"
+            L10n.shared.string("鼠标手势")
         case .clipboard:
-            "剪贴板"
+            L10n.shared.string("剪贴板")
         case .windowSwitcher:
-            "窗口切换"
+            L10n.shared.string("窗口切换")
         }
     }
 
     var summary: String {
         switch self {
         case .screenshot:
-            "截图、最近截图、滚动截图与自由拼图。"
+            L10n.shared.string("截图、最近截图、滚动截图与自由拼图。")
         case .globalShortcuts:
-            "在任意应用中响应已录入的组合键。"
+            L10n.shared.string("在任意应用中响应已录入的组合键。")
         case .mouseGestures:
-            "按住右键绘制方向路径并执行动作。"
+            L10n.shared.string("按住右键绘制方向路径并执行动作。")
         case .clipboard:
-            "记录、搜索并复用复制的文本与图片。"
+            L10n.shared.string("记录、搜索并复用复制的文本与图片。")
         case .windowSwitcher:
-            "按应用分组预览窗口，并用 Command 快速切换。"
+            L10n.shared.string("按应用分组预览窗口，并用 Command 快速切换。")
         }
     }
 }
@@ -49,15 +49,15 @@ enum ModuleRuntimeStatus: Equatable, Sendable {
     var title: String {
         switch self {
         case .off:
-            "已关闭"
+            L10n.shared.string("已关闭")
         case .available:
-            "已开启"
+            L10n.shared.string("已开启")
         case .starting:
-            "正在启动"
+            L10n.shared.string("正在启动")
         case .running:
-            "运行中"
+            L10n.shared.string("运行中")
         case .failed:
-            "启动失败"
+            L10n.shared.string("启动失败")
         }
     }
 }

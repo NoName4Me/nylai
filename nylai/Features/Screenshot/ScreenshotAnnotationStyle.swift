@@ -59,9 +59,9 @@ enum ScreenshotArrowStyle: String, Codable, CaseIterable, Sendable {
 
     var title: String {
         switch self {
-        case .open: "开放箭头"
-        case .solid: "实心箭头"
-        case .double: "双向箭头"
+        case .open: L10n.shared.string("开放箭头")
+        case .solid: L10n.shared.string("实心箭头")
+        case .double: L10n.shared.string("双向箭头")
         }
     }
 }
@@ -69,24 +69,41 @@ enum ScreenshotArrowStyle: String, Codable, CaseIterable, Sendable {
 struct ScreenshotArrowOptions: Codable, Equatable, Sendable {
     enum Form: String, CaseIterable, Codable, Sendable {
         case line, body
-        var title: String { self == .line ? "线形" : "面形" }
+        var title: String {
+            self == .line
+                ? L10n.shared.string("线形")
+                : L10n.shared.string("面形")
+        }
     }
     enum Start: String, CaseIterable, Codable, Sendable {
         case none, dot, diamond, fork
         var title: String {
-            switch self { case .none: "无"; case .dot: "圆点"; case .diamond: "菱形"; case .fork: "分叉" }
+            switch self {
+            case .none: L10n.shared.string("无")
+            case .dot: L10n.shared.string("圆点")
+            case .diamond: L10n.shared.string("菱形")
+            case .fork: L10n.shared.string("分叉")
+            }
         }
     }
     enum Tip: String, CaseIterable, Codable, Sendable {
         case triangle, open, dart
         var title: String {
-            switch self { case .triangle: "三角"; case .open: "线条"; case .dart: "箭矢" }
+            switch self {
+            case .triangle: L10n.shared.string("三角")
+            case .open: L10n.shared.string("线条")
+            case .dart: L10n.shared.string("箭矢")
+            }
         }
     }
     enum Curve: String, CaseIterable, Codable, Sendable {
         case straight, left, right
         var title: String {
-            switch self { case .straight: "直线"; case .left: "左弯"; case .right: "右弯" }
+            switch self {
+            case .straight: L10n.shared.string("直线")
+            case .left: L10n.shared.string("左弯")
+            case .right: L10n.shared.string("右弯")
+            }
         }
     }
 
@@ -237,13 +254,13 @@ extension ScreenshotAnnotationKind {
     var lineWidthControlTitle: String {
         switch self {
         case .text:
-            "字号"
+            L10n.shared.string("字号")
         case .mosaic:
-            "像素块大小"
+            L10n.shared.string("像素块大小")
         case .step:
-            "直径"
+            L10n.shared.string("直径")
         case .rectangle, .ellipse, .line, .arrow, .brush:
-            "粗细"
+            L10n.shared.string("粗细")
         }
     }
 

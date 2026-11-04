@@ -55,7 +55,11 @@ struct GesturePath: Codable, Equatable, Hashable, Sendable {
     }
 
     var display: String {
-        if let circle { return circle == .clockwise ? "顺时针圆圈" : "逆时针圆圈" }
+        if let circle {
+            return circle == .clockwise
+                ? L10n.shared.string("顺时针圆圈")
+                : L10n.shared.string("逆时针圆圈")
+        }
         return directions.map(\.arrow).joined()
     }
 

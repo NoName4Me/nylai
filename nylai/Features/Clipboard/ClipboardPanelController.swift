@@ -19,6 +19,7 @@ final class ClipboardPanelModel {
     private let timeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
+        formatter.locale = L10n.shared.locale
         return formatter
     }()
 
@@ -84,7 +85,11 @@ final class ClipboardPanelModel {
     func preview(for record: ClipboardRecord) -> String {
         switch record.kind {
         case .image:
-            return "\(record.pixelWidth ?? 0) × \(record.pixelHeight ?? 0) 图片"
+            return L10n.shared.string(
+                "%@ × %@ 图片",
+                String(record.pixelWidth ?? 0),
+                String(record.pixelHeight ?? 0)
+            )
         case .text:
             if let cached = textCache[record.id] {
                 return cached
@@ -314,7 +319,11 @@ struct ClipboardPanelView: View {
             Image(systemName: "doc.on.clipboard")
                 .font(.system(size: 26, weight: .light))
                 .foregroundStyle(.tertiary)
-            Text(model.searchText.isEmpty ? "尚无剪贴板记录" : "没有匹配结果")
+            Text(
+                model.searchText.isEmpty
+                    ? L10n.shared.string("尚无剪贴板记录")
+                    : L10n.shared.string("没有匹配结果")
+            )
                 .font(.system(size: 12.5))
                 .foregroundStyle(.secondary)
         }
@@ -336,7 +345,11 @@ struct ClipboardPanelView: View {
                             .lineLimit(2)
                             .truncationMode(.tail)
                         HStack(spacing: 6) {
-                            Text(record.sourceName ?? record.sourceBundleIdentifier ?? "来源未知")
+                            Text(
+                                record.sourceName
+                                    ?? record.sourceBundleIdentifier
+                                    ?? L10n.shared.string("来源未知")
+                            )
                             Text("·")
                             Text(model.relativeTime(for: record.copiedAt))
                         }
@@ -355,7 +368,11 @@ struct ClipboardPanelView: View {
                 Image(systemName: record.isPinned ? "pin.slash" : "pin")
             }
             .buttonStyle(.borderless)
-            .help(record.isPinned ? "取消置顶" : "置顶")
+            .help(
+                record.isPinned
+                    ? L10n.shared.string("取消置顶")
+                    : L10n.shared.string("置顶")
+            )
             Button {
                 model.delete(record)
             } label: {
@@ -430,6 +447,7 @@ final class ClipboardPanelController: NSWindowController {
     private var copyFeedback: Task<Void, Never>?
     private var transitionTask: Task<Void, Never>?
     private var toastPanel: NSPanel?
+    private var activeModel: ClipboardPanelModel?
 
     init(
         store: ClipboardHistoryStore,
@@ -480,15 +498,20 @@ final class ClipboardPanelController: NSWindowController {
         dismissPreview()
         window?.orderOut(nil)
         window?.ignoresMouseEvents = false
+        activeModel = nil
     }
 
     func toggle() {
         if let window, window.isVisible, !window.ignoresMouseEvents,
-           let host = window.contentView as? NSHostingView<ClipboardPanelView> {
-            host.rootView.model.onClose()
+           let activeModel {
+            activeModel.onClose()
         } else {
             present()
         }
+    }
+
+    func refreshLocalization() {
+        window?.title = L10n.shared.string("剪贴板历史")
     }
 
     func present() {
@@ -507,6 +530,7 @@ final class ClipboardPanelController: NSWindowController {
             targetApplication: target,
             directPaster: directPaster
         )
+        activeModel = model
         let visible = (NSApp.keyWindow?.screen ?? NSScreen.main)?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 900, height: 700)
         let height = min(620, max(220, visible.height - 24))
@@ -516,7 +540,7 @@ final class ClipboardPanelController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        panel.title = "剪贴板历史"
+        panel.title = L10n.shared.string("剪贴板历史")
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .none
@@ -525,7 +549,10 @@ final class ClipboardPanelController: NSWindowController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        let hosting = NSHostingView(rootView: ClipboardPanelView(model: model, panelHeight: height))
+        let hosting = NSHostingView(
+            rootView: ClipboardPanelView(model: model, panelHeight: height)
+                .nylaiLocalized()
+        )
         hosting.wantsLayer = true
         hosting.layer?.cornerRadius = 12
         hosting.layer?.masksToBounds = true
@@ -592,7 +619,10 @@ final class ClipboardPanelController: NSWindowController {
     private func showCopiedToast(at anchor: CGRect, visible: CGRect) {
         copyFeedback?.cancel()
         toastPanel?.orderOut(nil)
-        let host = NSHostingView(rootView: Label("已复制", systemImage: "checkmark.circle.fill")
+        let host = NSHostingView(rootView: Label(
+            L10n.shared.string("已复制"),
+            systemImage: "checkmark.circle.fill"
+        )
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(NylaiPalette.accent)
             .padding(.horizontal, 15).padding(.vertical, 9)
@@ -658,9 +688,12 @@ final class ClipboardPanelController: NSWindowController {
         preview.isOpaque = false
         preview.backgroundColor = .clear
         preview.hasShadow = true
-        let host = NSHostingController(rootView: ClipboardRecordPreview(
-            content: store.content(for: record), size: CGSize(width: width, height: height)
-        ))
+        let host = NSHostingController(
+            rootView: ClipboardRecordPreview(
+                content: store.content(for: record),
+                size: CGSize(width: width, height: height)
+            ).nylaiLocalized()
+        )
         preview.contentViewController = host
         panel.addChildWindow(preview, ordered: .above)
         preview.orderFrontRegardless()
@@ -719,9 +752,9 @@ enum ClipboardDirectPasteErrorPresenter {
     @MainActor
     static func show(_ error: Error) {
         let alert = NSAlert()
-        alert.messageText = "无法直接粘贴"
+        alert.messageText = L10n.shared.string("无法直接粘贴")
         alert.informativeText = error.localizedDescription
-        alert.addButton(withTitle: "好")
+        alert.addButton(withTitle: L10n.shared.string("好"))
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
     }

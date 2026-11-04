@@ -12,15 +12,17 @@ final class SettingsWindowController: NSWindowController {
         clipboardMonitor: ClipboardMonitor?,
         clipboardLoadError: String?
     ) {
-        let hostingController = NSHostingController(rootView: SettingsView(
-            preferences: preferences,
-            shortcutRuntime: shortcutRuntime,
-            moduleStateController: moduleStateController,
-            mouseGestureController: mouseGestureController,
-            clipboardHistoryStore: clipboardHistoryStore,
-            clipboardMonitor: clipboardMonitor,
-            clipboardLoadError: clipboardLoadError
-        ))
+        let hostingController = NSHostingController(
+            rootView: SettingsView(
+                preferences: preferences,
+                shortcutRuntime: shortcutRuntime,
+                moduleStateController: moduleStateController,
+                mouseGestureController: mouseGestureController,
+                clipboardHistoryStore: clipboardHistoryStore,
+                clipboardMonitor: clipboardMonitor,
+                clipboardLoadError: clipboardLoadError
+            )
+        )
         let window = NSWindow(contentViewController: hostingController)
         window.title = ""
         window.identifier = NSUserInterfaceItemIdentifier("nylai.settings")

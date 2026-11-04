@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 final class StatusBarController: NSObject {
     private let statusItem: NSStatusItem
+    private let menu: NSMenu
     private let openSettings: () -> Void
     private let captureScreenshot: () -> Void
     private let showScreenshotHistory: () -> Void
@@ -33,6 +34,7 @@ final class StatusBarController: NSObject {
         self.canUseClipboard = canUseClipboard
         self.isInteractionLocked = isInteractionLocked
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        menu = NSMenu()
         super.init()
 
         if let button = statusItem.button {
@@ -48,36 +50,58 @@ final class StatusBarController: NSObject {
             button.setAccessibilityLabel(AppName.current)
         }
 
-        let menu = NSMenu()
+        configureMenu()
+    }
+
+    func refreshLocalization() {
+        if let button = statusItem.button {
+            button.toolTip = AppName.current
+            button.setAccessibilityLabel(AppName.current)
+        }
+        configureMenu()
+    }
+
+    private func configureMenu() {
         menu.delegate = self
-        let interactiveItem = menu.addItem(withTitle: "截图…", action: #selector(capture), keyEquivalent: "")
+        menu.removeAllItems()
+        screenshotItems = []
+        settingsItem = nil
+        let interactiveItem = menu.addItem(
+            withTitle: L10n.shared.string("截图…"),
+            action: #selector(capture),
+            keyEquivalent: ""
+        )
         interactiveItem.target = self
         let historyItem = menu.addItem(
-            withTitle: "最近截图…",
+            withTitle: L10n.shared.string("最近截图…"),
             action: #selector(showHistory),
             keyEquivalent: ""
         )
         historyItem.target = self
         let collageItem = menu.addItem(
-            withTitle: "自由拼图…",
+            withTitle: L10n.shared.string("自由拼图…"),
             action: #selector(openCollage),
             keyEquivalent: ""
         )
         collageItem.target = self
         let clipboardItem = menu.addItem(
-            withTitle: "剪贴板历史…",
+            withTitle: L10n.shared.string("剪贴板历史…"),
             action: #selector(showClipboard),
             keyEquivalent: ""
         )
         clipboardItem.target = self
         menu.addItem(.separator())
-        let settingsItem = menu.addItem(withTitle: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        let settingsItem = menu.addItem(
+            withTitle: L10n.shared.string("设置…"),
+            action: #selector(showSettings),
+            keyEquivalent: ","
+        )
         settingsItem.target = self
         self.settingsItem = settingsItem
         screenshotItems = [interactiveItem, historyItem, collageItem]
         menu.addItem(.separator())
         menu.addItem(
-            withTitle: "退出 \(AppName.current)",
+            withTitle: L10n.shared.string("退出 %@", AppName.current),
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )

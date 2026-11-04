@@ -29,31 +29,31 @@ enum NylaiIcon: String, CaseIterable {
 
     var accessibilityLabel: String {
         switch self {
-        case .crop: "选区"
-        case .cursor: "选择标注"
-        case .rectangle: "矩形"
-        case .ellipse: "椭圆"
-        case .line: "直线"
-        case .arrow: "箭头"
-        case .brush: "画笔"
-        case .text: "文字"
-        case .step: "步骤"
-        case .mosaic: "马赛克"
-        case .undo: "撤销"
-        case .redo: "重做"
-        case .trash: "删除标注"
-        case .scroll: "滚动截图"
-        case .reselect: "重新选择"
-        case .copy: "复制"
-        case .save: "保存"
-        case .pin: "置顶"
-        case .close: "取消"
-        case .shadow: "阴影"
-        case .solidLine: "实线"
-        case .dashedLine: "虚线"
-        case .zoomIn: "放大"
-        case .zoomOut: "缩小"
-        case .fitWidth: "适合宽度"
+        case .crop: L10n.shared.string("选区")
+        case .cursor: L10n.shared.string("选择标注")
+        case .rectangle: L10n.shared.string("矩形")
+        case .ellipse: L10n.shared.string("椭圆")
+        case .line: L10n.shared.string("直线")
+        case .arrow: L10n.shared.string("箭头")
+        case .brush: L10n.shared.string("画笔")
+        case .text: L10n.shared.string("文字")
+        case .step: L10n.shared.string("步骤")
+        case .mosaic: L10n.shared.string("马赛克")
+        case .undo: L10n.shared.string("撤销")
+        case .redo: L10n.shared.string("重做")
+        case .trash: L10n.shared.string("删除标注")
+        case .scroll: L10n.shared.string("滚动截图")
+        case .reselect: L10n.shared.string("重新选择")
+        case .copy: L10n.shared.string("复制")
+        case .save: L10n.shared.string("保存")
+        case .pin: L10n.shared.string("置顶")
+        case .close: L10n.shared.string("取消")
+        case .shadow: L10n.shared.string("阴影")
+        case .solidLine: L10n.shared.string("实线")
+        case .dashedLine: L10n.shared.string("虚线")
+        case .zoomIn: L10n.shared.string("放大")
+        case .zoomOut: L10n.shared.string("缩小")
+        case .fitWidth: L10n.shared.string("适合宽度")
         }
     }
 

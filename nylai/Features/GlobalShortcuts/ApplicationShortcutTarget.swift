@@ -17,11 +17,11 @@ enum ApplicationLaunchError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .missingApplication:
-            "应用已移动或不存在，请重新选择应用。"
+            L10n.shared.string("应用已移动或不存在，请重新选择应用。")
         case .invalidBundle:
-            "所选项目不是有效的应用。"
+            L10n.shared.string("所选项目不是有效的应用。")
         case .launchFailed(let message):
-            "无法启动应用：\(message)"
+            L10n.shared.string("无法启动应用：%@", message)
         }
     }
 }
@@ -137,9 +137,9 @@ final class ApplicationShortcutHandler {
 
     static func showError(_ error: Error) {
         let alert = NSAlert()
-        alert.messageText = "无法切换应用"
+        alert.messageText = L10n.shared.string("无法切换应用")
         alert.informativeText = error.localizedDescription
-        alert.addButton(withTitle: "好")
+        alert.addButton(withTitle: L10n.shared.string("好"))
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
     }

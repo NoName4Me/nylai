@@ -88,6 +88,10 @@ final class WindowSwitcherController {
         panelController.model.clear()
     }
 
+    func refreshLocalization() {
+        start(requestPermission: false)
+    }
+
     func cancel() {
         cancelSession()
     }

@@ -189,13 +189,13 @@ enum GlobalShortcutError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .occupied:
-            "快捷键已被占用，请关闭其他应用中的相同快捷键后重试。"
+            L10n.shared.string("快捷键已被占用，请关闭其他应用中的相同快捷键后重试。")
         case .invalidShortcut:
-            "快捷键无效，请使用 Command、Option、Control 或 Shift 修饰键及有效按键。"
+            L10n.shared.string("快捷键无效，请使用 Command、Option、Control 或 Shift 修饰键及有效按键。")
         case .registrationNotFound:
-            "快捷键注册已不存在，无法注销。"
+            L10n.shared.string("快捷键注册已不存在，无法注销。")
         case .systemFailure(let status):
-            "快捷键注册失败（\(status)），请重试。"
+            L10n.shared.string("快捷键注册失败（%@），请重试。", String(status))
         }
     }
 }

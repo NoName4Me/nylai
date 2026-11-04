@@ -39,7 +39,7 @@ final class MouseGestureController {
     private(set) var configuration: MouseGestureConfiguration?
     private(set) var loadError: String?
     private(set) var runtimeStatus: ModuleRuntimeStatus = .off
-    private(set) var statusText = "已关闭"
+    private(set) var statusText = L10n.shared.string("已关闭")
     private(set) var monitorRunning = false
 
     init(
@@ -109,10 +109,18 @@ final class MouseGestureController {
         eventMonitor.stop()
         monitorRunning = false
         guard wasActive else {
-            updateRuntime(.off, text: "已关闭")
+            updateRuntime(.off, text: L10n.shared.string("已关闭"))
             return
         }
-        updateRuntime(.off, text: "已关闭")
+        updateRuntime(.off, text: L10n.shared.string("已关闭"))
+    }
+
+    func refreshLocalization() {
+        guard isActive else {
+            updateRuntime(.off, text: L10n.shared.string("已关闭"))
+            return
+        }
+        ensureMonitorState()
     }
 
     func setShowsTrace(_ value: Bool) throws {
@@ -281,12 +289,18 @@ final class MouseGestureController {
             cancelSession()
             eventMonitor.stop()
             monitorRunning = false
-            updateRuntime(.available, text: "已开启，尚无可用规则")
+            updateRuntime(.available, text: L10n.shared.string("已开启，尚无可用规则"))
             return
         }
         if eventMonitor.isRunning {
             monitorRunning = true
-            updateRuntime(.running, text: "运行中 · \(configuration.rules.count) 条规则")
+            updateRuntime(
+                .running,
+                text: L10n.shared.string(
+                    "运行中 · %@ 条规则",
+                    String(configuration.rules.count)
+                )
+            )
             return
         }
         do {
@@ -299,7 +313,13 @@ final class MouseGestureController {
                 }
             )
             monitorRunning = true
-            updateRuntime(.running, text: "运行中 · \(configuration.rules.count) 条规则")
+            updateRuntime(
+                .running,
+                text: L10n.shared.string(
+                    "运行中 · %@ 条规则",
+                    String(configuration.rules.count)
+                )
+            )
         } catch {
             monitorRunning = false
             updateRuntime(.failed(error.localizedDescription), text: error.localizedDescription)
@@ -324,7 +344,7 @@ final class MouseGestureController {
             return true
         case .tapTimedOut:
             cancelSession()
-            updateRuntime(.running, text: "监听已恢复，请重新绘制手势")
+            updateRuntime(.running, text: L10n.shared.string("监听已恢复，请重新绘制手势"))
             return false
         }
     }
@@ -555,6 +575,6 @@ enum MouseGestureExecutionError: LocalizedError, Equatable {
     case cannotSendShortcut
 
     var errorDescription: String? {
-        "无法向前台应用发送快捷键。请确认系统输入事件权限，并保持原应用在前台。"
+        L10n.shared.string("无法向前台应用发送快捷键。请确认系统输入事件权限，并保持原应用在前台。")
     }
 }

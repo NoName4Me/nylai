@@ -27,7 +27,7 @@ final class ClipboardMonitor {
 
     private(set) var isActive = false
     private(set) var runtimeStatus: ModuleRuntimeStatus = .off
-    private(set) var statusText = "已关闭"
+    private(set) var statusText = L10n.shared.string("已关闭")
 
     init(
         store: ClipboardHistoryStore,
@@ -77,7 +77,7 @@ final class ClipboardMonitor {
         guard preparePasteboardAccess() else {
             return
         }
-        updateRuntime(.running, text: "正在观察剪贴板变化")
+        updateRuntime(.running, text: L10n.shared.string("正在观察剪贴板变化"))
         startPollingTask(generation: generation)
     }
 
@@ -88,10 +88,10 @@ final class ClipboardMonitor {
         pollingTask?.cancel()
         pollingTask = nil
         guard wasActive else {
-            updateRuntime(.off, text: "已关闭")
+            updateRuntime(.off, text: L10n.shared.string("已关闭"))
             return
         }
-        updateRuntime(.off, text: "已关闭")
+        updateRuntime(.off, text: L10n.shared.string("已关闭"))
     }
 
     func retry() {
@@ -103,8 +103,16 @@ final class ClipboardMonitor {
             return
         }
         baselineChangeCount = pasteboard.changeCount
-        updateRuntime(.running, text: "正在观察剪贴板变化")
+        updateRuntime(.running, text: L10n.shared.string("正在观察剪贴板变化"))
         startPollingTask(generation: generation)
+    }
+
+    func refreshLocalization() {
+        guard isActive else {
+            updateRuntime(.off, text: L10n.shared.string("已关闭"))
+            return
+        }
+        updateRuntime(.running, text: L10n.shared.string("正在观察剪贴板变化"))
     }
 
     func pollNow() async {
@@ -171,7 +179,7 @@ final class ClipboardMonitor {
                     }
                 )
             }
-            updateRuntime(.running, text: "正在观察剪贴板变化")
+            updateRuntime(.running, text: L10n.shared.string("正在观察剪贴板变化"))
         } catch {
             fail(error.localizedDescription)
         }

@@ -428,15 +428,23 @@ enum ScreenshotError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .permissionRequired:
-            "请在系统设置的屏幕录制权限中允许 \(AppName.current)，然后重试；如系统要求，请重新打开 \(AppName.current)。"
+            L10n.shared.string(
+                "请在系统设置的屏幕录制权限中允许 %@，然后重试；如系统要求，请重新打开 %@。",
+                AppName.current,
+                AppName.current
+            )
         case .permissionRestartRequired:
-            "屏幕录制权限已开启，但当前运行中的 \(AppName.current) 尚未取得权限。重新启动 \(AppName.current) 后即可截图。"
+            L10n.shared.string(
+                "屏幕录制权限已开启，但当前运行中的 %@ 尚未取得权限。重新启动 %@ 后即可截图。",
+                AppName.current,
+                AppName.current
+            )
         case .displayUnavailable:
-            "主显示器不可用，请检查显示器连接后重试。"
+            L10n.shared.string("主显示器不可用，请检查显示器连接后重试。")
         case .windowUnavailable:
-            "目标窗口已关闭、最小化或当前不可捕获，请重新选择。"
+            L10n.shared.string("目标窗口已关闭、最小化或当前不可捕获，请重新选择。")
         case .encodingFailed:
-            "无法生成 PNG 图片，请重新截图。"
+            L10n.shared.string("无法生成 PNG 图片，请重新截图。")
         }
     }
 }

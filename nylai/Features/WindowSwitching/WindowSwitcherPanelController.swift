@@ -62,7 +62,7 @@ final class WindowSwitcherPanelController {
 
     init() {
         let contentView = WindowSwitcherHostingView(
-            rootView: WindowSwitcherPanelView(model: model)
+            rootView: WindowSwitcherPanelView(model: model).nylaiLocalized()
         )
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),

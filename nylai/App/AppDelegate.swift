@@ -44,6 +44,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         preferences.appearanceMode.apply()
         installMainMenu()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(languageDidChange),
+            name: .nylaiLanguageDidChange,
+            object: nil
+        )
         statusBarController = StatusBarController(
             openSettings: { [weak self] in self?.showSettings() },
             captureScreenshot: { [weak self] in self?.captureScreenshot() },
@@ -70,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 clipboardMonitor.start()
             } else {
                 moduleStateController.setRuntimeStatus(
-                    .failed(clipboardLoadError ?? "剪贴板历史不可用。"),
+                    .failed(clipboardLoadError ?? L10n.shared.string("剪贴板历史不可用。")),
                     for: .clipboard
                 )
             }
@@ -106,6 +112,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showSettings()
         return true
+    }
+
+    @objc private func languageDidChange() {
+        installMainMenu()
+        statusBarController?.refreshLocalization()
+        screenshotHistoryWindowController?.refreshLocalization()
+        collageWindowController?.refreshLocalization()
+        clipboardPanelController?.refreshLocalization()
+        mouseGestureController?.refreshLocalization()
+        windowSwitcherController?.refreshLocalization()
+        clipboardMonitor?.refreshLocalization()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -158,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let panelController = ensureClipboardPanelController() else {
             moduleStateController.setRuntimeStatus(
-                .failed(clipboardLoadError ?? "剪贴板历史不可用。"),
+                .failed(clipboardLoadError ?? L10n.shared.string("剪贴板历史不可用。")),
                 for: .clipboard
             )
             return
@@ -270,7 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     clipboardMonitor.start()
                 } else {
                     moduleStateController.setRuntimeStatus(
-                        .failed(clipboardLoadError ?? "剪贴板历史不可用。"),
+                        .failed(clipboardLoadError ?? L10n.shared.string("剪贴板历史不可用。")),
                         for: .clipboard
                     )
                 }
@@ -410,7 +427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onError = { error in
             NSSound.beep()
             let alert = NSAlert()
-            alert.messageText = "无法切换窗口"
+            alert.messageText = L10n.shared.string("无法切换窗口")
             alert.informativeText = error.localizedDescription
             alert.alertStyle = .warning
             alert.runModal()
@@ -470,42 +487,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func installMainMenu() {
         let mainMenu = NSMenu()
-        let applicationItem = NSMenuItem()
+        let applicationItem = NSMenuItem(
+            title: AppName.current,
+            action: nil,
+            keyEquivalent: ""
+        )
         let applicationMenu = NSMenu(title: AppName.current)
         applicationMenu.delegate = self
         applicationMenu.addItem(
-            withTitle: "关于 \(AppName.current)",
+            withTitle: L10n.shared.string("关于 %@", AppName.current),
             action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
             keyEquivalent: ""
         )
-        let interactiveItem = applicationMenu.addItem(withTitle: "截图…", action: #selector(captureScreenshot), keyEquivalent: "")
+        let interactiveItem = applicationMenu.addItem(
+            withTitle: L10n.shared.string("截图…"),
+            action: #selector(captureScreenshot),
+            keyEquivalent: ""
+        )
         interactiveItem.target = self
         let historyItem = applicationMenu.addItem(
-            withTitle: "最近截图…",
+            withTitle: L10n.shared.string("最近截图…"),
             action: #selector(showScreenshotHistory),
             keyEquivalent: ""
         )
         historyItem.target = self
         let collageItem = applicationMenu.addItem(
-            withTitle: "自由拼图…",
+            withTitle: L10n.shared.string("自由拼图…"),
             action: #selector(openCollageWindow),
             keyEquivalent: ""
         )
         collageItem.target = self
         let clipboardItem = applicationMenu.addItem(
-            withTitle: "剪贴板历史…",
+            withTitle: L10n.shared.string("剪贴板历史…"),
             action: #selector(showClipboardHistory),
             keyEquivalent: ""
         )
         clipboardItem.target = self
-        let settingsItem = applicationMenu.addItem(withTitle: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        let settingsItem = applicationMenu.addItem(
+            withTitle: L10n.shared.string("设置…"),
+            action: #selector(showSettings),
+            keyEquivalent: ","
+        )
         settingsItem.target = self
         settingsMenuItem = settingsItem
         screenshotMenuItems = [interactiveItem, historyItem, collageItem]
         clipboardMenuItem = clipboardItem
         applicationMenu.addItem(.separator())
         applicationMenu.addItem(
-            withTitle: "退出 \(AppName.current)",
+            withTitle: L10n.shared.string("退出 %@", AppName.current),
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )
@@ -513,20 +542,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(applicationItem)
 
         let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "编辑")
-        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let editMenu = NSMenu(title: L10n.shared.string("编辑"))
+        editMenu.addItem(
+            withTitle: L10n.shared.string("剪切"),
+            action: #selector(NSText.cut(_:)),
+            keyEquivalent: "x"
+        )
+        editMenu.addItem(
+            withTitle: L10n.shared.string("复制"),
+            action: #selector(NSText.copy(_:)),
+            keyEquivalent: "c"
+        )
+        editMenu.addItem(
+            withTitle: L10n.shared.string("粘贴"),
+            action: #selector(NSText.paste(_:)),
+            keyEquivalent: "v"
+        )
+        editMenu.addItem(
+            withTitle: L10n.shared.string("全选"),
+            action: #selector(NSText.selectAll(_:)),
+            keyEquivalent: "a"
+        )
         editMenu.addItem(.separator())
         let undoItem = editMenu.addItem(
-            withTitle: "撤销",
+            withTitle: L10n.shared.string("撤销"),
             action: #selector(ScreenshotOverlayView.undoAction(_:)),
             keyEquivalent: "z"
         )
         undoItem.keyEquivalentModifierMask = [.command]
         let redoItem = editMenu.addItem(
-            withTitle: "重做",
+            withTitle: L10n.shared.string("重做"),
             action: #selector(ScreenshotOverlayView.redoAction(_:)),
             keyEquivalent: "z"
         )
@@ -534,6 +579,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
         NSApp.mainMenu = mainMenu
+        NSApp.mainMenu?.items.first?.title = AppName.current
     }
 }
 

@@ -421,7 +421,7 @@ final class LongScreenshotEditorWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "滚动截图"
+        window.title = L10n.shared.string("滚动截图")
         window.identifier = NSUserInterfaceItemIdentifier("nylai.long-screenshot-editor")
         window.isReleasedWhenClosed = false
         window.delegate = self

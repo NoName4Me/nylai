@@ -174,12 +174,16 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
     private let colorButton = ScreenshotColorSwatchButton()
     private let widthLabel = NSTextField(labelWithString: "3")
     private let widthStepper = NSStepper()
-    private var arrowOptionsHost: NSHostingView<ArrowOptionsView>?
+    private var arrowOptionsHost: NSHostingView<AnyView>?
     private let textStyleControl = NSSegmentedControl(labels: ["A", "A"],
                                                        trackingMode: .selectOne, target: nil, action: nil)
     private let solidButton = ToolbarIconButton()
     private let dashedButton = ToolbarIconButton()
-    private let fillButton = NSButton(checkboxWithTitle: "填充", target: nil, action: nil)
+    private let fillButton = NSButton(
+        checkboxWithTitle: L10n.shared.string("填充"),
+        target: nil,
+        action: nil
+    )
     private let shadowButton = ToolbarIconButton()
     private lazy var styleRow = NSStackView()
     private var colorPopover: NSPopover?
@@ -213,7 +217,9 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         styleRow.edgeInsets = NSEdgeInsets(top: 0, left: 2, bottom: 0, right: 2)
         styleRow.isHidden = true
 
-        let arrowOptionsHost = NSHostingView(rootView: makeArrowOptionsView())
+        let arrowOptionsHost = NSHostingView(
+            rootView: AnyView(makeArrowOptionsView().nylaiLocalized())
+        )
         arrowOptionsHost.widthAnchor.constraint(equalToConstant: 310).isActive = true
         arrowOptionsHost.heightAnchor.constraint(equalToConstant: 47).isActive = true
         arrowOptionsHost.isHidden = true
@@ -265,8 +271,8 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         fillButton.action = #selector(fillChanged)
         colorButton.target = self
         colorButton.action = #selector(colorClicked)
-        colorButton.toolTip = "标注颜色"
-        colorButton.setAccessibilityLabel("标注颜色")
+        colorButton.toolTip = L10n.shared.string("标注颜色")
+        colorButton.setAccessibilityLabel(L10n.shared.string("标注颜色"))
 
         widthLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         widthLabel.alignment = .right
@@ -277,7 +283,7 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         widthStepper.controlSize = .small
         widthStepper.target = self
         widthStepper.action = #selector(styleControlChanged)
-        widthStepper.setAccessibilityLabel("标注参数")
+        widthStepper.setAccessibilityLabel(L10n.shared.string("标注参数"))
 
         Self.configure(
             iconButton: solidButton,
@@ -294,17 +300,27 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         textStyleControl.controlSize = .small
         textStyleControl.target = self
         textStyleControl.action = #selector(annotationVariantChanged)
-        textStyleControl.toolTip = "文字样式"
+        textStyleControl.toolTip = L10n.shared.string("文字样式")
         for (index, symbol) in ["a.square", "a.square.fill"].enumerated() {
             if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
                 textStyleControl.setImage(image, forSegment: index)
                 textStyleControl.setLabel("", forSegment: index)
             } else {
-                textStyleControl.setLabel(index == 0 ? "普通" : "填充", forSegment: index)
+                textStyleControl.setLabel(
+                    index == 0
+                        ? L10n.shared.string("普通")
+                        : L10n.shared.string("填充"),
+                    forSegment: index
+                )
             }
-            textStyleControl.setToolTip(index == 0 ? "普通文字" : "填充文字背景", forSegment: index)
+            textStyleControl.setToolTip(
+                index == 0
+                    ? L10n.shared.string("普通文字")
+                    : L10n.shared.string("填充文字背景"),
+                forSegment: index
+            )
         }
-        fillButton.toolTip = "使用描边颜色填充"
+        fillButton.toolTip = L10n.shared.string("使用描边颜色填充")
         styleRow = NSStackView(views: [
             colorButton, widthLabel, widthStepper, solidButton, dashedButton, fillButton,
             textStyleControl,
@@ -335,7 +351,7 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         fillButton.isHidden = styleKind?.supportsFill != true
         fillButton.isEnabled = stylesEnabled
         arrowOptionsHost?.isHidden = !styleControlsEnabled || styleKind != .arrow
-        arrowOptionsHost?.rootView = makeArrowOptionsView()
+        arrowOptionsHost?.rootView = AnyView(makeArrowOptionsView().nylaiLocalized())
         textStyleControl.isHidden = styleKind != .text
         textStyleControl.isEnabled = stylesEnabled
         shadowButton.isEnabled = !isOutputting
@@ -362,7 +378,7 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         let solid = style.lineStyle == .solid
         Self.setSelected(solidButton, selected: solid)
         Self.setSelected(dashedButton, selected: !solid)
-        arrowOptionsHost?.rootView = makeArrowOptionsView()
+        arrowOptionsHost?.rootView = AnyView(makeArrowOptionsView().nylaiLocalized())
         isUpdatingStyleControls = false
     }
 
@@ -788,7 +804,11 @@ final class ScreenshotShadowPopoverViewController: NSViewController {
     var onAppearanceChanged: ((ScreenshotOutputAppearance) -> Void)?
 
     private var appearance: ScreenshotOutputAppearance
-    private let toggle = NSButton(checkboxWithTitle: "启用阴影", target: nil, action: nil)
+    private let toggle = NSButton(
+        checkboxWithTitle: L10n.shared.string("启用阴影"),
+        target: nil,
+        action: nil
+    )
     private let radiusSlider = NSSlider(value: 12, minValue: 0, maxValue: 64, target: nil, action: nil)
     private let opacitySlider = NSSlider(value: 25, minValue: 0, maxValue: 100, target: nil, action: nil)
     private let offsetSlider = NSSlider(value: 4, minValue: 0, maxValue: 64, target: nil, action: nil)
@@ -824,9 +844,9 @@ final class ScreenshotShadowPopoverViewController: NSViewController {
             label.widthAnchor.constraint(equalToConstant: 30).isActive = true
         }
         let rows = [
-            settingRow(title: "柔化", slider: radiusSlider, value: radiusValue),
-            settingRow(title: "浓度", slider: opacitySlider, value: opacityValue),
-            settingRow(title: "偏移", slider: offsetSlider, value: offsetValue),
+            settingRow(title: L10n.shared.string("柔化"), slider: radiusSlider, value: radiusValue),
+            settingRow(title: L10n.shared.string("浓度"), slider: opacitySlider, value: opacityValue),
+            settingRow(title: L10n.shared.string("偏移"), slider: offsetSlider, value: offsetValue),
         ]
         let stack = NSStackView(views: [toggle] + rows)
         stack.orientation = .vertical

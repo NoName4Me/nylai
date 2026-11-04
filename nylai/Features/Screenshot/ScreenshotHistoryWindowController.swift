@@ -130,10 +130,10 @@ final class ScreenshotHistoryWindowController: NSWindowController {
         let view = ScreenshotHistoryView(
             preferences: preferences,
             model: viewModel
-        )
+        ).nylaiLocalized()
         let hostingController = NSHostingController(rootView: view)
         let window = NSWindow(contentViewController: hostingController)
-        window.title = "最近截图"
+        window.title = L10n.shared.string("最近截图")
         window.identifier = NSUserInterfaceItemIdentifier("nylai.screenshot-history")
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 820, height: 620))
@@ -157,6 +157,10 @@ final class ScreenshotHistoryWindowController: NSWindowController {
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func refreshLocalization() {
+        window?.title = L10n.shared.string("最近截图")
     }
 }
 
@@ -210,7 +214,10 @@ private struct ScreenshotHistoryView: View {
             Button("清空", role: .destructive) { model.clear() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("这会删除 \(AppName.current) 管理的全部历史图片，不会删除已保存到其他位置的文件。")
+            Text(L10n.shared.string(
+                "这会删除 %@ 管理的全部历史图片，不会删除已保存到其他位置的文件。",
+                AppName.current
+            ))
         }
     }
 
@@ -260,9 +267,11 @@ private struct ScreenshotHistoryView: View {
                 .foregroundStyle(.tertiary)
             Text("还没有完成的截图")
                 .font(.system(size: 14, weight: .medium))
-            Text(preferences.screenshotHistoryEnabled
-                 ? "复制、保存或置顶截图后会自动出现在这里。"
-                 : "最近截图记录已关闭，仍保留已有历史。")
+            Text(
+                preferences.screenshotHistoryEnabled
+                    ? L10n.shared.string("复制、保存或置顶截图后会自动出现在这里。")
+                    : L10n.shared.string("最近截图记录已关闭，仍保留已有历史。")
+            )
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
         }
@@ -312,7 +321,10 @@ private struct ScreenshotHistoryCard: View {
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(record.createdAt.formatted(date: .abbreviated, time: .shortened))
+                Text(record.createdAt.formatted(
+                    Date.FormatStyle(date: .abbreviated, time: .shortened)
+                        .locale(L10n.shared.locale)
+                ))
                     .font(.system(size: 11.5, weight: .medium))
                     .lineLimit(1)
                 Spacer(minLength: 4)
@@ -357,13 +369,14 @@ private struct ScreenshotHistoryCard: View {
         symbol: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        let localizedTitle = L10n.shared.string(title)
+        return Button(action: action) {
             Image(systemName: symbol)
                 .frame(width: 22, height: 22)
         }
         .buttonStyle(.borderless)
-        .help(title)
-        .accessibilityLabel(title)
+        .help(localizedTitle)
+        .accessibilityLabel(localizedTitle)
     }
 }
 
@@ -371,6 +384,6 @@ private enum ScreenshotHistoryWindowError: LocalizedError {
     case imageUnavailable
 
     var errorDescription: String? {
-        "历史图片文件已丢失或无法读取。"
+        L10n.shared.string("历史图片文件已丢失或无法读取。")
     }
 }

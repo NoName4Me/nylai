@@ -43,6 +43,9 @@ struct SettingsView: View {
                 Divider().opacity(0.6)
                 ScrollView {
                     pageContent
+                        .id(preferences.language)
+                        .transition(.opacity)
+                        .contentTransition(.opacity)
                         .background(ThinScrollIndicatorInstaller())
                         .padding(.horizontal, 28)
                         .padding(.top, 20)
@@ -53,6 +56,8 @@ struct SettingsView: View {
             .background(theme.page)
         }
         .frame(width: 760, height: 580)
+        .environment(\.locale, preferences.language.locale)
+        .animation(.easeInOut(duration: 0.16), value: preferences.language)
         .coordinateSpace(name: MenuPullAnchor.space)
         .onPreferenceChange(MenuPullFrames.self) { pullFrames = $0 }
         .overlay(alignment: .topLeading) {
@@ -113,7 +118,10 @@ struct SettingsView: View {
         .alert("无法打开系统设置", isPresented: $showSettingsError) {
             Button("好", role: .cancel) {}
         } message: {
-            Text("请前往系统设置 → 隐私与安全性 → \(missingSettingsPage)。")
+            Text(L10n.shared.string(
+                "请前往系统设置 → 隐私与安全性 → %@。",
+                L10n.shared.string(missingSettingsPage)
+            ))
         }
         .alert("快捷键错误", isPresented: operationErrorPresented) {
             Button("好", role: .cancel) { shortcutRuntime.clearOperationError() }
@@ -174,11 +182,13 @@ struct SettingsView: View {
                     .frame(width: 36, height: 36)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("拈来")
+                    Text(AppName.current)
                         .font(.system(size: 14, weight: .semibold))
-                    Text("Nylai")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
+                    if AppName.current != "Nylai" {
+                        Text("Nylai")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(.horizontal, 18)
@@ -689,7 +699,11 @@ struct SettingsView: View {
                         VStack(spacing: 0) {
                             HStack(spacing: 12) {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text("\(store.ordinaryRecords.count) 条普通 · \(store.pinnedRecords.count) 条置顶")
+                                    Text(L10n.shared.string(
+                                        "%@ 条普通 · %@ 条置顶",
+                                        String(store.ordinaryRecords.count),
+                                        String(store.pinnedRecords.count)
+                                    ))
                                         .font(.system(size: 13, weight: .medium))
                                     Text("删除历史不会修改系统剪贴板当前内容。")
                                         .font(.system(size: 11.5))
@@ -780,13 +794,43 @@ struct SettingsView: View {
     private var generalPage: some View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 9) {
+                sectionTitle("语言")
+                SettingsCard {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("界面语言")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("切换后立即生效。")
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer(minLength: 12)
+
+                        Picker("", selection: languageBinding) {
+                            ForEach(AppLanguage.allCases) { language in
+                                Text(language.title).tag(language)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 138)
+                    }
+                    .padding(14)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 9) {
                 sectionTitle("外观")
                 SettingsCard {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("视觉模式")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("只影响 \(AppName.current) 的窗口与面板。")
+                            Text(L10n.shared.string(
+                                "只影响 %@ 的窗口与面板。",
+                                AppName.current
+                            ))
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(.secondary)
                         }
@@ -807,7 +851,10 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("打开应用时显示设置")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("启动 \(AppName.current) 后自动打开此窗口。")
+                            Text(L10n.shared.string(
+                                "启动 %@ 后自动打开此窗口。",
+                                AppName.current
+                            ))
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(.secondary)
                         }
@@ -872,7 +919,10 @@ struct SettingsView: View {
                                         .font(.system(size: 13, weight: .medium))
                                     permissionBadge(granted: screenRecordingGranted)
                                 }
-                                Text("用于截取屏幕内容。修改授权后可能需要重新启动 \(AppName.current)。")
+                                Text(L10n.shared.string(
+                                    "用于截取屏幕内容。修改授权后可能需要重新启动 %@。",
+                                    AppName.current
+                                ))
                                     .font(.system(size: 11.5))
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -972,11 +1022,11 @@ struct SettingsView: View {
                 }
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 7) {
-                    Text(title)
+                    Text(LocalizedStringKey(title))
                         .font(.system(size: 13, weight: .medium))
                     permissionBadge(granted: isGranted)
                 }
-                Text(description)
+                Text(LocalizedStringKey(description))
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
             }
@@ -1021,7 +1071,10 @@ struct SettingsView: View {
                 Toggle("", isOn: bindingEnabledBinding(binding))
                     .labelsHidden()
                     .compactSettingsSwitch()
-                    .accessibilityLabel("启用「\(ShortcutBindingRuntime.title(for: binding.action))」")
+                    .accessibilityLabel(L10n.shared.string(
+                        "启用「%@」",
+                        ShortcutBindingRuntime.title(for: binding.action)
+                    ))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
@@ -1081,7 +1134,10 @@ struct SettingsView: View {
                 Toggle("", isOn: bindingEnabledBinding(binding))
                     .labelsHidden()
                     .compactSettingsSwitch()
-                    .accessibilityLabel("启用「\(applicationName(for: target))」")
+                    .accessibilityLabel(L10n.shared.string(
+                        "启用「%@」",
+                        applicationName(for: target)
+                    ))
 
                 Button {
                     do {
@@ -1096,7 +1152,10 @@ struct SettingsView: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
                 .help("删除应用绑定")
-                .accessibilityLabel("删除「\(applicationName(for: target))」")
+                .accessibilityLabel(L10n.shared.string(
+                    "删除「%@」",
+                    applicationName(for: target)
+                ))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
@@ -1176,7 +1235,7 @@ struct SettingsView: View {
     }
 
     private func sectionTitle(_ title: String) -> some View {
-        Text(title)
+        Text(LocalizedStringKey(title))
             .font(.system(size: 11.5, weight: .semibold))
             .foregroundStyle(.secondary)
     }
@@ -1220,13 +1279,25 @@ struct SettingsView: View {
         )
     }
 
+    private var languageBinding: Binding<AppLanguage> {
+        Binding(
+            get: { preferences.language },
+            set: { language in
+                guard language != preferences.language else { return }
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    preferences.language = language
+                }
+            }
+        )
+    }
+
     private func addGestureDisabledApplication() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.applicationBundle]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.prompt = "加入名单"
+        panel.prompt = L10n.shared.string("加入名单")
         guard panel.runModal() == .OK,
               let url = panel.url,
               let bundleIdentifier = Bundle(url: url)?.bundleIdentifier else {
@@ -1274,7 +1345,7 @@ struct SettingsView: View {
               let retentionDays = Int(clipboardRetentionDaysDraft),
               (1...5_000).contains(maximumItems),
               (1...365).contains(retentionDays) else {
-            clipboardErrorMessage = "普通上限需为 1–5000，保留天数为 1–365。"
+            clipboardErrorMessage = L10n.shared.string("普通上限需为 1–5000，保留天数为 1–365。")
             return
         }
         var settings = store.settings
@@ -1295,7 +1366,7 @@ struct SettingsView: View {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.prompt = "加入名单"
+        panel.prompt = L10n.shared.string("加入名单")
         guard panel.runModal() == .OK,
               let url = panel.url,
               let bundleIdentifier = Bundle(url: url)?.bundleIdentifier,
@@ -1323,7 +1394,7 @@ struct SettingsView: View {
     }
 
     private func applicationName(_ bundleIdentifier: String?) -> String {
-        guard let bundleIdentifier else { return "所有应用" }
+        guard let bundleIdentifier else { return L10n.shared.string("所有应用") }
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
             return FileManager.default.displayName(atPath: url.path)
                 .replacingOccurrences(of: ".app", with: "")
@@ -1368,7 +1439,7 @@ struct SettingsView: View {
     }
 
     private func applicationName(for target: ApplicationShortcutTarget?) -> String {
-        guard let target else { return "未知应用" }
+        guard let target else { return L10n.shared.string("未知应用") }
         if let bundle = Bundle(path: target.path) {
             if let name = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String,
                !name.isEmpty {
@@ -1389,7 +1460,7 @@ struct SettingsView: View {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.prompt = "添加"
+        panel.prompt = L10n.shared.string("添加")
         guard panel.runModal() == .OK, let url = panel.url,
               let bundleIdentifier = Bundle(url: url)?.bundleIdentifier else {
             if panel.url != nil {
@@ -1456,7 +1527,7 @@ struct SettingsView: View {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.prompt = "重新定位"
+        panel.prompt = L10n.shared.string("重新定位")
         guard panel.runModal() == .OK, let url = panel.url,
               let bundleIdentifier = Bundle(url: url)?.bundleIdentifier else {
             return
@@ -1591,38 +1662,44 @@ private enum SettingsSection: Hashable {
     var title: String {
         switch self {
         case .modules:
-            "功能"
+            L10n.shared.string("功能")
         case .screenshot:
-            "截图"
+            L10n.shared.string("截图")
         case .shortcuts:
-            "快捷键"
+            L10n.shared.string("快捷键")
         case .gestures:
-            "鼠标手势"
+            L10n.shared.string("鼠标手势")
         case .clipboard:
-            "剪贴板"
+            L10n.shared.string("剪贴板")
         case .general:
-            "通用"
+            L10n.shared.string("通用")
         case .permissions:
-            "系统权限"
+            L10n.shared.string("系统权限")
         }
     }
 
     var subtitle: String {
         switch self {
         case .modules:
-            "启用或停用 \(AppName.current) 的功能模块。"
+            L10n.shared.string(
+                "启用或停用 %@ 的功能模块。",
+                AppName.current
+            )
         case .screenshot:
-            "管理最近截图的记录方式。"
+            L10n.shared.string("管理最近截图的记录方式。")
         case .shortcuts:
-            "为截图等内置功能或常用应用分配快捷键。"
+            L10n.shared.string("为截图等内置功能或常用应用分配快捷键。")
         case .gestures:
-            "按住右键绘制路径，松开后执行绑定动作。"
+            L10n.shared.string("按住右键绘制路径，松开后执行绑定动作。")
         case .clipboard:
-            "管理剪贴板历史、来源屏蔽和保留期限。"
+            L10n.shared.string("管理剪贴板历史、来源屏蔽和保留期限。")
         case .general:
-            "控制 \(AppName.current) 的视觉模式与启动行为。"
+            L10n.shared.string(
+                "控制 %@ 的视觉模式与启动行为。",
+                AppName.current
+            )
         case .permissions:
-            "查看屏幕录制、辅助功能和输入监控的授权状态。"
+            L10n.shared.string("查看屏幕录制、辅助功能和输入监控的授权状态。")
         }
     }
 

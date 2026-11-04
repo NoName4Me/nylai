@@ -41,11 +41,14 @@ enum MouseGestureEventMonitorError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .accessibilityPermissionRequired:
-            "需要“辅助功能”权限才能识别并接管右键手势。请在系统设置中允许 \(AppName.current)，然后重试。"
+            L10n.shared.string(
+                "需要“辅助功能”权限才能识别并接管右键手势。请在系统设置中允许 %@，然后重试。",
+                AppName.current
+            )
         case .eventTapCreationFailed:
-            "无法创建鼠标事件监听。请检查系统设置中的辅助功能权限后重试。"
+            L10n.shared.string("无法创建鼠标事件监听。请检查系统设置中的辅助功能权限后重试。")
         case .runLoopSourceCreationFailed:
-            "无法启动鼠标事件监听。"
+            L10n.shared.string("无法启动鼠标事件监听。")
         }
     }
 }

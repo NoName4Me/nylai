@@ -15,21 +15,21 @@ enum ShortcutBindingStatus: Equatable {
     var title: String {
         switch self {
         case .unbound:
-            "未绑定"
+            L10n.shared.string("未绑定")
         case .disabled:
-            "已停用"
+            L10n.shared.string("已停用")
         case .globallyDisabled:
-            "总开关已关闭"
+            L10n.shared.string("总开关已关闭")
         case .targetModuleDisabled:
-            "目标模块已关闭"
+            L10n.shared.string("目标模块已关闭")
         case .recording:
-            "录入中"
+            L10n.shared.string("录入中")
         case .paused:
-            "已暂停"
+            L10n.shared.string("已暂停")
         case .registered:
-            "已生效"
+            L10n.shared.string("已生效")
         case .failed:
-            "注册失败"
+            L10n.shared.string("注册失败")
         }
     }
 }
@@ -43,13 +43,13 @@ enum ShortcutValidationError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidKey:
-            "该按键不能用于全局快捷键。"
+            L10n.shared.string("该按键不能用于全局快捷键。")
         case .missingPrimaryModifier:
-            "至少需要 Command、Option 或 Control，Shift 不能单独使用。"
+            L10n.shared.string("至少需要 Command、Option 或 Control，Shift 不能单独使用。")
         case .reserved:
-            "该组合由 macOS 保留，请换一个快捷键。"
+            L10n.shared.string("该组合由 macOS 保留，请换一个快捷键。")
         case .duplicate(let title):
-            "该组合已绑定到「\(title)」。"
+            L10n.shared.string("该组合已绑定到「%@」。", title)
         }
     }
 }
@@ -132,7 +132,7 @@ final class ShortcutBindingRuntime {
         if !configuration.isEnabled { return .globallyDisabled }
         if !binding.isEnabled { return .disabled }
         if binding.shortcut == nil { return .unbound }
-        return statuses[id] ?? .failed("尚未注册。")
+        return statuses[id] ?? .failed(L10n.shared.string("尚未注册。"))
     }
 
     func binding(for id: ShortcutBindingID) -> ShortcutBinding? {
@@ -468,17 +468,17 @@ final class ShortcutBindingRuntime {
     nonisolated static func title(for action: ShortcutAction) -> String {
         switch action {
         case .openSettings:
-            "打开设置"
+            L10n.shared.string("打开设置")
         case .captureMainDisplay, .captureInteractive:
-            "截图"
+            L10n.shared.string("截图")
         case .screenshotHistory:
-            "最近截图"
+            L10n.shared.string("最近截图")
         case .openCollage:
-            "自由拼图"
+            L10n.shared.string("自由拼图")
         case .scrollCapture:
-            "滚动截图"
+            L10n.shared.string("滚动截图")
         case .clipboardHistory:
-            "剪贴板历史"
+            L10n.shared.string("剪贴板历史")
         case .application(let target):
             target.bundleIdentifier
         }
@@ -534,7 +534,10 @@ final class ShortcutBindingRuntime {
         do {
             try registrar.unregister(oldActive.token)
         } catch {
-            operationError = "新快捷键已保存并生效，但旧注册未能释放：\(error.localizedDescription)"
+            operationError = L10n.shared.string(
+                "新快捷键已保存并生效，但旧注册未能释放：%@",
+                error.localizedDescription
+            )
         }
     }
 
@@ -631,7 +634,7 @@ final class ShortcutBindingRuntime {
             } else if activeRegistrations[binding.id] != nil {
                 statuses[binding.id] = .registered
             } else {
-                statuses[binding.id] = .failed("尚未注册。")
+                statuses[binding.id] = .failed(L10n.shared.string("尚未注册。"))
             }
         }
     }
@@ -649,19 +652,23 @@ enum ShortcutOperationError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .bindingNotFound:
-            "快捷键绑定不存在。"
+            L10n.shared.string("快捷键绑定不存在。")
         case .configurationUnavailable:
-            "快捷键配置不可用。"
+            L10n.shared.string("快捷键配置不可用。")
         case .invalidApplication:
-            "所选项目不是具有有效 bundle ID 的应用。"
+            L10n.shared.string("所选项目不是具有有效 bundle ID 的应用。")
         case .applicationAlreadyBound:
-            "该应用已有快捷键绑定。"
+            L10n.shared.string("该应用已有快捷键绑定。")
         case .applicationIdentityMismatch:
-            "所选应用与原绑定不是同一个应用，请选择原应用的新位置。"
+            L10n.shared.string("所选应用与原绑定不是同一个应用，请选择原应用的新位置。")
         case .internalBindingCannotBeRemoved:
-            "\(AppName.current) 内置动作不能删除。"
+            L10n.shared.string("%@ 内置动作不能删除。", AppName.current)
         case .rollbackUnregisterFailed(let persistence, let registration):
-            "保存失败：\(persistence)；撤销新注册也失败：\(registration)。旧快捷键仍保持生效。"
+            L10n.shared.string(
+                "保存失败：%@；撤销新注册也失败：%@。旧快捷键仍保持生效。",
+                persistence,
+                registration
+            )
         }
     }
 }

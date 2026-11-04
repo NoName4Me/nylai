@@ -497,15 +497,18 @@ enum ClipboardStoreError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .corruptedIndex:
-            "剪贴板历史索引已损坏，原文件已保留。"
+            L10n.shared.string("剪贴板历史索引已损坏，原文件已保留。")
         case .unsupportedIndexVersion(let version):
-            "剪贴板历史版本 \(version) 不受支持，原文件已保留。"
+            L10n.shared.string(
+                "剪贴板历史版本 %@ 不受支持，原文件已保留。",
+                String(version)
+            )
         case .recordNotFound:
-            "剪贴板记录不存在。"
+            L10n.shared.string("剪贴板记录不存在。")
         case .commitFailed(let reason):
-            "无法保存剪贴板历史：\(reason)"
+            L10n.shared.string("无法保存剪贴板历史：%@", reason)
         case .thumbnailFailed:
-            "无法生成剪贴板图片缩略图。"
+            L10n.shared.string("无法生成剪贴板图片缩略图。")
         }
     }
 }

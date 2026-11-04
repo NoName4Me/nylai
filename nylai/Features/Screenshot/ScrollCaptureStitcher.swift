@@ -57,11 +57,11 @@ enum ScrollCaptureError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidLimits:
-            "滚动截图参数无效。"
+            L10n.shared.string("滚动截图参数无效。")
         case .noFrames:
-            "尚未采集到可用于拼接的画面。"
+            L10n.shared.string("尚未采集到可用于拼接的画面。")
         case .imageCreationFailed:
-            "无法生成长截图。"
+            L10n.shared.string("无法生成长截图。")
         }
     }
 }

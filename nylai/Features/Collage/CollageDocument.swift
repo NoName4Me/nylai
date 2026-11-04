@@ -37,13 +37,13 @@ enum CollageError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .emptyCanvas:
-            "拼图中还没有图片。"
+            L10n.shared.string("拼图中还没有图片。")
         case .outputTooLarge:
-            "拼图输出尺寸过大，请缩小图片或减少间距。"
+            L10n.shared.string("拼图输出尺寸过大，请缩小图片或减少间距。")
         case .renderingFailed:
-            "无法合成拼图图片。"
+            L10n.shared.string("无法合成拼图图片。")
         case .imageUnavailable:
-            "历史图片文件已丢失或无法读取。"
+            L10n.shared.string("历史图片文件已丢失或无法读取。")
         }
     }
 }
@@ -352,6 +352,6 @@ enum CollageImageLoadError: LocalizedError, Equatable {
     case invalidImage
 
     var errorDescription: String? {
-        "无法读取该图片。支持 PNG、JPEG 和 HEIC。"
+        L10n.shared.string("无法读取该图片。支持 PNG、JPEG 和 HEIC。")
     }
 }

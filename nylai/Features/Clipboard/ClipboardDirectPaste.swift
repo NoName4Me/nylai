@@ -104,13 +104,13 @@ enum ClipboardDirectPasteError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .targetUnavailable:
-            "原应用已退出，无法直接粘贴。所选内容仍在系统剪贴板中。"
+            L10n.shared.string("原应用已退出，无法直接粘贴。所选内容仍在系统剪贴板中。")
         case .targetChanged:
-            "前台应用已改变，为避免误粘贴，本次操作已停止。所选内容仍在系统剪贴板中。"
+            L10n.shared.string("前台应用已改变，为避免误粘贴，本次操作已停止。所选内容仍在系统剪贴板中。")
         case .clipboardChanged:
-            "系统剪贴板已被其他进程改写，本次操作已停止。所选内容未被发送。"
+            L10n.shared.string("系统剪贴板已被其他进程改写，本次操作已停止。所选内容未被发送。")
         case .eventPermissionRequired:
-            "需要系统输入事件权限才能直接粘贴。请授权后重试，或手动按 Command-V。"
+            L10n.shared.string("需要系统输入事件权限才能直接粘贴。请授权后重试，或手动按 Command-V。")
         }
     }
 }

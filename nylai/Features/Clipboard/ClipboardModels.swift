@@ -170,7 +170,10 @@ enum ClipboardSettingsError: LocalizedError, Equatable {
     case invalidVersion(Int)
 
     var errorDescription: String? {
-        "剪贴板配置版本 \(caseValue) 不受支持。"
+        L10n.shared.string(
+            "剪贴板配置版本 %@ 不受支持。",
+            String(caseValue)
+        )
     }
 
     private var caseValue: Int {

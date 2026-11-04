@@ -45,11 +45,11 @@ enum ScreenshotHistoryStoreError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidImage:
-            "无法编码截图历史图片。"
+            L10n.shared.string("无法编码截图历史图片。")
         case .indexWriteFailed:
-            "无法写入截图历史索引。"
+            L10n.shared.string("无法写入截图历史索引。")
         case .imageWriteFailed:
-            "无法写入截图历史图片。"
+            L10n.shared.string("无法写入截图历史图片。")
         }
     }
 }
@@ -99,13 +99,16 @@ final class ScreenshotHistoryStore {
             }
             let index = try JSONDecoder().decode(IndexFile.self, from: data)
             guard index.version == Self.indexVersion else {
-                loadError = "截图历史索引版本不受支持。"
+                loadError = L10n.shared.string("截图历史索引版本不受支持。")
                 preserveCorruptIndex(at: url)
                 return
             }
             records = Array(index.records.prefix(Self.maximumRecordCount))
         } catch {
-            loadError = "截图历史索引损坏：\(error.localizedDescription)"
+            loadError = L10n.shared.string(
+                "截图历史索引损坏：%@",
+                error.localizedDescription
+            )
             preserveCorruptIndex(at: url)
         }
     }

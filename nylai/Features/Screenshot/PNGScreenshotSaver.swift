@@ -30,7 +30,7 @@ final class PNGScreenshotSaver: ScreenshotSaving {
     func save(_ image: CGImage) async throws -> URL? {
         try Task.checkCancellation()
         let panel = NSSavePanel()
-        panel.title = "保存截图"
+        panel.title = L10n.shared.string("保存截图")
         panel.allowedContentTypes = [.png]
         panel.canCreateDirectories = true
         panel.isExtensionHidden = false

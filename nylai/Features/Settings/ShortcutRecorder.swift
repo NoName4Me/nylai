@@ -154,11 +154,11 @@ final class ShortcutRecorderView: NSView {
         let font: NSFont?
         let color: NSColor
         if isRecording {
-            text = "按下按键…"
+            text = L10n.shared.string("按下按键…")
             font = .systemFont(ofSize: 11.5, weight: .medium)
             color = NylaiTheme.accent
         } else {
-            text = "未绑定"
+            text = L10n.shared.string("未绑定")
             font = .systemFont(ofSize: 11.5)
             color = .secondaryLabelColor
         }
@@ -223,7 +223,11 @@ final class ShortcutRecorderView: NSView {
 
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
-        let clear = menu.addItem(withTitle: "清除", action: #selector(clearShortcut), keyEquivalent: "")
+        let clear = menu.addItem(
+            withTitle: L10n.shared.string("清除"),
+            action: #selector(clearShortcut),
+            keyEquivalent: ""
+        )
         clear.target = self
         clear.isEnabled = shortcut != nil
         NSMenu.popUpContextMenu(menu, with: event, for: self)
@@ -371,12 +375,17 @@ final class ShortcutRecorderView: NSView {
     }
 
     override func accessibilityRole() -> NSAccessibility.Role? { .button }
-    override func accessibilityLabel() -> String? { isRecording ? "正在录入快捷键" : "快捷键" }
+    override func accessibilityLabel() -> String? {
+        isRecording
+            ? L10n.shared.string("正在录入快捷键")
+            : L10n.shared.string("快捷键")
+    }
     override func accessibilityHelp() -> String? {
-        "点击后按下新的快捷键，按 Escape 取消，按 Delete 清除。"
+        L10n.shared.string("点击后按下新的快捷键，按 Escape 取消，按 Delete 清除。")
     }
     override func accessibilityValue() -> Any? {
-        shortcut.map(ShortcutDisplayFormatter.string) ?? "未绑定"
+        shortcut.map(ShortcutDisplayFormatter.string)
+            ?? L10n.shared.string("未绑定")
     }
 }
 
@@ -586,11 +595,11 @@ enum ShortcutRecordingEventMonitorError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .permissionsRequired:
-            "录入系统组合键需要开启“辅助功能”。"
+            L10n.shared.string("录入系统组合键需要开启“辅助功能”。")
         case .eventTapCreationFailed:
-            "无法拦截系统组合键，请检查系统权限后重试。"
+            L10n.shared.string("无法拦截系统组合键，请检查系统权限后重试。")
         case .runLoopSourceCreationFailed:
-            "无法启动快捷键录入监听。"
+            L10n.shared.string("无法启动快捷键录入监听。")
         }
     }
 }
@@ -667,7 +676,7 @@ final class ShortcutRecordingEventMonitor {
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }
-            onFailure?("快捷键录入监听被系统暂停，请重新点击录入。")
+            onFailure?(L10n.shared.string("快捷键录入监听被系统暂停，请重新点击录入。"))
             return Unmanaged.passUnretained(event)
         }
         guard Self.shouldConsume(type: type) else {

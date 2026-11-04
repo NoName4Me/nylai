@@ -309,13 +309,16 @@ enum ShortcutBindingStoreError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .readFailed(let message):
-            "无法读取快捷键配置：\(message)"
+            L10n.shared.string("无法读取快捷键配置：%@", message)
         case .corruptedData:
-            "快捷键配置文件已损坏，原文件已保留。"
+            L10n.shared.string("快捷键配置文件已损坏，原文件已保留。")
         case .unsupportedVersion(let version):
-            "快捷键配置版本 \(version) 不受支持，原文件已保留。"
+            L10n.shared.string(
+                "快捷键配置版本 %@ 不受支持，原文件已保留。",
+                String(version)
+            )
         case .writeFailed(let message):
-            "无法保存快捷键配置：\(message)"
+            L10n.shared.string("无法保存快捷键配置：%@", message)
         }
     }
 }

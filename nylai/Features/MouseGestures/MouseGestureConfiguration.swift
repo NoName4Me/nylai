@@ -119,15 +119,15 @@ enum MouseGestureConfigurationError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidVersion:
-            "鼠标手势配置版本不受支持。"
+            L10n.shared.string("鼠标手势配置版本不受支持。")
         case .emptyPath:
-            "手势路径不能为空。"
+            L10n.shared.string("手势路径不能为空。")
         case .tooManyDirections:
-            "手势最多包含四个方向。"
+            L10n.shared.string("手势最多包含四个方向。")
         case .duplicatePath:
-            "当前作用域已存在相同路径。"
+            L10n.shared.string("当前作用域已存在相同路径。")
         case .ruleNotFound:
-            "鼠标手势规则不存在。"
+            L10n.shared.string("鼠标手势规则不存在。")
         }
     }
 }

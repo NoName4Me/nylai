@@ -64,9 +64,10 @@ final class GesturePathRecorderView: NSView {
         }
 
         if needsRedrawHint || (!isTracking && path.isEmpty) {
-            let text = (needsRedrawHint
-                        ? "未识别到手势，请重画"
-                        : "按住鼠标右键绘制手势") as NSString
+            let hint = needsRedrawHint
+                ? L10n.shared.string("未识别到手势，请重画")
+                : L10n.shared.string("按住鼠标右键绘制手势")
+            let text = hint as NSString
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 11.5),
                 .foregroundColor: NSColor.secondaryLabelColor,
@@ -250,9 +251,9 @@ private enum GestureEditorActionKind: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .nylai: "\(AppName.current) 功能"
-        case .application: "打开 / 切换应用"
-        case .shortcut: "发送组合键"
+        case .nylai: L10n.shared.string("%@ 功能", AppName.current)
+        case .application: L10n.shared.string("打开 / 切换应用")
+        case .shortcut: L10n.shared.string("发送组合键")
         }
     }
 }
@@ -558,7 +559,7 @@ struct GestureRuleEditorView: View {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.prompt = "选择"
+        panel.prompt = L10n.shared.string("选择")
         return panel.runModal() == .OK ? panel.url : nil
     }
 
@@ -577,13 +578,13 @@ struct GestureRuleEditorView: View {
             return
         }
         if actionKind == .application, currentApplicationTarget == nil {
-            errorMessage = "请选择要启动或切换的应用。"
+            errorMessage = L10n.shared.string("请选择要启动或切换的应用。")
             return
         }
         if actionKind == .shortcut, let shortcutDraft {
             draft.action = .sendShortcut(shortcutDraft)
         } else if actionKind == .shortcut {
-            errorMessage = "请录入要发送的组合键。"
+            errorMessage = L10n.shared.string("请录入要发送的组合键。")
             return
         }
         do {

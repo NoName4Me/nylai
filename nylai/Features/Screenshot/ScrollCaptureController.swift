@@ -235,7 +235,7 @@ final class ScrollCaptureController {
         }
 
         phase = .selecting
-        statusText = "拖动选择要滚动的内容区域"
+        statusText = L10n.shared.string("拖动选择要滚动的内容区域")
         do {
             let image = try await displayCapturer.captureDisplayExcludingOwnApplication(
                 target.displayID
@@ -287,7 +287,7 @@ final class ScrollCaptureController {
     ) {
         guard phase == .idle else { return }
         phase = .preparing
-        statusText = "准备滚动截图…"
+        statusText = L10n.shared.string("准备滚动截图…")
         targetApplication = request.targetApplication
         displayID = request.displayID
         displayFrame = request.displayFrame
@@ -336,7 +336,7 @@ final class ScrollCaptureController {
                 screenFrame: request.displayFrame
             )
             phase = .ready
-            statusText = "请缓慢滚动画面的内容"
+            statusText = L10n.shared.string("请缓慢滚动画面的内容")
             updateStatus()
             startOrResume(automaticCapture: automaticCapture)
         } catch {
@@ -350,7 +350,7 @@ final class ScrollCaptureController {
         lastFailure = nil
         consecutiveUnmatchedFrames = 0
         phase = .running
-        statusText = "正在等待页面滚动…"
+        statusText = L10n.shared.string("正在等待页面滚动…")
         updateStatus()
         if automaticCapture {
             captureNextFrameSoon()
@@ -387,7 +387,7 @@ final class ScrollCaptureController {
                 guard try await saver.save(result.image) != nil else {
                     guard phase == .preparing else { return }
                     phase = .paused
-                    statusText = "已暂停"
+                    statusText = L10n.shared.string("已暂停")
                     selectionOutlineWindow?.orderFrontRegardless()
                     completionWindow?.orderFrontRegardless()
                     updateStatus()
@@ -484,7 +484,11 @@ final class ScrollCaptureController {
         frameCount = 0
         outputHeight = 0
         phase = .ready
-        statusText = "已选择 \(selection.width) × \(selection.height)"
+        statusText = L10n.shared.string(
+            "已选择 %@ × %@",
+            String(selection.width),
+            String(selection.height)
+        )
         showCompletionControl(
             selectionGlobalRect: globalRect,
             screenFrame: displayFrame
@@ -649,25 +653,34 @@ final class ScrollCaptureController {
             case .accepted(let advance, _, _, _):
                 consecutiveUnmatchedFrames = 0
                 statusText = advance == 0
-                    ? "已采集首帧，请缓慢滚动"
-                    : "已采集 \(frameCount) 帧 · \(selectionPixelRect.width) × \(outputHeight)"
+                    ? L10n.shared.string("已采集首帧，请缓慢滚动")
+                    : L10n.shared.string(
+                        "已采集 %@ 帧 · %@ × %@",
+                        String(frameCount),
+                        String(selectionPixelRect.width),
+                        String(outputHeight)
+                    )
                 await updatePreview()
             case .prepended(let advance, _, _, _):
                 consecutiveUnmatchedFrames = 0
-                statusText = "已向上拼接 \(advance) px · \(frameCount) 帧"
+                statusText = L10n.shared.string(
+                    "已向上拼接 %@ px · %@ 帧",
+                    String(advance),
+                    String(frameCount)
+                )
                 await updatePreview()
             case .duplicate:
                 consecutiveUnmatchedFrames = 0
-                statusText = "等待页面滚动…"
+                statusText = L10n.shared.string("等待页面滚动…")
                 updateStatus()
             case .insufficientOverlap, .ambiguous, .changed, .mismatchedSize:
                 consecutiveUnmatchedFrames += 1
-                statusText = "等待稳定画面…"
+                statusText = L10n.shared.string("等待稳定画面…")
                 updateStatus()
             case .frameLimitReached:
-                await finishAtLimit(reason: "已达到 100 帧上限。")
+                await finishAtLimit(reason: L10n.shared.string("已达到 100 帧上限。"))
             case .pixelLimitReached:
-                await finishAtLimit(reason: "已达到 4000 万像素上限。")
+                await finishAtLimit(reason: L10n.shared.string("已达到 4000 万像素上限。"))
             }
             return result
         } catch is CancellationError {
@@ -861,7 +874,7 @@ private final class ScrollRegionSelectionView: NSView {
                 withAttributes: attributes
             )
         } else {
-            let instruction = "拖动选择滚动内容区域 · Esc 取消" as NSString
+            let instruction = L10n.shared.string("拖动选择滚动内容区域 · Esc 取消") as NSString
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 13, weight: .medium),
                 .foregroundColor: NSColor.white,
@@ -1007,7 +1020,7 @@ private final class ScrollCaptureHUDView: NSView {
     }
 
     private func drawScrollPrompt() {
-        let text = "缓慢滚动 · 可向上或向下" as NSString
+        let text = L10n.shared.string("缓慢滚动 · 可向上或向下") as NSString
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12, weight: .medium),
             .foregroundColor: NSColor.white.withAlphaComponent(0.92),
@@ -1052,7 +1065,7 @@ private final class ScrollCaptureHUDView: NSView {
             height: max(1, previewRect.height - headerHeight - footerHeight)
         )
 
-        let header = "滚动结果" as NSString
+        let header = L10n.shared.string("滚动结果") as NSString
         header.draw(
             at: CGPoint(x: previewRect.minX + inset, y: previewRect.maxY - 21),
             withAttributes: [
@@ -1090,7 +1103,7 @@ private final class ScrollCaptureHUDView: NSView {
             )
             NSGraphicsContext.restoreGraphicsState()
         } else {
-            let placeholder = "正在采集首帧…" as NSString
+            let placeholder = L10n.shared.string("正在采集首帧…") as NSString
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 11),
                 .foregroundColor: NSColor.white.withAlphaComponent(0.52),
@@ -1105,7 +1118,11 @@ private final class ScrollCaptureHUDView: NSView {
             )
         }
 
-        let count = "\(frameCount) 帧 · \(outputHeight) px" as NSString
+        let count = L10n.shared.string(
+            "%@ 帧 · %@ px",
+            String(frameCount),
+            String(outputHeight)
+        ) as NSString
         count.draw(
             at: CGPoint(x: previewRect.minX + inset, y: previewRect.minY + 25),
             withAttributes: [
@@ -1172,8 +1189,10 @@ private final class ScrollCaptureCompletionWindow: NSWindow {
 
         let surface = FloatingToolbarSurfaceView(frame: CGRect(origin: .zero, size: rect.size))
         let actions: [(String, Selector)] = [
-            ("编辑", #selector(completeAction)), ("复制", #selector(copyAction)),
-            ("保存", #selector(saveAction)), ("取消", #selector(cancelAction)),
+            (L10n.shared.string("编辑"), #selector(completeAction)),
+            (L10n.shared.string("复制"), #selector(copyAction)),
+            (L10n.shared.string("保存"), #selector(saveAction)),
+            (L10n.shared.string("取消"), #selector(cancelAction)),
         ]
         for (index, entry) in actions.enumerated() {
             let button = ToolbarIconButton(frame: CGRect(x: 5, y: 96 - index * 29, width: 44, height: 25))

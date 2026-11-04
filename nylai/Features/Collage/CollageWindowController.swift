@@ -60,7 +60,7 @@ final class CollageViewModel {
         Task { [weak self] in
             guard let self else { return }
             let panel = NSOpenPanel()
-            panel.title = "导入拼图图片"
+            panel.title = L10n.shared.string("导入拼图图片")
             panel.allowedContentTypes = [.png, .jpeg, .heic]
             panel.allowsMultipleSelection = true
             panel.canChooseDirectories = false
@@ -165,10 +165,10 @@ final class CollageWindowController: NSWindowController {
             saver: saver
         )
         let hostingController = NSHostingController(
-            rootView: CollageView(model: viewModel)
+            rootView: CollageView(model: viewModel).nylaiLocalized()
         )
         let window = NSWindow(contentViewController: hostingController)
-        window.title = "自由拼图"
+        window.title = L10n.shared.string("自由拼图")
         window.identifier = NSUserInterfaceItemIdentifier("nylai.collage")
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 1060, height: 760))
@@ -194,6 +194,10 @@ final class CollageWindowController: NSWindowController {
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func refreshLocalization() {
+        window?.title = L10n.shared.string("自由拼图")
     }
 }
 
@@ -238,7 +242,7 @@ private struct CollageView: View {
                             model.addHistoryRecord(record)
                         } label: {
                             Text(
-                                "\(record.createdAt.formatted(date: .abbreviated, time: .shortened))  ·  \(record.width) × \(record.height)"
+                                "\(formattedDate(for: record.createdAt))  ·  \(record.width) × \(record.height)"
                             )
                         }
                     }
@@ -330,10 +334,7 @@ private struct CollageView: View {
                             Menu("最近截图") {
                                 ForEach(model.historyRecords) { record in
                                     Button(
-                                        record.createdAt.formatted(
-                                            date: .abbreviated,
-                                            time: .shortened
-                                        )
+                                        formattedDate(for: record.createdAt)
                                     ) {
                                         model.addHistoryRecord(record)
                                     }
@@ -355,9 +356,16 @@ private struct CollageView: View {
 
     private var statusBar: some View {
         HStack(spacing: 12) {
-            Text("\(model.document.items.count) 张图片")
+            Text(L10n.shared.string(
+                "%@ 张图片",
+                String(model.document.items.count)
+            ))
             if let selected = model.document.selectedItem {
-                Text("当前 \(Int(selected.frame.width.rounded())) × \(Int(selected.frame.height.rounded()))")
+                Text(L10n.shared.string(
+                    "当前 %@ × %@",
+                    String(Int(selected.frame.width.rounded())),
+                    String(Int(selected.frame.height.rounded()))
+                ))
             }
             Spacer()
             Text("拖动图片移动，拖动边角等比缩放；滚轮或触控板可缩放画布")
@@ -374,20 +382,29 @@ private struct CollageView: View {
         symbol: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        let localizedTitle = L10n.shared.string(title)
+        return Button(action: action) {
             toolbarLabel(title, symbol: symbol)
         }
         .buttonStyle(.borderless)
-        .help(title)
+        .help(localizedTitle)
     }
 
     private func toolbarLabel(_ title: String, symbol: String) -> some View {
-        Label(title, systemImage: symbol)
+        let localizedTitle = L10n.shared.string(title)
+        return Label(localizedTitle, systemImage: symbol)
             .font(.system(size: 11.5, weight: .medium))
             .labelStyle(.iconOnly)
             .frame(width: 26, height: 24)
             .contentShape(Rectangle())
-            .help(title)
+            .help(localizedTitle)
+    }
+
+    private func formattedDate(for date: Date) -> String {
+        date.formatted(
+            Date.FormatStyle(date: .abbreviated, time: .shortened)
+                .locale(L10n.shared.locale)
+        )
     }
 
     private var errorPresented: Binding<Bool> {
