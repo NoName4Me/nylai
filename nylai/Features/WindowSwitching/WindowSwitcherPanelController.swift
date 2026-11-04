@@ -404,21 +404,27 @@ private struct WindowPreviewGridLayout {
 
 private struct WindowSwitcherBackdrop: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
+#if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             let view = NSGlassEffectView()
             view.style = .clear
             view.cornerRadius = 0
             return view
         }
+#endif
         return Self.makeHUDView()
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
+#if compiler(>=6.2)
         if #available(macOS 26.0, *),
            let glassView = nsView as? NSGlassEffectView {
             glassView.style = .clear
             glassView.cornerRadius = 0
-        } else if let visualEffectView = nsView as? NSVisualEffectView {
+            return
+        }
+#endif
+        if let visualEffectView = nsView as? NSVisualEffectView {
             Self.configureHUDView(visualEffectView)
         }
     }

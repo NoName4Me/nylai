@@ -1,7 +1,7 @@
 import AppKit
 import ApplicationServices
 import CoreVideo
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 
 @MainActor
 final class ScreenCaptureService: ScreenCapturing, WindowCapturing {

@@ -1769,33 +1769,35 @@ private struct SidebarMenuPullOverlay: View {
 
     var body: some View {
         TimelineView(.animation) { timeline in
-            let time = clamp(timeline.date.timeIntervalSince(pull.started) / SidebarMenuPull.duration)
-            let sidebar = CGPoint(x: pull.slot.midX, y: pull.slot.midY)
-            let icon = CGPoint(x: pull.icon.midX, y: pull.icon.midY)
-            let iconAnchor = CGPoint(x: pull.icon.minX + 2, y: pull.icon.minY + 2)
-            let throwOrigin = pull.appearing ? sidebar : icon
-            let catchPoint = pull.appearing ? icon : sidebar
-            let ropeOrigin = pull.appearing ? sidebar : iconAnchor
-            let ropeTarget = pull.appearing ? iconAnchor : sidebar
-            let travel = clamp((time - 0.30) / 0.40)
-            let tug = pow(travel, 2.35)
-            let impact = clamp((time - SidebarMenuPull.landing) / 0.25)
-            let recoil = sin(impact * .pi * 4) * pow(1 - impact, 2) * 7
-            let tension = sin(.pi * clamp((time - 0.21) / 0.18))
-            let center = CGPoint(
+            let time: Double = clamp(
+                timeline.date.timeIntervalSince(pull.started) / SidebarMenuPull.duration
+            )
+            let sidebar: CGPoint = CGPoint(x: pull.slot.midX, y: pull.slot.midY)
+            let icon: CGPoint = CGPoint(x: pull.icon.midX, y: pull.icon.midY)
+            let iconAnchor: CGPoint = CGPoint(x: pull.icon.minX + 2, y: pull.icon.minY + 2)
+            let throwOrigin: CGPoint = pull.appearing ? sidebar : icon
+            let catchPoint: CGPoint = pull.appearing ? icon : sidebar
+            let ropeOrigin: CGPoint = pull.appearing ? sidebar : iconAnchor
+            let ropeTarget: CGPoint = pull.appearing ? iconAnchor : sidebar
+            let travel: Double = clamp((time - 0.30) / 0.40)
+            let tug: Double = pow(travel, 2.35)
+            let impact: Double = clamp((time - SidebarMenuPull.landing) / 0.25)
+            let recoil: Double = sin(impact * .pi * 4) * pow(1 - impact, 2) * 7
+            let tension: Double = sin(.pi * clamp((time - 0.21) / 0.18))
+            let center: CGPoint = CGPoint(
                 x: mix(catchPoint.x, throwOrigin.x, tug) + (pull.appearing ? -recoil : recoil),
                 y: mix(catchPoint.y, throwOrigin.y, tug) - sin(.pi * travel) * 9
             )
-            let scale = pull.appearing ? mix(0.18, 1, tug) : mix(1, 0.18, tug)
-            let cast = clamp(time / SidebarMenuPull.catchTime)
-            let castEase = 1 - pow(1 - cast, 2)
-            let lineTip = cast < 1
+            let scale: Double = pull.appearing ? mix(0.18, 1, tug) : mix(1, 0.18, tug)
+            let cast: Double = clamp(time / SidebarMenuPull.catchTime)
+            let castEase: Double = 1 - pow(1 - cast, 2)
+            let lineTip: CGPoint = cast < 1
                 ? CGPoint(x: mix(ropeOrigin.x, ropeTarget.x, castEase),
                           y: mix(ropeOrigin.y, ropeTarget.y, castEase) - sin(.pi * cast) * 19)
                 : CGPoint(x: center.x + (pull.appearing ? (iconAnchor.x - icon.x) * (1 - tug) : 0),
                           y: center.y + (pull.appearing ? (iconAnchor.y - icon.y) * (1 - tug) : 0))
-            let release = clamp((time - 0.65) / 0.24)
-            let lineStart = pull.appearing
+            let release: Double = clamp((time - 0.65) / 0.24)
+            let lineStart: CGPoint = pull.appearing
                 ? CGPoint(x: mix(ropeOrigin.x, lineTip.x, release),
                           y: mix(ropeOrigin.y, lineTip.y, release))
                 : ropeOrigin
