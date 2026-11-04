@@ -13,7 +13,7 @@ final class ClipboardMonitor {
     private let store: ClipboardHistoryStore
     private let pollInterval: Duration
     private let decoder: @Sendable (ClipboardPayloadSnapshot) async -> ClipboardObservedChange
-    private let notificationCenter: NotificationCenter
+    nonisolated private let notificationCenter: NotificationCenter
     private let frontmostApplication: @MainActor () -> ClipboardMonitorFrontmostApplication?
     private var pollingTask: Task<Void, Never>?
     private var isProcessingChange = false
@@ -21,7 +21,8 @@ final class ClipboardMonitor {
     private var baselineChangeCount = 0
     private(set) var isSleeping = false
     private var lastCleanupAt: Date?
-    private var workspaceObservers: [NSObjectProtocol] = []
+    @ObservationIgnored
+    nonisolated(unsafe) private var workspaceObservers: [NSObjectProtocol] = []
     var onRuntimeStatusChange: ((ModuleRuntimeStatus, String?) -> Void)?
 
     private(set) var isActive = false
@@ -54,7 +55,7 @@ final class ClipboardMonitor {
         observeWorkspace()
     }
 
-    isolated deinit {
+    deinit {
         for observer in workspaceObservers {
             notificationCenter.removeObserver(observer)
         }

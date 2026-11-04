@@ -28,12 +28,12 @@ final class GesturePathRecorderView: NSView {
     private var isTracking = false
     private var previewPoints: [CGPoint] = []
     private var needsRedrawHint = false
-    private var rightMouseLocalMonitor: Any?
+    nonisolated(unsafe) private var rightMouseLocalMonitor: Any?
 
     override var acceptsFirstResponder: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: 260, height: 196) }
 
-    isolated deinit {
+    deinit {
         if let rightMouseLocalMonitor {
             NSEvent.removeMonitor(rightMouseLocalMonitor)
         }

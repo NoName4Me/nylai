@@ -423,8 +423,9 @@ final class ClipboardPanelController: NSWindowController {
     private let store: ClipboardHistoryStore
     private let pasteboard: any ClipboardPasteboardAccessing
     private let directPaster: any ClipboardDirectPasting
+    nonisolated private let notificationCenter: NotificationCenter
     private var lastExternalApplication: NSRunningApplication?
-    private var activationObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var activationObserver: NSObjectProtocol?
     private var previewPanel: NSPanel?
     private var copyFeedback: Task<Void, Never>?
     private var transitionTask: Task<Void, Never>?
@@ -438,8 +439,9 @@ final class ClipboardPanelController: NSWindowController {
         self.store = store
         self.pasteboard = pasteboard
         self.directPaster = directPaster
+        notificationCenter = NSWorkspace.shared.notificationCenter
         super.init(window: nil)
-        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+        activationObserver = notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
             queue: .main
@@ -466,9 +468,9 @@ final class ClipboardPanelController: NSWindowController {
         fatalError("不支持从归档创建剪贴板面板")
     }
 
-    isolated deinit {
+    deinit {
         if let activationObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
+            notificationCenter.removeObserver(activationObserver)
         }
     }
 

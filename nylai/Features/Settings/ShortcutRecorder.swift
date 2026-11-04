@@ -41,8 +41,8 @@ struct ShortcutRecorder: NSViewRepresentable {
 @MainActor
 final class ShortcutRecorderView: NSView {
     private var trackingArea: NSTrackingArea?
-    private var localRecordingEventMonitor: Any?
-    private var sessionRecordingEventMonitor: ShortcutRecordingEventMonitor?
+    nonisolated(unsafe) private var localRecordingEventMonitor: Any?
+    nonisolated(unsafe) private var sessionRecordingEventMonitor: ShortcutRecordingEventMonitor?
     private var hasConsumedRecordingInput = false
     private var isHovered = false {
         didSet { needsDisplay = true }
@@ -89,11 +89,15 @@ final class ShortcutRecorderView: NSView {
         fatalError("不支持从归档创建快捷键录入控件")
     }
 
-    isolated deinit {
+    deinit {
         if let localRecordingEventMonitor {
             NSEvent.removeMonitor(localRecordingEventMonitor)
         }
-        sessionRecordingEventMonitor?.stop()
+        if let sessionRecordingEventMonitor {
+            Task { @MainActor in
+                sessionRecordingEventMonitor.stop()
+            }
+        }
     }
 
     override func updateTrackingAreas() {

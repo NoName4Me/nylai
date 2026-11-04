@@ -26,13 +26,14 @@ final class MouseGestureController {
     private let isInputSuppressed: @MainActor () -> Bool
     private let presentError: @MainActor (Error) -> Void
     private let frontmostApplication: @MainActor () -> GestureFrontmostApplication?
-    private let notificationCenter: NotificationCenter
+    nonisolated private let notificationCenter: NotificationCenter
     private let traceWindow = MouseGestureTraceWindow()
     private var isActive = false
     private var isEditingRule = false
     private var session: ActiveSession?
     private var sessionRevision = 0
-    private var workspaceObservers: [NSObjectProtocol] = []
+    @ObservationIgnored
+    nonisolated(unsafe) private var workspaceObservers: [NSObjectProtocol] = []
     var onRuntimeStatusChange: ((ModuleRuntimeStatus, String?) -> Void)?
 
     private(set) var configuration: MouseGestureConfiguration?
@@ -81,7 +82,7 @@ final class MouseGestureController {
         observeWorkspace()
     }
 
-    isolated deinit {
+    deinit {
         for observer in workspaceObservers {
             notificationCenter.removeObserver(observer)
         }
