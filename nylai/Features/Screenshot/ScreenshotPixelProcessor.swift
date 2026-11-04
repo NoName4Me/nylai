@@ -1,5 +1,5 @@
 import CoreGraphics
-import CoreImage
+@preconcurrency import CoreImage
 
 enum ScreenshotPixelProcessor {
     private static let context = CIContext(options: [.cacheIntermediates: false])
