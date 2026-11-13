@@ -1,0 +1,29 @@
+name: Commit messages
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate commit messages
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+            BASE=$(git rev-list --max-parents=0 "$HEAD" | head -n 1)
+          fi
+          git rev-list --no-merges "$BASE..$HEAD" > /tmp/commit-ids
+          while read -r commit; do
+            git show -s --format=%B "$commit" > /tmp/commit-message
+            sh scripts/check-commit-message.sh /tmp/commit-message
+          done < /tmp/commit-ids

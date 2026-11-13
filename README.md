@@ -30,6 +30,8 @@
 
 ## 构建与运行
 
+首次开发前运行 `sh scripts/install-git-hooks.sh`，启用提交信息校验。提交使用 `feat: 描述`、`fix: 描述` 等 Conventional Commits 格式，可带 scope；CI 同步校验新增提交。
+
 1. 用 Xcode 打开 `nylai.xcodeproj`。
 2. 选择 `nylai` scheme 和 `My Mac`，按 `⌘R`。
 3. 点击菜单栏图标直接打开设置；右键图标可退出应用。
