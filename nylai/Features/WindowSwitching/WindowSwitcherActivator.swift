@@ -9,22 +9,38 @@ protocol WindowSwitcherActivating {
 @MainActor
 final class WindowSwitcherActivator: WindowSwitcherActivating {
     private let isAccessibilityGranted: @MainActor () -> Bool
+    private let openApplication: @MainActor (URL) async throws -> Void
 
     init(
         isAccessibilityGranted: @escaping @MainActor () -> Bool = {
             AccessibilityPermission.isGranted
+        },
+        openApplication: @escaping @MainActor (URL) async throws -> Void = { url in
+            _ = try await NSWorkspace.shared.openApplication(at: url, configuration: .init())
         }
     ) {
         self.isAccessibilityGranted = isAccessibilityGranted
+        self.openApplication = openApplication
     }
 
     func activate(_ target: WindowSwitcherTarget) async throws {
-        guard let application = NSRunningApplication(
-            processIdentifier: target.processIdentifier
-        ), application.bundleIdentifier == target.bundleIdentifier else {
-            throw WindowSwitcherError.targetUnavailable
+        guard target.processIdentifier > 0,
+              let application = NSRunningApplication(processIdentifier: target.processIdentifier),
+              !application.isTerminated,
+              application.bundleIdentifier == target.bundleIdentifier else {
+            guard target.launchIfNeeded, let url = target.applicationURL,
+                  let identifier = target.bundleIdentifier,
+                  Bundle(url: url)?.bundleIdentifier == identifier else {
+                throw WindowSwitcherError.targetUnavailable
+            }
+            try await openApplication(url)
+            return
         }
         guard let windowID = target.windowID else {
+            if let url = application.bundleURL {
+                try await openApplication(url)
+                return
+            }
             guard application.activate(options: [.activateAllWindows]) else {
                 throw WindowSwitcherError.targetUnavailable
             }

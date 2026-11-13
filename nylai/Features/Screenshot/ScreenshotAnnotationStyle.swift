@@ -54,76 +54,83 @@ struct ScreenshotAnnotationColor: Codable, Equatable, Sendable {
     }
 }
 
-enum ScreenshotArrowStyle: String, Codable, CaseIterable, Sendable {
-    case open, solid, double
+enum ScreenshotArrowWidthStyle: String, CaseIterable, Codable, Sendable {
+    case uniform
+    case tapered
 
     var title: String {
         switch self {
-        case .open: L10n.shared.string("开放箭头")
-        case .solid: L10n.shared.string("实心箭头")
-        case .double: L10n.shared.string("双向箭头")
+        case .uniform: L10n.shared.string("等宽")
+        case .tapered: L10n.shared.string("渐宽")
+        }
+    }
+}
+
+enum ScreenshotArrowPathStyle: String, CaseIterable, Codable, Sendable {
+    case straight
+    case curved
+
+    var title: String {
+        switch self {
+        case .straight: L10n.shared.string("直")
+        case .curved: L10n.shared.string("弯")
         }
     }
 }
 
 struct ScreenshotArrowOptions: Codable, Equatable, Sendable {
-    enum Form: String, CaseIterable, Codable, Sendable {
-        case line, body
-        var title: String {
-            self == .line
-                ? L10n.shared.string("线形")
-                : L10n.shared.string("面形")
-        }
+    var widthStyle: ScreenshotArrowWidthStyle
+    var pathStyle: ScreenshotArrowPathStyle
+
+    static let `default` = ScreenshotArrowOptions()
+
+    init(
+        widthStyle: ScreenshotArrowWidthStyle = .uniform,
+        pathStyle: ScreenshotArrowPathStyle = .straight
+    ) {
+        self.widthStyle = widthStyle
+        self.pathStyle = pathStyle
     }
-    enum Start: String, CaseIterable, Codable, Sendable {
-        case none, dot, diamond, fork
-        var title: String {
-            switch self {
-            case .none: L10n.shared.string("无")
-            case .dot: L10n.shared.string("圆点")
-            case .diamond: L10n.shared.string("菱形")
-            case .fork: L10n.shared.string("分叉")
-            }
-        }
+
+    private enum CodingKeys: String, CodingKey {
+        case widthStyle
+        case pathStyle
+        case form
+        case tapered
+        case curve
     }
-    enum Tip: String, CaseIterable, Codable, Sendable {
-        case triangle, open, dart
-        var title: String {
-            switch self {
-            case .triangle: L10n.shared.string("三角")
-            case .open: L10n.shared.string("线条")
-            case .dart: L10n.shared.string("箭矢")
-            }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let widthStyle = try container.decodeIfPresent(
+            ScreenshotArrowWidthStyle.self,
+            forKey: .widthStyle
+        ) {
+            self.widthStyle = widthStyle
+        } else {
+            let form = try container.decodeIfPresent(String.self, forKey: .form)
+            let tapered = try container.decodeIfPresent(Bool.self, forKey: .tapered) ?? false
+            widthStyle = form == "body" && tapered ? .tapered : .uniform
         }
-    }
-    enum Curve: String, CaseIterable, Codable, Sendable {
-        case straight, left, right
-        var title: String {
-            switch self {
-            case .straight: L10n.shared.string("直线")
-            case .left: L10n.shared.string("左弯")
-            case .right: L10n.shared.string("右弯")
-            }
+        if let pathStyle = try container.decodeIfPresent(
+            ScreenshotArrowPathStyle.self,
+            forKey: .pathStyle
+        ) {
+            self.pathStyle = pathStyle
+        } else {
+            let curve = try container.decodeIfPresent(String.self, forKey: .curve)
+            pathStyle = curve == "left" || curve == "right" ? .curved : .straight
         }
     }
 
-    var form: Form = .line
-    var start: Start = .none
-    var tip: Tip = .open
-    var curve: Curve = .straight
-    var tapered = false
-    var filled = true
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(widthStyle, forKey: .widthStyle)
+        try container.encode(pathStyle, forKey: .pathStyle)
+    }
 
-    var allowedStarts: [Start] { form == .line ? [.none, .dot, .diamond] : [.none, .fork] }
-    var allowedTips: [Tip] { form == .line ? [.triangle, .open, .dart] : [.triangle, .dart] }
-
-    func normalized() -> Self {
-        var result = self
-        if !allowedStarts.contains(start) { result.start = .none }
-        if !allowedTips.contains(tip) { result.tip = .triangle }
-        if form == .line { result.tapered = false }
-        if result.tapered { result.filled = true }
-        return result
+    var isTapered: Bool {
+        widthStyle == .tapered
     }
 }
 
@@ -141,7 +148,6 @@ struct ScreenshotAnnotationStyle: Codable, Equatable, Sendable {
     var lineWidth: Int
     var lineStyle: ScreenshotAnnotationLineStyle
     var fillsShape: Bool? = nil
-    var arrowStyle: ScreenshotArrowStyle? = nil
     var arrowOptions: ScreenshotArrowOptions? = nil
     var fillsTextBackground: Bool? = nil
 
@@ -165,6 +171,8 @@ struct ScreenshotAnnotationStyle: Codable, Equatable, Sendable {
             style.lineWidth = 24
         } else if kind == .mosaic {
             style.lineWidth = 12
+        } else if kind == .arrow {
+            style.arrowOptions = .default
         }
         return style
     }
@@ -277,6 +285,12 @@ extension ScreenshotAnnotationKind {
         case .text, .step, .mosaic:
             false
         }
+    }
+}
+
+extension ScreenshotAnnotation {
+    var isTaperedArrow: Bool {
+        kind == .arrow && style.arrowOptions?.isTapered == true
     }
 }
 

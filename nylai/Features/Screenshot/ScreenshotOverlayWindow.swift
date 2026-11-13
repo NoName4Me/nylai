@@ -1,4 +1,10 @@
 import AppKit
+
+@MainActor
+private final class ScreenshotToolbarPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
 import CoreGraphics
 
 @MainActor
@@ -201,6 +207,7 @@ final class ScreenshotOverlayView: NSView {
     var onReselect: (() -> Void)?
     var onScrollCapture: (() -> Void)?
     var onCopy: (() -> Void)?
+    var onRecognizeText: ((RecognizedTextLayout) -> Void)?
     var onSave: (() -> Void)?
     var onPin: (() -> Void)?
     var onZoomIn: (() -> Void)?
@@ -303,6 +310,16 @@ final class ScreenshotOverlayView: NSView {
     var toolbarAnchorRect: CGRect? {
         didSet { updateToolbar() }
     }
+    var usesExternalToolbars = false
+    private var externalToolbarPanels: [NSPanel] = []
+
+    func closeExternalToolbars() {
+        for panel in externalToolbarPanels {
+            panel.parent?.removeChildWindow(panel)
+            panel.orderOut(nil)
+        }
+        externalToolbarPanels = []
+    }
     private var trackingArea: NSTrackingArea?
     private var selectionBeforeDrag: CGRect?
     private var appearanceBeforeDrag: ScreenshotOutputAppearance?
@@ -344,6 +361,7 @@ final class ScreenshotOverlayView: NSView {
         toolbar.onReselect = { [weak self] in self?.onReselect?() }
         toolbar.onScrollCapture = { [weak self] in self?.onScrollCapture?() }
         toolbar.onCopy = { [weak self] in self?.onCopy?() }
+        toolbar.onRecognizeText = { [weak self] in self?.onRecognizeText?($0) }
         toolbar.onSave = { [weak self] in self?.onSave?() }
         toolbar.onPin = { [weak self] in self?.onPin?() }
         toolbar.onZoomIn = { [weak self] in self?.onZoomIn?() }
@@ -403,8 +421,10 @@ final class ScreenshotOverlayView: NSView {
         toolbar.selectedTool = tool
         outputToolbar.selectedTool = tool
         updateDisplayedStyle()
-        if changed, tool == .selection {
+        if selectedAnnotationID != nil, (changed && tool == .selection) || tool.annotationKind != nil {
+            selectedAnnotationID = nil
             onAnnotationSelected?(nil)
+            updateDisplayedStyle()
         }
         window?.invalidateCursorRects(for: self)
         needsDisplay = true
@@ -456,6 +476,10 @@ final class ScreenshotOverlayView: NSView {
         if let selectedAnnotationID,
            let index = annotations.firstIndex(where: { $0.id == selectedAnnotationID }) {
             annotations[index].style = validated
+            if annotations[index].kind == .arrow,
+               validated.arrowOptions?.pathStyle == .straight {
+                annotations[index].arrowAnchors = nil
+            }
         } else if let kind {
             drawingStyles[kind] = validated
         }
@@ -778,7 +802,9 @@ final class ScreenshotOverlayView: NSView {
         for annotation in annotations {
             let rect = viewport.viewRect(for: annotation.rect)
             guard rect.intersects(selection) else { continue }
-            drawAnnotationBorder(annotation, in: rect, viewport: viewport)
+            if annotation.id != editingTextAnnotationID {
+                drawAnnotationBorder(annotation, in: rect, viewport: viewport)
+            }
         }
         if let draftAnnotation {
             drawAnnotationBorder(
@@ -795,7 +821,9 @@ final class ScreenshotOverlayView: NSView {
                 NSGraphicsContext.restoreGraphicsState()
                 return
             }
-            drawAnnotationSelection(annotation, in: rect)
+            if annotation.id != editingTextAnnotationID {
+                drawAnnotationSelection(annotation, in: rect)
+            }
         }
 
         NSGraphicsContext.restoreGraphicsState()
@@ -832,7 +860,7 @@ final class ScreenshotOverlayView: NSView {
             return
         }
         if annotation.kind == .text {
-            drawTextAnnotation(annotation, in: rect)
+            ScreenshotTextLayout.draw(annotation, in: rect, scale: viewport.scaleY)
             return
         }
         if annotation.kind == .step {
@@ -852,6 +880,7 @@ final class ScreenshotOverlayView: NSView {
             annotation.style.color.nsColor.setFill()
             NSBezierPath(cgPath: fill).fill()
         }
+        guard !annotation.isTaperedArrow else { return }
         border.lineWidth = CGFloat(annotation.style.lineWidth) * scale
         border.lineCapStyle = .round
         border.lineJoinStyle = .round
@@ -862,36 +891,11 @@ final class ScreenshotOverlayView: NSView {
         border.stroke()
     }
 
-    private func drawTextAnnotation(_ annotation: ScreenshotAnnotation, in rect: CGRect) {
-        guard !annotation.text.isEmpty else {
-            NSColor.secondaryLabelColor.setStroke()
-            let placeholder = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
-            placeholder.lineWidth = 1
-            placeholder.setLineDash([4, 3], count: 2, phase: 0)
-            placeholder.stroke()
-            return
-        }
-        let filled = annotation.style.fillsTextBackground == true
-        if filled {
-            annotation.style.color.nsColor.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
-        }
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(
-                ofSize: max(CGFloat(annotation.style.lineWidth), 8),
-                weight: .semibold
-            ),
-            .foregroundColor: annotation.style.textColor,
-        ]
-        NSAttributedString(string: annotation.text, attributes: attributes)
-            .draw(in: rect.insetBy(dx: filled ? 4 : 1, dy: filled ? 3 : 1))
-    }
-
     private func drawStepAnnotation(_ annotation: ScreenshotAnnotation, in rect: CGRect) {
         guard let stepNumber = annotation.stepNumber else { return }
         annotation.style.color.nsColor.setFill()
         NSBezierPath(ovalIn: rect).fill()
-        let fontSize = max(9, min(rect.height * 0.56, 20))
+        let fontSize = rect.height * 0.56
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: fontSize, weight: .bold),
             .foregroundColor: NSColor.white,
@@ -909,8 +913,9 @@ final class ScreenshotOverlayView: NSView {
 
     private func drawAnnotationSelection(_ annotation: ScreenshotAnnotation, in rect: CGRect) {
         if annotation.kind == .arrow {
-            for (index, point) in ScreenshotAnnotationPath.arrowHandles(for: annotation, in: rect).enumerated() {
-                let endpoint = index == 0 || index == 3
+            let handles = ScreenshotAnnotationPath.arrowHandles(for: annotation, in: rect)
+            for (index, point) in handles.enumerated() {
+                let endpoint = index == 0 || index == handles.count - 1
                 let size: CGFloat = endpoint ? 8 : 9
                 let frame = CGRect(x: point.x - size / 2, y: point.y - size / 2, width: size, height: size)
                 let marker = endpoint ? NSBezierPath(roundedRect: frame, xRadius: 1, yRadius: 1)
@@ -924,7 +929,7 @@ final class ScreenshotOverlayView: NSView {
             return
         }
         let points = SelectionGeometry.handlePoints(in: rect)
-        let handles = annotation.kind == .step
+        let handles = annotation.kind == .text ? [points.left, points.right] : annotation.kind == .step
             ? [points.topLeft, points.topRight, points.bottomLeft, points.bottomRight]
             : [
                 points.topLeft, points.top, points.topRight,
@@ -950,14 +955,15 @@ final class ScreenshotOverlayView: NSView {
     override func mouseDown(with event: NSEvent) {
         setHoverHint(nil, anchor: .zero)
         guard !isOutputting else { return }
-        window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         if let textEditor {
             if textEditor.frame.contains(point) {
                 return
             }
             commitActiveTextEditing()
+            return
         }
+        window?.makeFirstResponder(self)
         if toolbar.superview != nil, toolbar.frame.contains(point) {
             return
         }
@@ -1049,12 +1055,16 @@ final class ScreenshotOverlayView: NSView {
                 beginAnnotationDrag(.adjustingArrow(id: annotation.id, handle: handle), at: point)
                 return
             }
+            if annotation.kind == .text, clickCount >= 2, rect.contains(point) {
+                beginTextEditing(annotation.id)
+                return
+            }
             if annotation.kind != .arrow, let handle = AnnotationSelectionGeometry.handle(
                 at: point,
                 in: rect,
                 hitSize: 18,
                 proportional: annotation.kind == .step
-            ) {
+            ), annotation.kind != .text || handle == .left || handle == .right {
                 beginAnnotationDrag(
                     .resizingAnnotation(
                         id: annotation.id,
@@ -1129,13 +1139,20 @@ final class ScreenshotOverlayView: NSView {
         guard let viewport = annotationViewport,
               let index = annotations.firstIndex(where: { $0.id == id }) else { return }
         var annotation = annotations[index]
-        if handle == 0 || handle == 3 {
+        let handles = ScreenshotAnnotationPath.arrowHandles(
+            for: annotation,
+            in: viewport.viewRect(for: annotation.rect)
+        )
+        if handle == 0 || handle == handles.count - 1 {
             var pixel = viewport.pixelPoint(from: point)
             pixel.x = min(pixel.x, viewport.pixelSize.width - 1)
             pixel.y = min(pixel.y, viewport.pixelSize.height - 1)
-            if handle == 0 { annotation.start = pixel } else { annotation.end = pixel }
+            if handle == 0 {
+                annotation.start = pixel
+            } else {
+                annotation.end = pixel
+            }
         } else {
-            let handles = ScreenshotAnnotationPath.arrowHandles(for: annotation, in: viewport.viewRect(for: annotation.rect))
             guard let start = handles.first, let end = handles.last,
                   hypot(end.x - start.x, end.y - start.y) > 2 else { return }
             var anchors = ScreenshotArrowAnchors.resolved(for: annotation)
@@ -1274,23 +1291,26 @@ final class ScreenshotOverlayView: NSView {
             let start,
             let originalStyle
         ):
-            guard let viewport = annotationViewport else { break }
-            let rect = AnnotationSelectionGeometry.resized(
+            guard let viewport = annotationViewport,
+                  let annotation = annotations.first(where: { $0.id == id }) else { break }
+            var rect = AnnotationSelectionGeometry.resized(
                 viewStartRect,
                 handle: handle,
                 by: CGPoint(x: point.x - start.x, y: point.y - start.y),
                 constrainedTo: bounds,
-                minimumSize: CGSize(width: viewport.scaleX, height: viewport.scaleY),
-                proportional: annotations.first(where: { $0.id == id })?.kind == .step
+                minimumSize: CGSize(
+                    width: annotation.kind == .text
+                        ? CGFloat(originalStyle.lineWidth + 8) * viewport.scaleX : viewport.scaleX,
+                    height: viewport.scaleY
+                ),
+                proportional: annotation.kind == .step
             )
-            let style = annotations.first(where: { $0.id == id })?.kind == .text
-                ? resizedTextStyle(
-                    originalStyle,
-                    from: viewStartRect,
-                    to: rect
-                )
-                : nil
-            updateAnnotation(id, viewRect: rect, viewport: viewport, style: style)
+            if annotation.kind == .text {
+                rect.size.height = ScreenshotTextLayout.size(
+                    annotation.text, style: originalStyle, width: rect.width, scale: viewport.scaleY
+                ).height
+            }
+            updateAnnotation(id, viewRect: rect, viewport: viewport)
         }
     }
 
@@ -1363,7 +1383,7 @@ final class ScreenshotOverlayView: NSView {
                 ))
             } else if kind == .text || kind == .step {
                 let isClick = hypot(point.x - downPoint.x, point.y - downPoint.y) < 3
-                let rect = isClick
+                let rect = (isClick || kind == .text)
                     ? defaultAnnotationRect(for: kind, at: start, viewport: viewport)
                     : SelectionGeometry.normalizedSelection(from: downPoint, to: point)
                 let pixelRect = viewport.pixelRect(from: rect) ?? PixelRect(
@@ -1406,26 +1426,23 @@ final class ScreenshotOverlayView: NSView {
             max(currentStyle.lineWidth, ScreenshotAnnotationStyle.minimumStepSize),
             ScreenshotAnnotationStyle.maximumStepSize
         )
-        let width = min(kind == .step ? stepSize : 180, max(1, pixelSize.width - pixelPoint.x))
-        let height = min(kind == .step ? stepSize : 80, max(1, pixelSize.height - pixelPoint.y))
-        return CGRect(
+        let width = min(kind == .step ? stepSize : currentStyle.lineWidth * 2 + 8,
+                        max(1, pixelSize.width - pixelPoint.x))
+        let height = min(kind == .step ? stepSize : currentStyle.lineWidth + 10,
+                         max(1, pixelSize.height - pixelPoint.y))
+        var rect = CGRect(
             x: CGFloat(pixelPoint.x) * viewport.scaleX,
             y: CGFloat(pixelPoint.y) * viewport.scaleY,
             width: CGFloat(width) * viewport.scaleX,
             height: CGFloat(height) * viewport.scaleY
         )
-    }
-
-    private func resizedTextStyle(
-        _ style: ScreenshotAnnotationStyle,
-        from originalRect: CGRect,
-        to resizedRect: CGRect
-    ) -> ScreenshotAnnotationStyle? {
-        guard originalRect.height > 0 else { return nil }
-        let scale = resizedRect.height / originalRect.height
-        var resized = style
-        resized.lineWidth = Int((CGFloat(style.lineWidth) * scale).rounded())
-        return resized.validated(for: .text)
+        if kind == .text, let selection {
+            rect.size.width = min(CGFloat(currentStyle.lineWidth * 2 + 8) * viewport.scaleX, selection.width)
+            rect.size.height = min(CGFloat(currentStyle.lineWidth + 10) * viewport.scaleY, selection.height)
+            rect.origin.x = min(rect.minX, selection.maxX - rect.width)
+            rect.origin.y = min(rect.minY, selection.maxY - rect.height)
+        }
+        return rect
     }
 
     func beginTextEditing(_ id: UUID) {
@@ -1435,23 +1452,36 @@ final class ScreenshotOverlayView: NSView {
               let viewport = annotationViewport else {
             return
         }
-        let frame = viewport.viewRect(for: annotation.rect).insetBy(dx: 1, dy: 1)
+        let frame = viewport.viewRect(for: annotation.rect)
         let editor = AnnotationTextEditorView(frame: frame)
         editor.originalText = annotation.text
         editor.string = annotation.text
         editor.font = .systemFont(
-            ofSize: max(CGFloat(annotation.style.lineWidth), 8),
+            ofSize: CGFloat(annotation.style.lineWidth) * viewport.scaleY,
             weight: .semibold
         )
         editor.textColor = annotation.style.textColor
+        editor.textContainerInset = NSSize(width: 4 * viewport.scaleY, height: 3 * viewport.scaleY)
         if annotation.style.fillsTextBackground == true {
             editor.backgroundColor = annotation.style.color.nsColor
             editor.drawsBackground = true
         }
-        editor.onTextChanged = { [weak self] text in
-            guard let self,
+        let available = (selection ?? bounds).intersection(bounds)
+        let maximumWidth = annotation.text.isEmpty
+            ? max(1, available.maxX - frame.minX)
+            : frame.width
+        editor.onTextChanged = { [weak self, weak editor] text in
+            guard let self, let editor,
                   let index = annotations.firstIndex(where: { $0.id == id }) else { return }
             annotations[index].text = text
+            let natural = ScreenshotTextLayout.size(
+                text, style: annotation.style, width: .greatestFiniteMagnitude, scale: viewport.scaleY
+            )
+            let width = min(max(frame.width, natural.width), maximumWidth)
+            let height = ScreenshotTextLayout.size(
+                text, style: annotation.style, width: width, scale: viewport.scaleY
+            ).height
+            editor.setFrameSize(CGSize(width: width, height: min(height, max(1, available.maxY - frame.minY))))
             needsDisplay = true
         }
         editor.onCommit = { [weak self] in self?.finishTextEditing(commit: true) }
@@ -1470,6 +1500,8 @@ final class ScreenshotOverlayView: NSView {
     private func finishTextEditing(commit: Bool) {
         guard let editor = textEditor, let id = editingTextAnnotationID else { return }
         let text = editor.string
+        let committedRect = commit && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? annotationViewport?.pixelRect(from: editor.frame) : nil
         if !commit,
            let index = annotations.firstIndex(where: { $0.id == id }) {
             annotations[index].text = editor.originalText
@@ -1479,19 +1511,30 @@ final class ScreenshotOverlayView: NSView {
         editingTextAnnotationID = nil
         needsDisplay = true
         window?.makeFirstResponder(self)
+        if let committedRect,
+           let index = annotations.firstIndex(where: { $0.id == id }),
+           committedRect != annotations[index].rect {
+            onAnnotationInteractionBegan?(id)
+            annotations[index].rect = committedRect
+            onAnnotationChanged?(id, committedRect, nil)
+            onTextEditingEnded?(id, text, true)
+            onInteractionEnded?()
+            return
+        }
         onTextEditingEnded?(id, commit ? text : editor.originalText, commit)
     }
 
     private func updateToolbar() {
         guard let selection else {
+            externalToolbarPanels.forEach { $0.orderOut(nil) }
             toolbar.removeFromSuperview()
             outputToolbar.removeFromSuperview()
             return
         }
-        if toolbar.superview == nil {
+        if !usesExternalToolbars, toolbar.superview == nil {
             addSubview(toolbar)
         }
-        if outputToolbar.superview == nil {
+        if !usesExternalToolbars, outputToolbar.superview == nil {
             addSubview(outputToolbar)
         }
         toolbar.selectedTool = activeTool
@@ -1504,6 +1547,33 @@ final class ScreenshotOverlayView: NSView {
         outputToolbar.isOutputting = isOutputting
         let editingSize = toolbar.preferredContentSize
         let outputSize = outputToolbar.preferredContentSize
+        if usesExternalToolbars, let window {
+            if externalToolbarPanels.isEmpty {
+                for content in [toolbar as NSView, outputToolbar as NSView] {
+                    let panel = ScreenshotToolbarPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+                    panel.isReleasedWhenClosed = false
+                    panel.isOpaque = false
+                    panel.backgroundColor = .clear
+                    panel.hasShadow = true
+                    panel.hidesOnDeactivate = false
+                    panel.level = .floating
+                    panel.contentView = content
+                    window.addChildWindow(panel, ordered: .above)
+                    externalToolbarPanels.append(panel)
+                }
+            }
+            let anchor = window.convertToScreen(convert(toolbarAnchorRect ?? selection, to: nil))
+            let screen = window.screen?.visibleFrame ?? anchor.insetBy(dx: -400, dy: -300)
+            func flipped(_ rect: CGRect) -> CGRect {
+                CGRect(x: rect.minX, y: -rect.maxY, width: rect.width, height: rect.height)
+            }
+            let layout = ScreenshotToolbarLayout.layout(selection: flipped(anchor), bounds: flipped(screen), editingSize: editingSize, outputSize: outputSize)
+            for (panel, frame) in zip(externalToolbarPanels, [layout.editingFrame, layout.outputFrame]) {
+                panel.setFrame(flipped(frame), display: true)
+                if window.isVisible { panel.orderFrontRegardless() }
+            }
+            return
+        }
         let layoutBounds = toolbarAnchorRect ?? bounds
         guard editingSize.width <= layoutBounds.width - 16,
               editingSize.height <= layoutBounds.height - 16,
@@ -1750,7 +1820,7 @@ final class ScreenshotOverlayView: NSView {
                in: viewport.viewRect(for: annotation.rect),
                hitSize: 18,
                proportional: annotation.kind == .step
-           ) {
+           ), annotation.kind != .text || handle == .left || handle == .right {
             handle.cursor.set()
             return
         }
@@ -1885,6 +1955,7 @@ private final class AnnotationTextEditorView: NSTextView {
         isHorizontallyResizable = false
         isVerticallyResizable = false
         textContainer?.widthTracksTextView = true
+        textContainer?.lineFragmentPadding = 0
         wantsLayer = true
         layer?.cornerRadius = 4
         layer?.borderWidth = 1

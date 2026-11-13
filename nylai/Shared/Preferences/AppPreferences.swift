@@ -79,6 +79,7 @@ final class AppPreferences {
     private static let mouseGesturesEnabledKey = "module.mouse-gestures.enabled"
     private static let clipboardEnabledKey = "module.clipboard.enabled"
     private static let windowSwitcherEnabledKey = "module.window-switcher.enabled"
+    private static let systemMonitorEnabledKey = "module.system-monitor.enabled"
     private let defaults: UserDefaults
 
     var appearanceMode: AppAppearanceMode {
@@ -131,6 +132,27 @@ final class AppPreferences {
         }
     }
 
+    var systemMonitorEnabled: Bool {
+        didSet {
+            defaults.set(systemMonitorEnabled, forKey: Self.systemMonitorEnabledKey)
+            NotificationCenter.default.post(name: .systemMonitorConfigurationDidChange, object: nil)
+        }
+    }
+
+    var systemMonitorMetrics: Set<SystemMonitorMetric> {
+        didSet {
+            defaults.set(systemMonitorMetrics.map(\.rawValue), forKey: "monitor.metrics")
+            NotificationCenter.default.post(name: .systemMonitorConfigurationDidChange, object: nil)
+        }
+    }
+
+    var systemMonitorMenuBarMetrics: Set<SystemMonitorMetric> {
+        didSet {
+            defaults.set(systemMonitorMenuBarMetrics.map(\.rawValue), forKey: "monitor.menu-bar-metrics")
+            NotificationCenter.default.post(name: .systemMonitorConfigurationDidChange, object: nil)
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         appearanceMode = defaults.string(forKey: Self.appearanceModeKey)
@@ -145,7 +167,7 @@ final class AppPreferences {
         ) as? Bool ?? false
         screenshotEnabled = defaults.object(
             forKey: Self.screenshotEnabledKey
-        ) as? Bool ?? false
+        ) as? Bool ?? true
         mouseGesturesEnabled = defaults.object(
             forKey: Self.mouseGesturesEnabledKey
         ) as? Bool ?? false
@@ -155,5 +177,14 @@ final class AppPreferences {
         windowSwitcherEnabled = defaults.object(
             forKey: Self.windowSwitcherEnabledKey
         ) as? Bool ?? false
+        systemMonitorEnabled = defaults.bool(forKey: Self.systemMonitorEnabledKey)
+        let storedMetrics = defaults.stringArray(forKey: "monitor.metrics").map {
+            Set($0.compactMap(SystemMonitorMetric.init(rawValue:)))
+        } ?? Set(SystemMonitorMetric.allCases)
+        systemMonitorMetrics = storedMetrics.isEmpty ? [.cpu] : storedMetrics
+        systemMonitorMenuBarMetrics = Set(
+            (defaults.stringArray(forKey: "monitor.menu-bar-metrics") ?? [])
+                .compactMap(SystemMonitorMetric.init(rawValue:))
+        )
     }
 }

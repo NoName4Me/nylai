@@ -30,7 +30,7 @@ final class AppPreferencesTests: XCTestCase {
         let preferences = AppPreferences(defaults: defaults)
         XCTAssertEqual(preferences.appearanceMode, .system)
         XCTAssertEqual(preferences.language, .system)
-        XCTAssertFalse(preferences.screenshotEnabled)
+        XCTAssertTrue(preferences.screenshotEnabled)
         XCTAssertFalse(preferences.mouseGesturesEnabled)
         XCTAssertFalse(preferences.clipboardEnabled)
         XCTAssertFalse(preferences.windowSwitcherEnabled)

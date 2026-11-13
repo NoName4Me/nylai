@@ -11,6 +11,7 @@ final class ScreenshotHistoryViewModel {
     private let pinnedImageManager: PinnedImageManager
     private let onAddToCollage: @MainActor (CGImage) -> Void
     private(set) var errorMessage: String?
+    private(set) var recognizingID: UUID?
 
     init(
         store: ScreenshotHistoryStore,
@@ -52,6 +53,16 @@ final class ScreenshotHistoryViewModel {
             } catch {
                 show(error)
             }
+        }
+    }
+
+    func recognizeText(_ record: ScreenshotHistoryRecord, layout: RecognizedTextLayout) {
+        guard recognizingID == nil else { return }
+        recognizingID = record.id
+        Task {
+            defer { recognizingID = nil }
+            do { try await ScreenshotTextRecognition.review(loadImage(for: record), layout: layout) }
+            catch { show(error) }
         }
     }
 
@@ -188,6 +199,8 @@ private struct ScreenshotHistoryView: View {
                                 record: record,
                                 image: model.thumbnail(for: record),
                                 onCopy: { model.copy(record) },
+                                onRecognizeText: { model.recognizeText(record, layout: $0) },
+                                recognizing: model.recognizingID == record.id,
                                 onSave: { model.save(record) },
                                 onPin: { model.pin(record) },
                                 onAddToCollage: { model.addToCollage(record) },
@@ -249,7 +262,11 @@ private struct ScreenshotHistoryView: View {
             Button {
                 confirmsClear = true
             } label: {
-                Label("清空", systemImage: "trash")
+                Label {
+                    Text("清空")
+                } icon: {
+                    Image(nsImage: NylaiIcon.trash.image(pointSize: 13))
+                }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -290,6 +307,8 @@ private struct ScreenshotHistoryCard: View {
     let record: ScreenshotHistoryRecord
     let image: NSImage?
     let onCopy: () -> Void
+    let onRecognizeText: (RecognizedTextLayout) -> Void
+    let recognizing: Bool
     let onSave: () -> Void
     let onPin: () -> Void
     let onAddToCollage: () -> Void
@@ -337,12 +356,25 @@ private struct ScreenshotHistoryCard: View {
 
             HStack(spacing: 4) {
                 actionButton("复制", symbol: "doc.on.doc", action: onCopy)
+                Menu {
+                    ForEach(RecognizedTextLayout.allCases, id: \.self) { layout in
+                        Button(layout.title) { onRecognizeText(layout) }
+                    }
+                } label: {
+                    Image(nsImage: recognizing ? NylaiIcon.undo.image(pointSize: 14) : NylaiIcon.recognize.image(pointSize: 14))
+                        .frame(width: 24, height: 22)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(recognizing)
+                .help("提取文字")
+                .accessibilityLabel("提取文字")
                 actionButton("保存", symbol: "square.and.arrow.down", action: onSave)
                 actionButton("置顶", symbol: "pin", action: onPin)
                 actionButton("加入拼图", symbol: "rectangle.3.group", action: onAddToCollage)
                 Spacer(minLength: 0)
                 Button(action: onDelete) {
-                    Image(systemName: "trash")
+                    Image(nsImage: NylaiIcon.trash.image(pointSize: 14))
                         .frame(width: 24, height: 22)
                 }
                 .buttonStyle(.borderless)

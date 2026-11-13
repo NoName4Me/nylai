@@ -40,8 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsMenuItem: NSMenuItem?
     private var clipboardMenuItem: NSMenuItem?
     private var scrollCaptureController: ScrollCaptureController?
+    private var didStartWindowSwitcherAfterLaunch = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        FinderRightClickTarget.startObserving()
         preferences.appearanceMode.apply()
         installMainMenu()
         NotificationCenter.default.addObserver(
@@ -51,18 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
         statusBarController = StatusBarController(
+            preferences: preferences,
             openSettings: { [weak self] in self?.showSettings() },
-            captureScreenshot: { [weak self] in self?.captureScreenshot() },
-            showScreenshotHistory: { [weak self] in self?.showScreenshotHistory() },
-            showCollage: { [weak self] in self?.openCollageWindow() },
-            showClipboardHistory: { [weak self] in self?.showClipboardHistory() },
-            canUseScreenshot: { [weak self] in
-                guard let self else { return false }
-                return moduleStateController.isEnabled(.screenshot)
-            },
-            canUseClipboard: { [weak self] in
-                self?.moduleStateController.isEnabled(.clipboard) ?? false
-            },
             isInteractionLocked: { [weak self] in
                 self?.isScreenshotInteractionActive ?? false
             }
@@ -74,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if moduleStateController.isEnabled(.clipboard) {
             if let clipboardMonitor = ensureClipboardMonitor() {
                 clipboardMonitor.start()
+                _ = ensureClipboardPanelController()
             } else {
                 moduleStateController.setRuntimeStatus(
                     .failed(clipboardLoadError ?? L10n.shared.string("剪贴板历史不可用。")),
@@ -84,12 +77,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if moduleStateController.isEnabled(.windowSwitcher) {
             ensureWindowSwitcherController().start(requestPermission: false)
         }
-        if preferences.showSettingsOnLaunch || shortcutRuntime.hasStartupIssue {
+        let isDefaultLaunch = (notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? NSNumber)?.boolValue ?? true
+        if isDefaultLaunch && (preferences.showSettingsOnLaunch || shortcutRuntime.hasStartupIssue) {
             showSettings()
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        FinderRightClickTarget.stopObserving()
+        statusBarController?.shutdown()
         shortcutRuntime.stop()
         mouseGestureController?.stop()
         windowSwitcherController?.stop()
@@ -109,6 +105,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard !isScreenshotInteractionActive else { return }
+        for url in urls {
+            if let request = FinderEnhancementRequest(url: url) {
+                FinderEnhancementAction.perform(request)
+            }
+        }
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showSettings()
         return true
@@ -126,10 +131,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        guard moduleStateController.isEnabled(.windowSwitcher),
+        FinderRightClickTarget.startObserving()
+        guard !didStartWindowSwitcherAfterLaunch,
+              moduleStateController.isEnabled(.windowSwitcher),
               windowSwitcherController != nil else {
             return
         }
+        didStartWindowSwitcherAfterLaunch = true
         // Returning from System Settings advances to the next missing TCC
         // permission. Requesting them together can hide the later prompt.
         windowSwitcherController?.start(requestPermission: true)
@@ -142,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         windowSwitcherController?.cancel()
+        statusBarController?.closeMonitor()
         mouseGestureController?.cancelCurrentSession()
         let controller = ensureScreenshotOverlayController()
         screenshotTask = Task { [weak self] in
@@ -285,6 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if enabled {
                 if let clipboardMonitor = ensureClipboardMonitor() {
                     clipboardMonitor.start()
+                    _ = ensureClipboardPanelController()
                 } else {
                     moduleStateController.setRuntimeStatus(
                         .failed(clipboardLoadError ?? L10n.shared.string("剪贴板历史不可用。")),
@@ -302,6 +312,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 windowSwitcherController?.stop()
             }
+        case .systemMonitor:
+            statusBarController?.closeMonitor()
         case .screenshot, .globalShortcuts:
             break
         }

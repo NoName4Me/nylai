@@ -386,7 +386,7 @@ struct ScreenshotToolbarLayout: Equatable, Sendable {
         let gap: CGFloat = 10
         let safeBounds = bounds.insetBy(dx: margin, dy: margin)
         let editingX = clampedCenter(
-            selection.midX,
+            selection.maxX - editingSize.width / 2,
             length: editingSize.width,
             lower: safeBounds.minX,
             upper: safeBounds.maxX
@@ -415,7 +415,7 @@ struct ScreenshotToolbarLayout: Equatable, Sendable {
         let outputFrame = outputCandidates.lazy.map {
             CGRect(
                 x: $0,
-                y: selection.midY - outputSize.height / 2,
+                y: selection.maxY - outputSize.height,
                 width: outputSize.width,
                 height: outputSize.height
             )
@@ -454,7 +454,7 @@ struct ScreenshotToolbarLayout: Equatable, Sendable {
         let candidates = [
             CGRect(
                 x: selection.maxX - gap - outputSize.width,
-                y: selection.midY - outputSize.height / 2,
+                y: selection.maxY - gap - outputSize.height,
                 width: outputSize.width,
                 height: outputSize.height
             ),

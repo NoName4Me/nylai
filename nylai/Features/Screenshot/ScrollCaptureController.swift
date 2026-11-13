@@ -91,10 +91,10 @@ enum ScrollPreviewLayoutSolver {
     ) -> ScrollPreviewLayout {
         let safeScreen = screenFrame.insetBy(dx: margin, dy: margin)
         let areas: [(ScrollPreviewPosition, CGRect)] = [
-            (.right, CGRect(x: selection.maxX + gap, y: safeScreen.minY,
-                            width: max(0, safeScreen.maxX - selection.maxX - gap), height: safeScreen.height)),
             (.left, CGRect(x: safeScreen.minX, y: safeScreen.minY,
                            width: max(0, selection.minX - gap - safeScreen.minX), height: safeScreen.height)),
+            (.right, CGRect(x: selection.maxX + gap, y: safeScreen.minY,
+                            width: max(0, safeScreen.maxX - selection.maxX - gap), height: safeScreen.height)),
             (.below, CGRect(x: safeScreen.minX, y: safeScreen.minY, width: safeScreen.width,
                             height: max(0, selection.minY - gap - safeScreen.minY))),
             (.above, CGRect(x: safeScreen.minX, y: selection.maxY + gap, width: safeScreen.width,
@@ -112,7 +112,7 @@ enum ScrollPreviewLayoutSolver {
             ]
         }
 
-        for avoidTarget in [true, false] {
+        for avoidTarget in [false, true] {
             for (position, area) in areas {
                 let rooms = excluding(reservedRect, from: area).flatMap {
                     excluding(avoidTarget ? avoidedRect : nil, from: $0)
@@ -272,7 +272,6 @@ final class ScrollCaptureController {
             self.displayID = target.displayID
             displayFrame = target.frame
             pixelScale = scale
-            NSApp.activate(ignoringOtherApps: true)
         } catch is CancellationError {
             cancel()
         } catch {
@@ -335,6 +334,7 @@ final class ScrollCaptureController {
                 selectionGlobalRect: request.selectionGlobalRect,
                 screenFrame: request.displayFrame
             )
+            restoreTargetApplication()
             phase = .ready
             statusText = L10n.shared.string("请缓慢滚动画面的内容")
             updateStatus()
@@ -517,8 +517,7 @@ final class ScrollCaptureController {
             }
         )
         completionWindow = window
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         installKeyMonitors()
     }
 
@@ -1149,7 +1148,7 @@ private final class ScrollCaptureHUDView: NSView {
 }
 
 @MainActor
-private final class ScrollCaptureCompletionWindow: NSWindow {
+final class ScrollCaptureCompletionWindow: NSPanel {
     private var outputButtons: [NSButton] = []
     private let onComplete: () -> Void
     private let onCopy: () -> Void
@@ -1161,11 +1160,11 @@ private final class ScrollCaptureCompletionWindow: NSWindow {
 
     static func placement(selection: CGRect, screen: CGRect) -> CGRect {
         let safe = screen.insetBy(dx: 8, dy: 8)
-        let size = CGSize(width: 54, height: 126)
-        let outside = selection.maxX + 8
-        let x = outside + size.width <= safe.maxX ? outside : selection.maxX - size.width - 8
-        return CGRect(x: min(max(x, safe.minX), safe.maxX - size.width),
-                      y: min(max(selection.midY - size.height / 2, safe.minY), safe.maxY - size.height),
+        let size = CGSize(width: 132, height: 36)
+        let outside = selection.minY - 8 - size.height
+        let y = outside >= safe.minY ? outside : selection.minY + 8
+        return CGRect(x: min(max(selection.maxX - size.width, safe.minX), safe.maxX - size.width),
+                      y: min(max(y, safe.minY), safe.maxY - size.height),
                       width: size.width, height: size.height)
     }
 
@@ -1177,7 +1176,7 @@ private final class ScrollCaptureCompletionWindow: NSWindow {
         self.onSave = onSave
         self.onCancel = onCancel
         let rect = Self.placement(selection: selectionGlobalRect, screen: screenFrame)
-        super.init(contentRect: rect, styleMask: [.borderless], backing: .buffered, defer: false)
+        super.init(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         identifier = NSUserInterfaceItemIdentifier("nylai.scroll-capture-completion")
         level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
@@ -1188,21 +1187,24 @@ private final class ScrollCaptureCompletionWindow: NSWindow {
         isOpaque = false
 
         let surface = FloatingToolbarSurfaceView(frame: CGRect(origin: .zero, size: rect.size))
-        let actions: [(String, Selector)] = [
-            (L10n.shared.string("编辑"), #selector(completeAction)),
-            (L10n.shared.string("复制"), #selector(copyAction)),
-            (L10n.shared.string("保存"), #selector(saveAction)),
-            (L10n.shared.string("取消"), #selector(cancelAction)),
+        let actions: [(String, String, Selector)] = [
+            ("编辑", "edit", #selector(completeAction)),
+            ("复制", "doc.on.doc", #selector(copyAction)),
+            ("保存", "square.and.arrow.down", #selector(saveAction)),
+            ("取消", "xmark", #selector(cancelAction)),
         ]
         for (index, entry) in actions.enumerated() {
-            let button = ToolbarIconButton(frame: CGRect(x: 5, y: 96 - index * 29, width: 44, height: 25))
-            button.title = entry.0
-            button.toolTip = entry.0
-            button.font = .systemFont(ofSize: 12, weight: .medium)
+            let button = ToolbarIconButton(frame: CGRect(x: 6 + index * 31, y: 5, width: 27, height: 26))
+            button.image = entry.1 == "edit"
+                ? NylaiIcon.edit.image(pointSize: 15)
+                : NSImage(systemSymbolName: entry.1, accessibilityDescription: L10n.shared.string(entry.0))
+            button.imagePosition = .imageOnly
+            button.toolTip = L10n.shared.string(entry.0)
+            button.setAccessibilityLabel(L10n.shared.string(entry.0))
             button.isBordered = false
             button.layer?.cornerRadius = 5
             button.target = self
-            button.action = entry.1
+            button.action = entry.2
             surface.addSubview(button)
             if index < 3 { outputButtons.append(button) }
         }

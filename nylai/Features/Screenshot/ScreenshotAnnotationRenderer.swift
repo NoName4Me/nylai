@@ -83,6 +83,7 @@ enum ScreenshotAnnotationRenderer {
                 context.setFillColor(annotation.style.color.cgColor)
                 context.fillPath()
             }
+            guard !renderAnnotation.isTaperedArrow else { continue }
             context.addPath(path)
             context.setStrokeColor(annotation.style.color.cgColor)
             context.setLineWidth(CGFloat(annotation.style.lineWidth))
@@ -108,31 +109,14 @@ enum ScreenshotAnnotationRenderer {
         in rect: CGRect,
         context: CGContext
     ) {
-        guard !annotation.text.isEmpty, rect.width > 0, rect.height > 0 else { return }
-        let filled = annotation.style.fillsTextBackground == true
-        if filled {
-            context.setFillColor(annotation.style.color.cgColor)
-            context.addPath(CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil))
-            context.fillPath()
-        }
-        let fontSize = max(CGFloat(annotation.style.lineWidth), 8)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
-            .foregroundColor: annotation.style.textColor,
-        ]
-        let string = NSAttributedString(string: annotation.text, attributes: attributes)
-        let framesetter = CTFramesetterCreateWithAttributedString(string)
-        let path = CGPath(
-            rect: rect.insetBy(dx: filled ? 4 : 1, dy: filled ? 3 : 1),
-            transform: nil
-        )
-        let frame = CTFramesetterCreateFrame(
-            framesetter,
-            CFRange(location: 0, length: 0),
-            path,
-            nil
-        )
-        CTFrameDraw(frame, context)
+        context.saveGState()
+        context.translateBy(x: rect.minX, y: rect.maxY)
+        context.scaleBy(x: 1, y: -1)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        ScreenshotTextLayout.draw(annotation, in: CGRect(origin: .zero, size: rect.size))
+        NSGraphicsContext.restoreGraphicsState()
+        context.restoreGState()
     }
 
     private static func drawStep(
@@ -143,7 +127,7 @@ enum ScreenshotAnnotationRenderer {
         guard let stepNumber = annotation.stepNumber else { return }
         context.setFillColor(annotation.style.color.cgColor)
         context.fillEllipse(in: rect)
-        let fontSize = max(9, min(rect.height * 0.56, 20))
+        let fontSize = rect.height * 0.56
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: fontSize, weight: .bold),
             .foregroundColor: NSColor.white,
@@ -164,5 +148,44 @@ enum ScreenshotAnnotationRenderer {
             y: rect.midY - (ascent - descent) / 2
         )
         CTLineDraw(line, context)
+    }
+}
+
+enum ScreenshotTextLayout {
+    private static let options: NSString.DrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
+
+    private static func attributes(_ style: ScreenshotAnnotationStyle, scale: CGFloat)
+        -> [NSAttributedString.Key: Any] {
+        [
+            .font: NSFont.systemFont(ofSize: CGFloat(style.lineWidth) * scale, weight: .semibold),
+            .foregroundColor: style.textColor,
+        ]
+    }
+
+    static func size(_ text: String, style: ScreenshotAnnotationStyle, width: CGFloat, scale: CGFloat) -> CGSize {
+        let measured = (text.isEmpty ? "国" : text).boundingRect(
+            with: CGSize(width: max(1, width - 8 * scale), height: .greatestFiniteMagnitude),
+            options: options,
+            attributes: attributes(style, scale: scale)
+        )
+        return CGSize(width: ceil(measured.width + 8 * scale), height: ceil(measured.height + 6 * scale))
+    }
+
+    static func draw(_ annotation: ScreenshotAnnotation, in rect: CGRect, scale: CGFloat = 1) {
+        guard !annotation.text.isEmpty, rect.width > 8 * scale else { return }
+        let measured = size(annotation.text, style: annotation.style, width: rect.width, scale: scale)
+        if annotation.style.fillsTextBackground == true {
+            annotation.style.color.nsColor.setFill()
+            NSBezierPath(
+                roundedRect: CGRect(origin: rect.origin, size: CGSize(
+                    width: min(rect.width, measured.width), height: min(rect.height, measured.height)
+                )),
+                xRadius: 4 * scale, yRadius: 4 * scale
+            ).fill()
+        }
+        annotation.text.draw(
+            with: rect.insetBy(dx: 4 * scale, dy: 3 * scale),
+            options: options, attributes: attributes(annotation.style, scale: scale)
+        )
     }
 }

@@ -347,6 +347,10 @@ final class ScreenshotSession {
         }
         mutateContent {
             annotations[index].style = style.validated(for: annotations[index].kind)
+            if annotations[index].kind == .arrow,
+               style.arrowOptions?.pathStyle == .straight {
+                annotations[index].arrowAnchors = nil
+            }
         }
     }
 

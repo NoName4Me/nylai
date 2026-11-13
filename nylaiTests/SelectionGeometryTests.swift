@@ -171,7 +171,9 @@ final class SelectionGeometryTests: XCTestCase {
             outputSize: CGSize(width: 116, height: 250)
         )
         XCTAssertEqual(layout.editingFrame.minY, selection.maxY + 10)
+        XCTAssertEqual(layout.editingFrame.maxX, selection.maxX)
         XCTAssertEqual(layout.outputFrame.minX, selection.maxX + 10)
+        XCTAssertEqual(layout.outputFrame.maxY, selection.maxY)
         XCTAssertFalse(layout.editingFrame.intersects(layout.outputFrame))
 
         let fullScreen = ScreenshotToolbarLayout.layout(

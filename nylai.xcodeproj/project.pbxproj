@@ -6,6 +6,11 @@
 	objectVersion = 71;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		10000000000000000000000D /* nylaiFinderSync.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 100000000000000000000001 /* nylaiFinderSync.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		10000000000000000000000F /* nylai/Features/FinderEnhancements/FinderMenuActionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000000E /* nylai/Features/FinderEnhancements/FinderMenuActionStore.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		00000000000000000000001A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -14,16 +19,40 @@
 			remoteGlobalIDString = 00000000000000000000000A;
 			remoteInfo = nylai;
 		};
+		10000000000000000000000A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 100000000000000000000003;
+			remoteInfo = nylaiFinderSync;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		10000000000000000000000C /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				10000000000000000000000D /* nylaiFinderSync.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		000000000000000000000006 /* nylai.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = nylai.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000007 /* nylaiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = nylaiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		100000000000000000000001 /* nylaiFinderSync.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = nylaiFinderSync.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		10000000000000000000000E /* nylai/Features/FinderEnhancements/FinderMenuActionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = nylai/Features/FinderEnhancements/FinderMenuActionStore.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		000000000000000000000003 /* nylai */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = nylai; sourceTree = "<group>"; };
 		000000000000000000000004 /* nylaiTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = nylaiTests; sourceTree = "<group>"; };
+		100000000000000000000002 /* nylaiFinderSync */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = nylaiFinderSync; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -41,12 +70,21 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		100000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		000000000000000000000002 = {
 			isa = PBXGroup;
 			children = (
+				100000000000000000000002 /* nylaiFinderSync */,
+				10000000000000000000000E /* nylai/Features/FinderEnhancements/FinderMenuActionStore.swift */,
 				000000000000000000000003 /* nylai */,
 				000000000000000000000004 /* nylaiTests */,
 				000000000000000000000005 /* Products */,
@@ -58,6 +96,7 @@
 			children = (
 				000000000000000000000006 /* nylai.app */,
 				000000000000000000000007 /* nylaiTests.xctest */,
+				100000000000000000000001 /* nylaiFinderSync.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -72,10 +111,12 @@
 				000000000000000000000014 /* Sources */,
 				000000000000000000000015 /* Frameworks */,
 				000000000000000000000016 /* Resources */,
+				10000000000000000000000C /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				10000000000000000000000B /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				000000000000000000000003 /* nylai */,
@@ -105,6 +146,26 @@
 			productName = nylaiTests;
 			productReference = 000000000000000000000007 /* nylaiTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		100000000000000000000003 /* nylaiFinderSync */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 100000000000000000000009 /* Build configuration list for PBXNativeTarget "nylaiFinderSync" */;
+			buildPhases = (
+				100000000000000000000004 /* Sources */,
+				100000000000000000000005 /* Frameworks */,
+				100000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				100000000000000000000002 /* nylaiFinderSync */,
+			);
+			name = nylaiFinderSync;
+			productName = nylaiFinderSync;
+			productReference = 100000000000000000000001 /* nylaiFinderSync.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -141,6 +202,7 @@
 			targets = (
 				00000000000000000000000A /* nylai */,
 				00000000000000000000000B /* nylaiTests */,
+				100000000000000000000003 /* nylaiFinderSync */,
 			);
 		};
 /* End PBXProject section */
@@ -154,6 +216,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		000000000000000000000019 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		100000000000000000000006 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -177,6 +246,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		100000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10000000000000000000000F /* nylai/Features/FinderEnhancements/FinderMenuActionStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -184,6 +261,11 @@
 			isa = PBXTargetDependency;
 			target = 00000000000000000000000A /* nylai */;
 			targetProxy = 00000000000000000000001A /* PBXContainerItemProxy */;
+		};
+		10000000000000000000000B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 100000000000000000000003 /* nylaiFinderSync */;
+			targetProxy = 10000000000000000000000A /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -242,6 +324,7 @@
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Configuration/App-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Nylai;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
@@ -267,6 +350,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Configuration/App-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Nylai;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
@@ -317,6 +401,52 @@
 			};
 			name = Release;
 		};
+		100000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Configuration/FinderSync.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Configuration/FinderSync-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Nylai Finder";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.noname4me.nylai.finder;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		100000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Configuration/FinderSync.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Configuration/FinderSync-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Nylai Finder";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.noname4me.nylai.finder;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -343,6 +473,15 @@
 			buildConfigurations = (
 				00000000000000000000002C /* Debug */,
 				00000000000000000000002D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		100000000000000000000009 /* Build configuration list for PBXNativeTarget "nylaiFinderSync" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000007 /* Debug */,
+				100000000000000000000008 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

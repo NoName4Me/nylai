@@ -1,9 +1,50 @@
 import CoreGraphics
+import AppKit
+import SwiftUI
 import XCTest
 @testable import nylai
 
 final class WindowSwitcherTests: XCTestCase {
-    func testApplicationSwitchStartsOnPreviousApplicationAndCycles() throws {
+    @MainActor
+    func testEightPreviewsRender() throws {
+        let model = WindowSwitcherPanelModel()
+        model.applications = [
+            application(id: 1, name: "Finder", windows: (1...8).map {
+                WindowSwitcherWindow(id: UInt32($0), title: "Window \($0)",
+                                     frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+            }),
+            application(id: 2, name: "Mail", windows: []),
+        ]
+        model.selectedWindowID = 1
+        let host = NSHostingView(rootView: WindowSwitcherPanelView(
+            model: model, hoveredApplicationID: 2, hoveredWindowID: 2
+        )
+            .environment(\.colorScheme, .light))
+        host.frame = CGRect(x: 0, y: 0, width: 1280, height: 740)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let attachment = XCTAttachment(image: NSImage(cgImage: try XCTUnwrap(bitmap.cgImage), size: host.bounds.size))
+        attachment.name = "Eight Window Previews"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        window.orderOut(nil)
+    }
+
+    func testUpToEightPreviewsFitWithoutVerticalOverflow() {
+        for count in 1...8 {
+            for height: CGFloat in [280, 480, 720] {
+                let layout = WindowPreviewGridLayout(windowCount: count, availableWidth: 1000, availableHeight: height)
+                let rows = CGFloat((count + layout.columns.count - 1) / layout.columns.count)
+                let cardHeight = (layout.itemWidth - 16) / 1.6 + 40
+                XCTAssertLessThanOrEqual(rows * cardHeight + (rows - 1) * 20 + 48, height + 0.1)
+            }
+        }
+    }
+
+    func testApplicationSwitchStartsOnCurrentApplicationAndCycles() throws {
         let snapshot = WindowSwitcherSnapshot(
             applications: [
                 application(id: 1, name: "Current", windows: [window(id: 11)]),
@@ -18,14 +59,14 @@ final class WindowSwitcherTests: XCTestCase {
             mode: .applications,
             reverse: false
         )
+        XCTAssertEqual(session.selectedApplication.id, 1)
+        XCTAssertEqual(session.confirmationTarget.windowID, 11)
+
+        session.apply(.cycleApplications(1))
         XCTAssertEqual(session.selectedApplication.id, 2)
-        XCTAssertEqual(session.confirmationTarget.windowID, 21)
 
         session.apply(.cycleApplications(1))
         XCTAssertEqual(session.selectedApplication.id, 3)
-
-        session.apply(.cycleApplications(1))
-        XCTAssertEqual(session.selectedApplication.id, 1)
     }
 
     func testWindowSwitchStartsOnPreviousWindowAndCycles() throws {
@@ -73,6 +114,7 @@ final class WindowSwitcherTests: XCTestCase {
             reverse: false
         )
 
+        session.apply(.cycleApplications(1))
         session.apply(.cycleWindows(1))
         XCTAssertEqual(session.selectedWindow?.id, 22)
 

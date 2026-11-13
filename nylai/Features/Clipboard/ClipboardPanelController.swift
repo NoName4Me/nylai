@@ -5,12 +5,25 @@ import SwiftUI
 @MainActor
 @Observable
 final class ClipboardPanelModel {
+    let groups: ClipboardGroupsStore?
+    var selectedGroupID: UUID?
+    var groupDraft: ClipboardGroup?
+    var isPinned = false
+    var isSelecting = false
+    var checkedIDs: Set<UUID> = []
+    var joinWithSpace = false
+    enum Section: String, CaseIterable { case history, snippets }
+    var section = Section.history
+    let snippets: SnippetStore?
+    var snippetDraft: SavedSnippet?
+    var snippetMatches: [SavedSnippet] { snippets?.matches(searchText) ?? [] }
     let store: ClipboardHistoryStore
     let pasteboard: any ClipboardPasteboardAccessing
     let targetApplication: NSRunningApplication?
     var searchText = ""
     var selectedID: UUID?
     var errorMessage: String?
+    var confirmsClearHistory = false
     var onClose: () -> Void = {}
     var onCopied: ((UUID) -> Void)?
     var reveal: CGFloat = 0
@@ -24,7 +37,8 @@ final class ClipboardPanelModel {
     }()
 
     func relativeTime(for date: Date) -> String {
-        timeFormatter.localizedString(for: date, relativeTo: openedAt)
+        if date.timeIntervalSince(openedAt) > -60 { return L10n.shared.string("刚刚") }
+        return timeFormatter.localizedString(for: date, relativeTo: openedAt)
     }
     var onPreview: (ClipboardRecord?) -> Void = { _ in }
     var onError: @MainActor (Error) -> Void = { _ in }
@@ -35,12 +49,16 @@ final class ClipboardPanelModel {
         store: ClipboardHistoryStore,
         pasteboard: any ClipboardPasteboardAccessing,
         targetApplication: NSRunningApplication?,
-        directPaster: any ClipboardDirectPasting = SystemClipboardDirectPaster()
+        directPaster: any ClipboardDirectPasting = SystemClipboardDirectPaster(),
+        snippets: SnippetStore? = nil,
+        groups: ClipboardGroupsStore? = nil
     ) {
         self.store = store
         self.pasteboard = pasteboard
         self.targetApplication = targetApplication
         self.directPaster = directPaster
+        self.snippets = snippets
+        self.groups = groups
     }
 
     var pinnedMatches: [ClipboardRecord] {
@@ -52,14 +70,70 @@ final class ClipboardPanelModel {
     }
 
     var canDirectPaste: Bool {
-        targetApplication?.bundleIdentifier != nil
+        targetApplication?.bundleIdentifier != nil && targetApplication?.isTerminated == false
+            && targetApplication?.bundleIdentifier != Bundle.main.bundleIdentifier
     }
 
     var visibleRecords: [ClipboardRecord] {
-        pinnedMatches + ordinaryMatches
+        let records = groups == nil ? store.allRecords : store.allRecords.sorted { $0.copiedAt > $1.copiedAt }
+        let members = groups?.groups.first { $0.id == selectedGroupID }?.recordIDs
+        return records.filter { (selectedGroupID == nil || members?.contains($0.id) == true) && matches($0) }
+    }
+
+    var checkedRecords: [ClipboardRecord] { visibleRecords.filter { checkedIDs.contains($0.id) && $0.kind == .text } }
+
+    func choose(_ record: ClipboardRecord, modifiers: NSEvent.ModifierFlags = []) {
+        if isSelecting || modifiers.contains(.command) || modifiers.contains(.shift) {
+            isSelecting = true
+            guard record.kind == .text else { return }
+            if modifiers.contains(.shift), let anchor = selectedID,
+               let first = visibleRecords.firstIndex(where: { $0.id == anchor }),
+               let last = visibleRecords.firstIndex(where: { $0.id == record.id }) {
+                checkedIDs.formUnion(visibleRecords[min(first, last)...max(first, last)].filter { $0.kind == .text }.map(\.id))
+            } else if !checkedIDs.insert(record.id).inserted { checkedIDs.remove(record.id) }
+            selectedID = record.id
+        } else { copy(record) }
+    }
+
+    func assign(_ ids: Set<UUID>, to group: ClipboardGroup, included: Bool = true) {
+        do { try groups?.setMembership(ids, groupID: group.id, included: included, history: store) }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    func copyChecked(paste: Bool = false) {
+        let records = checkedRecords
+        guard !records.isEmpty else { return }
+        let bodies = records.compactMap { store.text(for: $0) }
+        guard bodies.count == records.count else { errorMessage = ClipboardStoreError.recordNotFound.localizedDescription; return }
+        let text = bodies.joined(separator: joinWithSpace ? " " : "\n")
+        copyContent(.text(text), id: records[0].id, paste: paste)
+    }
+
+    private func copyContent(_ content: ClipboardContent, id: UUID, paste: Bool) {
+        do {
+            if paste, !canDirectPaste { throw ClipboardDirectPasteError.targetUnavailable }
+            try pasteboard.write(content, sourceBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.noname4me.nylai")
+            errorMessage = nil
+            if paste, let targetApplication, let bundleIdentifier = targetApplication.bundleIdentifier {
+                let count = pasteboard.changeCount
+                if !isPinned { onClose() }
+                Task { [self] in
+                    let result = await directPaster.pasteAfterActivating(target: targetApplication, expectedBundleIdentifier: bundleIdentifier,
+                                                                        expectedChangeCount: count, pasteboard: pasteboard)
+                    if case .failure(let error) = result { onError(error) }
+                }
+            } else if let onCopied { onCopied(id) } else if !isPinned { onClose() }
+        } catch { errorMessage = error.localizedDescription }
     }
 
     func selectNext(_ offset: Int) {
+        if section == .snippets {
+            let ids = snippetMatches.map(\.id)
+            guard !ids.isEmpty else { selectedID = nil; return }
+            let index = selectedID.flatMap { ids.firstIndex(of: $0) }
+            selectedID = ids[min(max((index ?? (offset < 0 ? ids.count : -1)) + offset, 0), ids.count - 1)]
+            return
+        }
         let records = visibleRecords
         guard !records.isEmpty else {
             selectedID = nil
@@ -75,6 +149,11 @@ final class ClipboardPanelModel {
     }
 
     func copySelectedOrFirst() {
+        if isSelecting { copyChecked(); return }
+        if section == .snippets {
+            if let snippet = snippetMatches.first(where: { $0.id == selectedID }) ?? snippetMatches.first { copySnippet(snippet) }
+            return
+        }
         guard let record = visibleRecords.first(where: { $0.id == selectedID })
             ?? visibleRecords.first else {
             return
@@ -110,10 +189,35 @@ final class ClipboardPanelModel {
                 sourceBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.noname4me.nylai"
             )
             errorMessage = nil
-            if let onCopied { onCopied(record.id) } else { onClose() }
+            if let onCopied { onCopied(record.id) } else if !isPinned { onClose() }
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func saveAsSnippet(_ record: ClipboardRecord) {
+        guard record.kind == .text, let text = store.text(for: record) else { return }
+        snippetDraft = SavedSnippet(name: String((text.components(separatedBy: .newlines).first ?? "").prefix(40)), group: "", text: text)
+        onPreview(nil)
+    }
+
+    func copySnippet(_ snippet: SavedSnippet, paste: Bool = false) {
+        do {
+            try pasteboard.write(.text(snippet.text), sourceBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.noname4me.nylai")
+            errorMessage = nil
+            if paste {
+                guard let targetApplication, let bundle = targetApplication.bundleIdentifier else {
+                    throw ClipboardDirectPasteError.targetUnavailable
+                }
+                let changeCount = pasteboard.changeCount
+                onClose()
+                Task { [self] in
+                    let result = await directPaster.pasteAfterActivating(target: targetApplication, expectedBundleIdentifier: bundle,
+                                                                        expectedChangeCount: changeCount, pasteboard: pasteboard)
+                    if case .failure(let error) = result { onError(error) }
+                }
+            } else if let onCopied { onCopied(snippet.id) } else { onClose() }
+        } catch { errorMessage = error.localizedDescription }
     }
 
     func directPaste(_ record: ClipboardRecord) {
@@ -131,7 +235,7 @@ final class ClipboardPanelModel {
                 sourceBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.noname4me.nylai"
             )
             let expectedChangeCount = pasteboard.changeCount
-            onClose()
+            if !isPinned { onClose() }
             Task { [self] in
                 let result = await directPaster.pasteAfterActivating(
                     target: targetApplication,
@@ -165,6 +269,64 @@ final class ClipboardPanelModel {
         }
     }
 
+    func clearHistory() {
+        do {
+            try groups?.clearAllMemberships()
+            try store.clearAll()
+            finishClear()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    var clearActionHelp: String {
+        if let group = groups?.groups.first(where: { $0.id == selectedGroupID }) {
+            return L10n.shared.string("清空分组“%@”", group.name)
+        }
+        return L10n.shared.string("清空全部剪贴板历史")
+    }
+
+    var clearConfirmationTitle: String {
+        if let group = groups?.groups.first(where: { $0.id == selectedGroupID }) {
+            return L10n.shared.string("清空分组“%@”？", group.name)
+        }
+        return L10n.shared.string("清空全部剪贴板历史？")
+    }
+
+    var clearConfirmationActionTitle: String {
+        L10n.shared.string("清空")
+    }
+
+    var clearConfirmationMessage: String {
+        if let group = groups?.groups.first(where: { $0.id == selectedGroupID }) {
+            return L10n.shared.string("“%@”中的记录会从本机删除，不会修改系统剪贴板当前内容。", group.name)
+        }
+        return L10n.shared.string("所有记录都会从本机删除，不会修改系统剪贴板当前内容。")
+    }
+
+    func clearCurrentScope() {
+        guard let groupID = selectedGroupID,
+              let groups,
+              let group = groups.groups.first(where: { $0.id == groupID }) else {
+            clearHistory()
+            return
+        }
+        do {
+            try groups.clearMembers(of: group.id, history: store)
+            finishClear()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func finishClear() {
+        checkedIDs = []
+        selectedID = nil
+        searchText = ""
+        onPreview(nil)
+        errorMessage = nil
+    }
+
     private func matches(_ record: ClipboardRecord) -> Bool {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return true }
@@ -172,271 +334,19 @@ final class ClipboardPanelModel {
             || record.sourceBundleIdentifier?.localizedCaseInsensitiveContains(query) == true {
             return true
         }
+        if groups?.name(for: record.id)?.localizedCaseInsensitiveContains(query) == true { return true }
         guard record.kind == .text else { return false }
         return preview(for: record).localizedCaseInsensitiveContains(query)
     }
 }
 
-struct ClipboardPanelView: View {
-    @Bindable var model: ClipboardPanelModel
-    var panelHeight: CGFloat = 620
-    @FocusState private var searchFocused: Bool
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var hoveredID: UUID?
-    private var theme: SettingsTheme { SettingsTheme(colorScheme: colorScheme) }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            if model.pinnedMatches.isEmpty && model.ordinaryMatches.isEmpty {
-                emptyState
-            } else {
-                List(selection: $model.selectedID) {
-                    if !model.pinnedMatches.isEmpty {
-                        Section("置顶") {
-                            ForEach(model.pinnedMatches) { record in
-                                recordRow(record)
-                                    .tag(record.id)
-                            }
-                        }
-                    }
-                    if !model.ordinaryMatches.isEmpty {
-                        Section("最近") {
-                            ForEach(model.ordinaryMatches) { record in
-                                recordRow(record)
-                                    .tag(record.id)
-                            }
-                        }
-                    }
-                }
-                .listStyle(.inset)
-                .scrollContentBackground(.hidden)
-                .onKeyPress(.return) {
-                    guard let selectedID = model.selectedID,
-                          let record = (model.pinnedMatches + model.ordinaryMatches)
-                            .first(where: { $0.id == selectedID }) else {
-                        return .ignored
-                    }
-                    model.copy(record)
-                    return .handled
-                }
-            }
-            if let errorMessage = model.errorMessage {
-                Divider()
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-            }
-        }
-        .frame(width: 540, height: panelHeight)
-        .coordinateSpace(name: "clipboard.history")
-        .background(theme.page)
-        .mask { Rectangle().scaleEffect(x: max(0.002, model.reveal), y: 1) }
-        .tint(NylaiPalette.accent)
-        .onChange(of: model.selectedID) {
-            guard hoveredID == nil else { return }
-            model.onPreview(model.visibleRecords.first { $0.id == model.selectedID })
-        }
-        .onAppear { searchFocused = true }
-        .onChange(of: model.searchText) {
-            hoveredID = nil
-            model.onPreview(nil)
-            if !model.visibleRecords.contains(where: { $0.id == model.selectedID }) {
-                model.selectedID = model.visibleRecords.first?.id
-            }
-        }
-    }
-
-    private var header: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                HStack(spacing: 10) {
-                    Image(systemName: "doc.on.clipboard")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(NylaiPalette.accent)
-                    Text("剪贴板历史")
-                        .font(.system(size: 15, weight: .semibold))
-                    Spacer()
-                }
-                .overlay { ClipboardPanelDragArea() }
-                Button {
-                    model.onClose()
-                } label: {
-                    Image(systemName: "xmark")
-                }
-                .buttonStyle(.borderless)
-                .keyboardShortcut(.cancelAction)
-                .accessibilityLabel("关闭剪贴板历史")
-            }
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("搜索文本或来源应用", text: $model.searchText)
-                    .textFieldStyle(.plain)
-                    .focused($searchFocused)
-                    .onKeyPress(.downArrow) {
-                        model.selectNext(1)
-                        return .handled
-                    }
-                    .onKeyPress(.upArrow) {
-                        model.selectNext(-1)
-                        return .handled
-                    }
-                    .onKeyPress(.return) {
-                        model.copySelectedOrFirst()
-                        return .handled
-                    }
-                    .onKeyPress(.escape) {
-                        model.onClose()
-                        return .handled
-                    }
-                if !model.searchText.isEmpty {
-                    Button {
-                        model.searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.tertiary)
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 32)
-            .background {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.primary.opacity(0.055))
-            }
-        }
-        .padding(14)
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "doc.on.clipboard")
-                .font(.system(size: 26, weight: .light))
-                .foregroundStyle(.tertiary)
-            Text(
-                model.searchText.isEmpty
-                    ? L10n.shared.string("尚无剪贴板记录")
-                    : L10n.shared.string("没有匹配结果")
-            )
-                .font(.system(size: 12.5))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func recordRow(_ record: ClipboardRecord) -> some View {
-        HStack(spacing: 11) {
-            Button {
-                model.copy(record)
-            } label: {
-                HStack(spacing: 11) {
-                    preview(for: record)
-                        .frame(width: 42, height: 42)
-                        .clipShape(RoundedRectangle(cornerRadius: 7))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(model.preview(for: record))
-                            .font(.system(size: record.kind == .text ? 12.5 : 11.5))
-                            .lineLimit(2)
-                            .truncationMode(.tail)
-                        HStack(spacing: 6) {
-                            Text(
-                                record.sourceName
-                                    ?? record.sourceBundleIdentifier
-                                    ?? L10n.shared.string("来源未知")
-                            )
-                            Text("·")
-                            Text(model.relativeTime(for: record.copiedAt))
-                        }
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 4)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Button {
-                model.togglePinned(record)
-            } label: {
-                Image(systemName: record.isPinned ? "pin.slash" : "pin")
-            }
-            .buttonStyle(.borderless)
-            .help(
-                record.isPinned
-                    ? L10n.shared.string("取消置顶")
-                    : L10n.shared.string("置顶")
-            )
-            Button {
-                model.delete(record)
-            } label: {
-                Image(systemName: "trash")
-            }
-            .buttonStyle(.borderless)
-            .help("删除")
-            if model.canDirectPaste {
-                Button {
-                    model.directPaste(record)
-                } label: {
-                    Image(systemName: "arrow.down.to.line.compact")
-                }
-                .buttonStyle(.borderless)
-                .help("粘贴回原应用")
-            }
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .background {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(hoveredID == record.id ? NylaiPalette.accent.opacity(0.12) : .clear)
-        }
-        .background(ThinScrollIndicatorInstaller())
-        .onGeometryChange(for: CGRect.self) { geometry in
-            geometry.frame(in: .named("clipboard.history"))
-        } action: { frame in
-            model.rowFrames[record.id] = frame
-            if hoveredID == record.id { model.onPreview(record) }
-        }
-        .onHover { hovering in
-            if hovering {
-                hoveredID = record.id
-                model.onPreview(record)
-            } else if hoveredID == record.id {
-                hoveredID = nil
-                model.onPreview(nil)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func preview(for record: ClipboardRecord) -> some View {
-        if record.kind == .image,
-           let thumbnail = model.store.thumbnail(for: record) {
-            Image(nsImage: thumbnail)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 42, height: 42)
-                .clipped()
-        } else {
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(0.055))
-                .overlay {
-                    Image(systemName: record.kind == .text ? "text.alignleft" : "photo")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-        }
-    }
-}
-
 @MainActor
-final class ClipboardPanelController: NSWindowController {
+final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
+    private let groups: ClipboardGroupsStore?
+    nonisolated(unsafe) private var outsideLocalMonitor: Any?
+    nonisolated(unsafe) private var outsideGlobalMonitor: Any?
+    private let snippets: SnippetStore?
+    private let snippetLoadError: String?
     private let store: ClipboardHistoryStore
     private let pasteboard: any ClipboardPasteboardAccessing
     private let directPaster: any ClipboardDirectPasting
@@ -447,7 +357,7 @@ final class ClipboardPanelController: NSWindowController {
     private var copyFeedback: Task<Void, Never>?
     private var transitionTask: Task<Void, Never>?
     private var toastPanel: NSPanel?
-    private var activeModel: ClipboardPanelModel?
+    private(set) var activeModel: ClipboardPanelModel?
 
     init(
         store: ClipboardHistoryStore,
@@ -457,6 +367,18 @@ final class ClipboardPanelController: NSWindowController {
         self.store = store
         self.pasteboard = pasteboard
         self.directPaster = directPaster
+        do {
+            let legacy = try SnippetStore(fileURL: store.directoryURL.appendingPathComponent("snippets.json"))
+            let categories = try ClipboardGroupsStore(fileURL: store.directoryURL.appendingPathComponent("groups.json"))
+            try categories.migrateLegacyItems(history: store, snippets: legacy)
+            snippets = legacy
+            groups = categories
+            snippetLoadError = nil
+        } catch {
+            snippets = nil
+            groups = nil
+            snippetLoadError = error.localizedDescription
+        }
         notificationCenter = NSWorkspace.shared.notificationCenter
         super.init(window: nil)
         activationObserver = notificationCenter.addObserver(
@@ -473,6 +395,7 @@ final class ClipboardPanelController: NSWindowController {
                     return
                 }
                 self?.lastExternalApplication = application
+                self?.dismissIfOutside(nil)
             }
         }
         if let frontmost = NSWorkspace.shared.frontmostApplication,
@@ -487,12 +410,15 @@ final class ClipboardPanelController: NSWindowController {
     }
 
     deinit {
+        if let outsideLocalMonitor { NSEvent.removeMonitor(outsideLocalMonitor) }
+        if let outsideGlobalMonitor { NSEvent.removeMonitor(outsideGlobalMonitor) }
         if let activationObserver {
             notificationCenter.removeObserver(activationObserver)
         }
     }
 
     override func close() {
+        removeOutsideMonitors()
         transitionTask?.cancel()
         transitionTask = nil
         dismissPreview()
@@ -504,7 +430,8 @@ final class ClipboardPanelController: NSWindowController {
     func toggle() {
         if let window, window.isVisible, !window.ignoresMouseEvents,
            let activeModel {
-            activeModel.onClose()
+            if activeModel.isPinned { window.makeKeyAndOrderFront(nil) }
+            else { activeModel.onClose() }
         } else {
             present()
         }
@@ -528,9 +455,12 @@ final class ClipboardPanelController: NSWindowController {
             store: store,
             pasteboard: pasteboard,
             targetApplication: target,
-            directPaster: directPaster
+            directPaster: directPaster,
+            snippets: snippets,
+            groups: groups
         )
         activeModel = model
+        model.errorMessage = snippetLoadError
         let visible = (NSApp.keyWindow?.screen ?? NSScreen.main)?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 900, height: 700)
         let height = min(620, max(220, visible.height - 24))
@@ -541,6 +471,7 @@ final class ClipboardPanelController: NSWindowController {
             defer: false
         )
         panel.title = L10n.shared.string("剪贴板历史")
+        panel.delegate = self
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .none
@@ -572,7 +503,7 @@ final class ClipboardPanelController: NSWindowController {
             guard let self, let panel, let model else { return }
             let anchor = model.rowFrames[id].map { self.screenRect($0, in: panel) }
                 ?? CGRect(x: panel.frame.midX, y: panel.frame.midY, width: 0, height: 0)
-            self.close()
+            if !model.isPinned { self.close() }
             self.showCopiedToast(at: anchor, visible: panel.screen?.visibleFrame ?? visible)
         }
         model.onError = { error in
@@ -584,6 +515,7 @@ final class ClipboardPanelController: NSWindowController {
         model.reveal = reducesMotion ? 1 : 0
         panel.orderFrontRegardless()
         panel.makeKey()
+        installOutsideMonitors()
         if !reducesMotion {
             transitionTask = Task { @MainActor [weak model] in
                 try? await Task.sleep(for: .milliseconds(16))
@@ -591,6 +523,41 @@ final class ClipboardPanelController: NSWindowController {
                 withAnimation(.easeOut(duration: 0.22)) { model.reveal = 1 }
             }
         }
+    }
+
+    private func removeOutsideMonitors() {
+        if let outsideLocalMonitor { NSEvent.removeMonitor(outsideLocalMonitor) }
+        if let outsideGlobalMonitor { NSEvent.removeMonitor(outsideGlobalMonitor) }
+        outsideLocalMonitor = nil
+        outsideGlobalMonitor = nil
+    }
+
+    private func dismissIfOutside(_ clickedWindow: NSWindow?) {
+        guard let panel = window, panel.isVisible, let model = activeModel, !model.isPinned,
+              model.groupDraft == nil, panel.attachedSheet == nil else { return }
+        var candidate = clickedWindow
+        while let current = candidate {
+            if current === panel { return }
+            candidate = current.parent
+        }
+        if let clickedWindow, clickedWindow.level.rawValue >= NSWindow.Level.popUpMenu.rawValue { return }
+        close()
+    }
+
+    private func installOutsideMonitors() {
+        removeOutsideMonitors()
+        let events: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        outsideGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) { [weak self] _ in
+            Task { @MainActor in self?.dismissIfOutside(nil) }
+        }
+        outsideLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: events) { [weak self] event in
+            MainActor.assumeIsolated { self?.dismissIfOutside(event.window) }
+            return event
+        }
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        dismissIfOutside(NSApp.keyWindow)
     }
 
     private func screenRect(_ row: CGRect, in panel: NSPanel) -> CGRect {
@@ -672,8 +639,14 @@ final class ClipboardPanelController: NSWindowController {
         let useLeft = left >= 275 || left >= right
         let useAbove = above >= below
         guard useSide || max(above, below) >= 105 else { return }
-        let width = useSide ? min(300, useLeft ? left : right) : min(330, frame.width)
-        let height = useSide ? min(290, visible.height - 16) : min(240, max(above, below))
+        let availableWidth = useSide ? (useLeft ? left : right) : min(visible.width - 16, frame.width)
+        let availableHeight = useSide ? visible.height - 16 : max(above, below)
+        let requestedSize = ClipboardPreviewLayout.size(
+            for: store.content(for: record),
+            available: CGSize(width: availableWidth, height: availableHeight)
+        )
+        let width = requestedSize.width
+        let height = requestedSize.height
         let origin = CGPoint(
             x: useSide ? (useLeft ? frame.minX - gap - width : frame.maxX + gap) : min(max(row.midX - width / 2, visible.minX + 8), visible.maxX - width - 8),
             y: useSide ? max(visible.minY + 8, min(row.midY - height / 2, visible.maxY - height - 8))
@@ -702,7 +675,21 @@ final class ClipboardPanelController: NSWindowController {
 
 }
 
-private struct ClipboardPanelDragArea: NSViewRepresentable {
+enum ClipboardPreviewLayout {
+    static func size(for content: ClipboardContent?, available: CGSize) -> CGSize {
+        let maximumWidth = min(420, max(240, available.width))
+        let maximumHeight = min(360, max(180, available.height))
+        guard case .image(let image) = content, image.width > 0, image.height > 0 else {
+            return CGSize(width: maximumWidth, height: min(280, maximumHeight))
+        }
+        let aspect = CGFloat(image.width) / CGFloat(image.height)
+        let width = min(maximumWidth, maximumHeight * aspect, max(1, available.width))
+        let height = width / aspect
+        return CGSize(width: width, height: height)
+    }
+}
+
+struct ClipboardPanelDragArea: NSViewRepresentable {
     func makeNSView(context: Context) -> DragView { DragView() }
     func updateNSView(_ view: DragView, context: Context) {}
 

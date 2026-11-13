@@ -3,23 +3,136 @@ import XCTest
 @testable import nylai
 
 final class ScreenshotAnnotationTests: XCTestCase {
-    func testArrowFormsNormalizeEndpointsAndCurveMirrorsInExport() {
-        let invalid = ScreenshotArrowOptions(form: .body, start: .dot, tip: .open, tapered: true, filled: false)
-        XCTAssertEqual(invalid.normalized().start, .none)
-        XCTAssertEqual(invalid.normalized().tip, .triangle)
-        XCTAssertTrue(invalid.normalized().filled)
-
+    func testArrowSupportsUniformAndTaperedWidthsWithOptionalCurve() {
         var style = ScreenshotAnnotationStyle.default
-        style.arrowOptions = ScreenshotArrowOptions(form: .body, start: .fork, tip: .dart,
-                                                     curve: .left, filled: false)
+        style.arrowOptions = ScreenshotArrowOptions(
+            widthStyle: .uniform,
+            pathStyle: .curved
+        )
         let annotation = ScreenshotAnnotation(kind: .arrow, start: PixelPoint(x: 0, y: 0),
                                               end: PixelPoint(x: 180, y: 0), style: style)
         let bounds = CGRect(x: 0, y: 0, width: 180, height: 1)
         let screen = ScreenshotAnnotationPath.cgPath(for: annotation, in: bounds).boundingBoxOfPath
         let export = ScreenshotAnnotationPath.cgPath(for: annotation, in: bounds, flipped: false).boundingBoxOfPath
-        XCTAssertLessThan(screen.minY, -15)
-        XCTAssertGreaterThan(export.maxY, 15)
+        XCTAssertGreaterThan(screen.maxY, 15)
+        XCTAssertLessThan(export.minY, -15)
+        XCTAssertEqual(
+            ScreenshotAnnotationPath.arrowHandles(for: annotation, in: bounds).count,
+            4
+        )
         XCTAssertNil(ScreenshotAnnotationPath.fillPath(for: annotation, in: bounds))
+
+        style.arrowOptions = ScreenshotArrowOptions(
+            widthStyle: .tapered,
+            pathStyle: .straight
+        )
+        let tapered = ScreenshotAnnotation(
+            kind: .arrow,
+            start: PixelPoint(x: 0, y: 0),
+            end: PixelPoint(x: 180, y: 0),
+            style: style
+        )
+        XCTAssertNotNil(ScreenshotAnnotationPath.fillPath(for: tapered, in: bounds))
+        XCTAssertEqual(
+            ScreenshotAnnotationPath.arrowHandles(for: tapered, in: bounds).count,
+            2
+        )
+    }
+
+    func testLegacyArrowOptionsMigrateToCompactWidthAndPathControls() throws {
+        let data = Data(#"{"form":"body","tapered":true,"curve":"left"}"#.utf8)
+        let options = try JSONDecoder().decode(ScreenshotArrowOptions.self, from: data)
+
+        XCTAssertEqual(options.widthStyle, .tapered)
+        XCTAssertEqual(options.pathStyle, .curved)
+    }
+
+    func testUniformArrowSupportsDashesAndTaperedArrowUsesOnlyItsFill() throws {
+        let source = try makeSource(width: 220, height: 100)
+        let selection = PixelRect(x: 0, y: 0, width: 220, height: 100)
+        var style = ScreenshotAnnotationStyle(
+            color: ScreenshotAnnotationColor(red: 1, green: 0, blue: 0, alpha: 1),
+            lineWidth: 5,
+            lineStyle: .solid
+        )
+        style.arrowOptions = ScreenshotArrowOptions(
+            widthStyle: .uniform,
+            pathStyle: .straight
+        )
+        let solid = ScreenshotAnnotation(
+            kind: .arrow,
+            start: PixelPoint(x: 15, y: 50),
+            end: PixelPoint(x: 205, y: 50),
+            style: style
+        )
+        style.lineStyle = .dashed
+        let dashed = ScreenshotAnnotation(
+            kind: .arrow,
+            start: solid.start,
+            end: solid.end,
+            style: style
+        )
+        let solidCount = try renderCount(
+            source: source,
+            selection: selection,
+            annotation: solid
+        )
+        let dashedCount = try renderCount(
+            source: source,
+            selection: selection,
+            annotation: dashed
+        )
+        XCTAssertGreaterThan(solidCount, dashedCount)
+        XCTAssertGreaterThan(dashedCount, 0)
+
+        style.arrowOptions = ScreenshotArrowOptions(
+            widthStyle: .tapered,
+            pathStyle: .straight
+        )
+        style.lineStyle = .solid
+        let taperedSolid = ScreenshotAnnotation(
+            kind: .arrow,
+            start: solid.start,
+            end: solid.end,
+            style: style
+        )
+        style.lineStyle = .dashed
+        let taperedDashed = ScreenshotAnnotation(
+            kind: .arrow,
+            start: solid.start,
+            end: solid.end,
+            style: style
+        )
+        XCTAssertEqual(
+            try renderCount(source: source, selection: selection, annotation: taperedSolid),
+            try renderCount(source: source, selection: selection, annotation: taperedDashed)
+        )
+    }
+
+    @MainActor
+    func testTaperedArrowHidesLineStyleButtons() throws {
+        let toolbar = SelectionToolbarView(frame: CGRect(x: 0, y: 0, width: 330, height: 104))
+        let window = attachToWindow(toolbar)
+        defer { window.orderOut(nil) }
+        toolbar.styleControlsEnabled = true
+        toolbar.styleKind = .arrow
+        var style = ScreenshotAnnotationStyle.default
+        style.arrowOptions = ScreenshotArrowOptions(widthStyle: .uniform)
+        toolbar.style = style
+        let solid = try XCTUnwrap(
+            findButton(titled: L10n.shared.string("实线"), in: toolbar)
+        )
+        let dashed = try XCTUnwrap(
+            findButton(titled: L10n.shared.string("虚线"), in: toolbar)
+        )
+        XCTAssertFalse(solid.isHidden)
+        XCTAssertFalse(dashed.isHidden)
+
+        style.arrowOptions = ScreenshotArrowOptions(widthStyle: .tapered)
+        toolbar.style = style
+
+        XCTAssertTrue(solid.isHidden)
+        XCTAssertTrue(dashed.isHidden)
     }
 
     @MainActor
@@ -30,13 +143,22 @@ final class ScreenshotAnnotationTests: XCTestCase {
         view.sourcePixelSize = try PixelSize(width: 760, height: 540)
         view.setSelection(CGRect(x: 40, y: 40, width: 620, height: 390), notify: false)
         view.setTool(.objectSelection)
-        let arrow = ScreenshotAnnotation(kind: .arrow, start: PixelPoint(x: 120, y: 180),
-                                         end: PixelPoint(x: 360, y: 180))
+        var style = ScreenshotAnnotationStyle.default
+        style.arrowOptions = ScreenshotArrowOptions(pathStyle: .curved)
+        let arrow = ScreenshotAnnotation(
+            kind: .arrow,
+            start: PixelPoint(x: 120, y: 180),
+            end: PixelPoint(x: 360, y: 180),
+            style: style
+        )
         view.setAnnotations([arrow], selectedID: arrow.id)
         var changed: ScreenshotAnnotation?
         view.onArrowGeometryChanged = { changed = $0 }
-        let first = CGPoint(x: 200, y: 180.5)
-        let moved = CGPoint(x: 208, y: 128)
+        let first = ScreenshotAnnotationPath.arrowHandles(
+            for: arrow,
+            in: arrow.rect.cgRect
+        )[1]
+        let moved = CGPoint(x: first.x + 8, y: first.y - 52)
         view.mouseDown(with: try mouseEvent(.leftMouseDown, in: view, at: first))
         view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: view, at: moved))
         view.mouseUp(with: try mouseEvent(.leftMouseUp, in: view, at: moved))
@@ -192,10 +314,10 @@ final class ScreenshotAnnotationTests: XCTestCase {
             start: PixelPoint(x: 80, y: 10),
             end: PixelPoint(x: 10, y: 10)
         )
-        XCTAssertTrue(pathContains(CGPoint(x: 69, y: 5), annotation: right))
-        XCTAssertFalse(pathContains(CGPoint(x: 21, y: 5), annotation: right))
-        XCTAssertTrue(pathContains(CGPoint(x: 21, y: 5), annotation: left))
-        XCTAssertFalse(pathContains(CGPoint(x: 69, y: 5), annotation: left))
+        XCTAssertTrue(pathContains(CGPoint(x: 73, y: 6), annotation: right))
+        XCTAssertFalse(pathContains(CGPoint(x: 17, y: 6), annotation: right))
+        XCTAssertTrue(pathContains(CGPoint(x: 17, y: 6), annotation: left))
+        XCTAssertFalse(pathContains(CGPoint(x: 73, y: 6), annotation: left))
     }
 
     func testRendererCoversAllFourGeometryKindsAndStyleVariants() throws {
@@ -604,7 +726,7 @@ final class ScreenshotAnnotationTests: XCTestCase {
     }
 
     @MainActor
-    func testTextResizeUsesFreeRectAndScalesFontFromDragStart() throws {
+    func testTextResizeChangesWidthAndKeepsFontSize() throws {
         let view = ScreenshotOverlayView(frame: CGRect(x: 0, y: 0, width: 240, height: 180))
         _ = attachToWindow(view)
         view.sourcePixelSize = try PixelSize(width: 240, height: 180)
@@ -625,15 +747,15 @@ final class ScreenshotAnnotationTests: XCTestCase {
         var changedStyle: ScreenshotAnnotationStyle?
         view.onAnnotationChanged = { _, _, style in changedStyle = style }
 
-        view.mouseDown(with: try mouseEvent(.leftMouseDown, in: view, at: CGPoint(x: 140, y: 60)))
-        view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: view, at: CGPoint(x: 140, y: 80)))
-        view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: view, at: CGPoint(x: 140, y: 100)))
-        view.mouseUp(with: try mouseEvent(.leftMouseUp, in: view, at: CGPoint(x: 140, y: 100)))
+        view.mouseDown(with: try mouseEvent(.leftMouseDown, in: view, at: CGPoint(x: 140, y: 40)))
+        view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: view, at: CGPoint(x: 165, y: 80)))
+        view.mouseUp(with: try mouseEvent(.leftMouseUp, in: view, at: CGPoint(x: 165, y: 80)))
 
-        XCTAssertEqual(changedStyle?.lineWidth, 36)
-        XCTAssertEqual(view.annotations.first?.style.lineWidth, 36)
+        XCTAssertNil(changedStyle)
+        XCTAssertEqual(view.annotations.first?.style.lineWidth, 18)
         let textRect = try XCTUnwrap(view.annotations.first?.rect)
-        XCTAssertEqual(Double(textRect.width) / Double(textRect.height), 1.5, accuracy: 0.03)
+        XCTAssertEqual(textRect.width, 145)
+        XCTAssertLessThan(textRect.height, 40)
     }
 
     @MainActor
@@ -758,6 +880,24 @@ final class ScreenshotAnnotationTests: XCTestCase {
     }
 
     @MainActor
+    func testSwitchingDrawingToolsClearsSelectedAnnotation() throws {
+        let view = ScreenshotOverlayView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        view.setSelection(CGRect(x: 40, y: 40, width: 600, height: 300), notify: false)
+        view.setTool(.arrow)
+        let arrow = ScreenshotAnnotation(
+            kind: .arrow, start: PixelPoint(x: 60, y: 60), end: PixelPoint(x: 100, y: 80)
+        )
+        view.setAnnotations([arrow], selectedID: arrow.id)
+        let rectangle = try XCTUnwrap(findButton(titled: L10n.shared.string("矩形"), in: view))
+
+        rectangle.performClick(nil)
+
+        XCTAssertEqual(view.activeTool, .rectangle)
+        XCTAssertNil(view.selectedAnnotationID)
+        XCTAssertEqual(rectangle.state, .on)
+    }
+
+    @MainActor
     func testSelectingAnnotationHighlightsItsToolWithoutChangingDrawingMode() throws {
         let view = ScreenshotOverlayView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
         view.setSelection(CGRect(x: 40, y: 40, width: 600, height: 300), notify: false)
@@ -777,6 +917,44 @@ final class ScreenshotAnnotationTests: XCTestCase {
             XCTAssertTrue(image.isTemplate, icon.rawValue)
             XCTAssertEqual(image.size, NSSize(width: 14, height: 14), icon.rawValue)
         }
+    }
+
+    @MainActor
+    func testRemixToolbarIconsRemainDistinctAtRenderedSize() throws {
+        let toolbar = SelectionToolbarView(frame: CGRect(x: 0, y: 0, width: 330, height: 78))
+        toolbar.styleControlsEnabled = true
+        toolbar.styleKind = .arrow
+        toolbar.style = ScreenshotAnnotationStyle.defaultStyle(for: .arrow)
+        let window = attachToWindow(toolbar)
+        defer { window.orderOut(nil) }
+        toolbar.layoutSubtreeIfNeeded()
+
+        let bitmap = try XCTUnwrap(toolbar.bitmapImageRepForCachingDisplay(in: toolbar.bounds))
+        toolbar.cacheDisplay(in: toolbar.bounds, to: bitmap)
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            .write(to: URL(fileURLWithPath: "/tmp/nylai-remix-toolbar-preview.png"))
+
+        for (first, second) in [
+            (NylaiIcon.solidLine, NylaiIcon.dashedLine),
+            (NylaiIcon.mosaic, NylaiIcon.rectangle),
+            (NylaiIcon.scroll, NylaiIcon.reselect),
+        ] {
+            let firstData = try renderedPNG(first, pointSize: 15)
+            let secondData = try renderedPNG(second, pointSize: 15)
+            XCTAssertNotEqual(firstData, secondData, "\(first.rawValue) / \(second.rawValue)")
+        }
+    }
+
+    private func renderedPNG(_ icon: NylaiIcon, pointSize: CGFloat) throws -> Data {
+        let size = NSSize(width: pointSize, height: pointSize)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        icon.image(pointSize: pointSize).draw(in: CGRect(origin: .zero, size: size))
+        image.unlockFocus()
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            data: image.tiffRepresentation ?? Data()
+        ))
+        return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
     }
 
     func testMagnifierKeepsAspectRatioAndCompactInsets() {

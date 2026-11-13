@@ -6,6 +6,178 @@ import XCTest
 
 @MainActor
 final class ClipboardTests: XCTestCase {
+    @MainActor
+    func testPanelMovesGroupSelectionAndHidesClearBarWhileSelecting() async throws {
+        let fixture = try ClipboardFixture()
+        defer { fixture.remove() }
+        let store = try XCTUnwrap(fixture.store)
+        let groups = try ClipboardGroupsStore(fileURL: fixture.root.appending(path: "groups.json"))
+        try groups.save(ClipboardGroup(name: "工作", color: .green))
+        try groups.save(ClipboardGroup(name: "学习", color: .purple))
+        let model = ClipboardPanelModel(
+            store: store,
+            pasteboard: FakeClipboardPasteboard(),
+            targetApplication: nil,
+            groups: groups
+        )
+        model.reveal = 1
+        let host = NSHostingView(rootView: ClipboardPanelView(model: model)
+            .nylaiLocalized()
+            .environment(\.colorScheme, .light))
+        host.frame = CGRect(x: 0, y: 0, width: 540, height: 620)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.close() }
+        window.orderFront(nil)
+        try await Task.sleep(for: .milliseconds(120))
+        host.layoutSubtreeIfNeeded()
+        let initialBitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: initialBitmap)
+        let initialData = try XCTUnwrap(initialBitmap.representation(using: .png, properties: [:]))
+        XCTAssertGreaterThan(Set(initialData).count, 32)
+        let initialTabs = try pixelData(in: initialBitmap, rect: CGRect(x: 140, y: 0, width: 260, height: 65))
+        let initialFooter = try pixelData(in: initialBitmap, rect: CGRect(x: 380, y: 572, width: 150, height: 48))
+        model.selectedGroupID = groups.groups[1].id
+        try await Task.sleep(for: .milliseconds(320))
+        host.layoutSubtreeIfNeeded()
+        let groupedBitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: groupedBitmap)
+        let groupedTabs = try pixelData(in: groupedBitmap, rect: CGRect(x: 140, y: 0, width: 260, height: 65))
+        XCTAssertNotEqual(initialTabs, groupedTabs)
+        model.isSelecting = true
+        try await Task.sleep(for: .milliseconds(320))
+        host.layoutSubtreeIfNeeded()
+        let selectionBitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: selectionBitmap)
+        let selectionData = try XCTUnwrap(selectionBitmap.representation(using: .png, properties: [:]))
+        XCTAssertNotEqual(initialData, selectionData)
+        XCTAssertGreaterThan(Set(selectionData).count, 32)
+        let selectionFooter = try pixelData(in: selectionBitmap, rect: CGRect(x: 380, y: 572, width: 150, height: 48))
+        XCTAssertNotEqual(initialFooter, selectionFooter)
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            .write(to: URL(fileURLWithPath: "/tmp/nylai-clipboard-tabs-preview.png"))
+    }
+
+    func testClearCurrentGroupDeletesItsRecordsWithoutDeletingTheGroup() throws {
+        let fixture = try ClipboardFixture()
+        defer { fixture.remove() }
+        let store = try XCTUnwrap(fixture.store)
+        let groups = try ClipboardGroupsStore(fileURL: fixture.root.appending(path: "groups.json"))
+        var work = ClipboardGroup(name: "工作", color: .green)
+        var personal = ClipboardGroup(name: "生活", color: .purple)
+        try groups.save(work)
+        try groups.save(personal)
+        work = try XCTUnwrap(groups.groups.first { $0.name == "工作" })
+        personal = try XCTUnwrap(groups.groups.first { $0.name == "生活" })
+        let first = try XCTUnwrap(addText("grouped-a", fixture: fixture, store: store))
+        let second = try XCTUnwrap(addText("grouped-b", fixture: fixture, store: store))
+        let outside = try XCTUnwrap(addText("outside", fixture: fixture, store: store))
+        try groups.setMembership([first.id, second.id], groupID: work.id, included: true, history: store)
+        try groups.setMembership([first.id], groupID: personal.id, included: true, history: store)
+
+        let model = ClipboardPanelModel(
+            store: store,
+            pasteboard: FakeClipboardPasteboard(),
+            targetApplication: nil,
+            groups: groups
+        )
+        model.selectedGroupID = work.id
+        XCTAssertEqual(model.clearActionHelp, "清空分组“工作”")
+        model.clearCurrentScope()
+
+        XCTAssertEqual(Set(store.index.records.map(\.id)), Set([first.id, outside.id]))
+        XCTAssertEqual(groups.groups.first { $0.id == work.id }?.recordIDs, [])
+        XCTAssertEqual(groups.groups.first { $0.id == personal.id }?.recordIDs, [first.id])
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: fixture.directory.appending(path: first.fileName).path
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: fixture.directory.appending(path: second.fileName).path
+        ))
+    }
+
+    func testClearAllAlsoClearsGroupMemberships() throws {
+        let fixture = try ClipboardFixture()
+        defer { fixture.remove() }
+        let store = try XCTUnwrap(fixture.store)
+        let groups = try ClipboardGroupsStore(fileURL: fixture.root.appending(path: "groups.json"))
+        let group = ClipboardGroup(name: "工作", color: .green)
+        try groups.save(group)
+        let record = try XCTUnwrap(addText("grouped", fixture: fixture, store: store))
+        try groups.setMembership([record.id], groupID: group.id, included: true, history: store)
+        let model = ClipboardPanelModel(
+            store: store,
+            pasteboard: FakeClipboardPasteboard(),
+            targetApplication: nil,
+            groups: groups
+        )
+
+        model.clearHistory()
+
+        XCTAssertTrue(store.index.records.isEmpty)
+        XCTAssertEqual(groups.groups.first?.recordIDs, [])
+    }
+
+    @MainActor
+    private func pixelData(in bitmap: NSBitmapImageRep, rect: CGRect) throws -> Data {
+        let image = try XCTUnwrap(bitmap.cgImage)
+        let cropped = try XCTUnwrap(image.cropping(to: rect))
+        let croppedBitmap = NSBitmapImageRep(cgImage: cropped)
+        return try XCTUnwrap(croppedBitmap.representation(using: .png, properties: [:]))
+    }
+
+    func testImagePreviewUsesLargerAspectFitWithinAvailableSpace() throws {
+        let colorSpace = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        let context = try XCTUnwrap(CGContext(
+            data: nil,
+            width: 1600,
+            height: 900,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        let image = try XCTUnwrap(context.makeImage())
+        let landscape = ClipboardPreviewLayout.size(
+            for: .image(image),
+            available: CGSize(width: 390, height: 330)
+        )
+        XCTAssertEqual(landscape.width / landscape.height, 1600.0 / 900.0, accuracy: 0.001)
+        XCTAssertGreaterThan(landscape.width, 240)
+        XCTAssertLessThanOrEqual(landscape.width, 390)
+        XCTAssertLessThanOrEqual(landscape.height, 330)
+        let compact = ClipboardPreviewLayout.size(
+            for: .image(image),
+            available: CGSize(width: 180, height: 220)
+        )
+        XCTAssertLessThanOrEqual(compact.width, 240)
+        XCTAssertLessThanOrEqual(compact.height, 220)
+    }
+
+    func testOutsideWindowFocusDismissesUnlessPanelIsPinned() async throws {
+        let fixture = try ClipboardFixture()
+        defer { fixture.remove() }
+        let controller = ClipboardPanelController(store: fixture.store)
+        let other = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 120, height: 120), styleMask: [.titled], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+        defer { controller.close(); other.close() }
+        controller.present()
+        guard controller.window?.isKeyWindow == true else {
+            throw XCTSkip("需要已解锁、可获取窗口焦点的桌面。")
+        }
+        other.makeKeyAndOrderFront(nil)
+        guard other.isKeyWindow else { throw XCTSkip("当前桌面不允许切换窗口焦点。") }
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertFalse(try XCTUnwrap(controller.window).isVisible)
+        controller.present()
+        try XCTUnwrap(controller.activeModel).isPinned = true
+        other.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertTrue(try XCTUnwrap(controller.window).isVisible)
+    }
     func testHistoryPanelReopensWithItsRecordsAndClosesAgain() async throws {
         let fixture = try ClipboardFixture()
         defer { fixture.remove() }
@@ -18,15 +190,15 @@ final class ClipboardTests: XCTestCase {
         defer { controller.close() }
         controller.present()
         let panel = try XCTUnwrap(controller.window)
-        let host = try XCTUnwrap(panel.contentView as? NSHostingView<ClipboardPanelView>)
-        XCTAssertEqual(host.rootView.model.visibleRecords.map(\.id), [record.id])
-        host.rootView.model.onClose()
+        let model = try XCTUnwrap(controller.activeModel)
+        XCTAssertEqual(model.visibleRecords.map(\.id), [record.id])
+        model.onClose()
         try await Task.sleep(for: .milliseconds(230))
         XCTAssertFalse(panel.isVisible)
         controller.present()
         XCTAssertTrue(controller.window === panel)
-        let reopened = try XCTUnwrap(panel.contentView as? NSHostingView<ClipboardPanelView>)
-        XCTAssertEqual(reopened.rootView.model.visibleRecords.map(\.id), [record.id])
+        let reopened = try XCTUnwrap(controller.activeModel)
+        XCTAssertEqual(reopened.visibleRecords.map(\.id), [record.id])
         try await Task.sleep(for: .milliseconds(260))
         controller.toggle()
         let deadline = ContinuousClock.now + .seconds(1)
@@ -108,13 +280,13 @@ final class ClipboardTests: XCTestCase {
         XCTAssertNotNil(store.text(for: try XCTUnwrap(store.pinnedRecords.first)))
     }
 
-    func testDefaultMaximumEvictsOldestAtTwoHundredAndFirst() throws {
+    func testDefaultMaximumEvictsOldestAtOneThousandAndFirst() throws {
         let fixture = try ClipboardFixture()
         defer { fixture.remove() }
         let store = try XCTUnwrap(fixture.store)
-        XCTAssertEqual(store.settings.maximumItems, 200)
+        XCTAssertEqual(store.settings.maximumItems, 1_000)
 
-        for index in 0...200 {
+        for index in 0...1_000 {
             fixture.now = Date(timeIntervalSince1970: Double(index))
             _ = try store.add(ClipboardCapture(
                 content: .text("item-\(index)"),
@@ -124,9 +296,9 @@ final class ClipboardTests: XCTestCase {
             ))
         }
 
-        XCTAssertEqual(store.ordinaryRecords.count, 200)
+        XCTAssertEqual(store.ordinaryRecords.count, 1_000)
         XCTAssertEqual(store.ordinaryRecords.last?.copiedAt, Date(timeIntervalSince1970: 1))
-        XCTAssertEqual(store.ordinaryRecords.first?.copiedAt, Date(timeIntervalSince1970: 200))
+        XCTAssertEqual(store.ordinaryRecords.first?.copiedAt, Date(timeIntervalSince1970: 1_000))
         XCTAssertFalse(store.index.records.contains {
             $0.contentHash == ClipboardContentIdentifier.text("item-0")
         })
@@ -878,6 +1050,7 @@ final class ClipboardTests: XCTestCase {
         context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
         return try XCTUnwrap(context.makeImage())
     }
+
 }
 
 @MainActor

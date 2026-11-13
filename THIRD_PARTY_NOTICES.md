@@ -1,27 +1,11 @@
 # Third-Party Notices
 
-## Phosphor Icons
+## Remix Icon
 
-Selected toolbar icons are from [Phosphor Icons](https://github.com/phosphor-icons/core), version `v2.0.8`.
+Selected toolbar icons are from [Remix Icon](https://github.com/Remix-Design/RemixIcon).
 
-Copyright © Phosphor Icons
+Copyright (c) 2017–2026 Remix Design
 
-Licensed under the MIT License:
-
-> Permission is hereby granted, free of charge, to any person obtaining a copy
-> of this software and associated documentation files (the "Software"), to deal
-> in the Software without restriction, including without limitation the rights
-> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-> copies of the Software, and to permit persons to whom the Software is
-> furnished to do so, subject to the following conditions:
->
-> The above copyright notice and this permission notice shall be included in all
-> copies or substantial portions of the Software.
->
-> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-> SOFTWARE.
+Licensed under the Remix Icon License v1.0. The icons are used as functional UI
+components inside this application. See the upstream license for the full terms:
+https://github.com/Remix-Design/RemixIcon/blob/master/License

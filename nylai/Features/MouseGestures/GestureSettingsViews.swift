@@ -203,9 +203,7 @@ private enum GestureStroke {
         }
         guard points.count > 1 else { return }
         let extent = points.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
-        let scale = min(bounds.width / max(extent.width, 1),
-                        bounds.height / max(extent.height, 1),
-                        bounds.height * 0.65)
+        let scale = min(bounds.width, bounds.height) * 0.72 / max(max(extent.width, extent.height), 1)
         let fitted = points.map {
             CGPoint(x: bounds.midX + ($0.x - extent.midX) * scale,
                     y: bounds.midY + ($0.y - extent.midY) * scale)

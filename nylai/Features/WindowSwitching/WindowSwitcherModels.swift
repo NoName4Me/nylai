@@ -12,6 +12,11 @@ struct WindowSwitcherApplication: Identifiable, Equatable, Sendable {
     let bundleIdentifier: String?
     let name: String
     let windows: [WindowSwitcherWindow]
+    var applicationURL: URL? = nil
+    var pinnedOrder: Int? = nil
+
+    var isPinned: Bool { pinnedOrder != nil }
+    var isRunning: Bool { id > 0 }
 }
 
 struct WindowSwitcherSnapshot: Equatable, Sendable {
@@ -26,12 +31,15 @@ struct WindowSwitcherTarget: Equatable, Sendable {
     let windowID: CGWindowID?
     let windowTitle: String?
     let windowFrame: CGRect?
+    var applicationURL: URL? = nil
+    var launchIfNeeded = false
 }
 
 struct WindowSwitcherRunningApplication: Equatable, Sendable {
     let processIdentifier: pid_t
     let bundleIdentifier: String?
     let name: String
+    var applicationURL: URL? = nil
 }
 
 enum WindowSwitcherMode: Equatable, Sendable {
@@ -79,11 +87,7 @@ struct WindowSwitcherSession: Equatable, Sendable {
 
         switch mode {
         case .applications:
-            selectedApplicationIndex = moved(
-                from: currentIndex,
-                offset: reverse ? -1 : 1,
-                count: snapshot.applications.count
-            )
+            selectedApplicationIndex = currentIndex
         case .windows:
             selectedApplicationIndex = currentIndex
             let windows = snapshot.applications[currentIndex].windows
@@ -116,7 +120,9 @@ struct WindowSwitcherSession: Equatable, Sendable {
             applicationName: application.name,
             windowID: window?.id,
             windowTitle: window?.title,
-            windowFrame: window?.frame
+            windowFrame: window?.frame,
+            applicationURL: application.applicationURL,
+            launchIfNeeded: application.isPinned
         )
     }
 
@@ -368,7 +374,8 @@ enum WindowSwitcherSnapshotBuilder {
                 id: processIdentifier,
                 bundleIdentifier: running.bundleIdentifier,
                 name: running.name,
-                windows: windows
+                windows: windows,
+                applicationURL: running.applicationURL
             )
         }
         return WindowSwitcherSnapshot(

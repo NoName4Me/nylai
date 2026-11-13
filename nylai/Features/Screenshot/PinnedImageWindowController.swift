@@ -1,6 +1,57 @@
 import AppKit
 
 enum PinnedImageLayout {
+    static func visibleContentBounds(of image: CGImage) -> CGRect {
+        let fullImage = CGRect(x: 0, y: 0, width: 1, height: 1)
+        let scale = min(1, 1024 / CGFloat(max(image.width, image.height)))
+        let width = max(1, Int((CGFloat(image.width) * scale).rounded()))
+        let height = max(1, Int((CGFloat(image.height) * scale).rounded()))
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height,
+                                          bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                return false
+            }
+            context.interpolationQuality = .none
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else { return fullImage }
+        var maximumAlpha: UInt8 = 0
+        for offset in stride(from: 3, to: pixels.count, by: 4) { maximumAlpha = max(maximumAlpha, pixels[offset]) }
+        guard maximumAlpha > 0 else { return fullImage }
+        let threshold = max(1, Int(Double(maximumAlpha) * 0.9))
+        var minX = width
+        var minY = height
+        var maxX = -1
+        var maxY = -1
+        for y in 0..<height {
+            for x in 0..<width where Int(pixels[(y * width + x) * 4 + 3]) >= threshold {
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return fullImage }
+        return CGRect(x: CGFloat(minX) / CGFloat(width), y: CGFloat(minY) / CGFloat(height),
+                      width: CGFloat(maxX - minX + 1) / CGFloat(width), height: CGFloat(maxY - minY + 1) / CGFloat(height))
+    }
+    static func zoomedFrame(_ frame: CGRect, factor: CGFloat, anchor: CGPoint, imageSize: CGSize, visibleFrame: CGRect) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0, factor.isFinite, factor > 0 else { return frame }
+        guard visibleFrame.width > 0, visibleFrame.height > 0 else { return frame }
+        let maximum = min(4, min(visibleFrame.width / imageSize.width, visibleFrame.height / imageSize.height))
+        let minimum = min(maximum * 0.25, max(0.1, max(80 / imageSize.width, 80 / imageSize.height)))
+        let scale = min(max(frame.width / imageSize.width * factor, minimum), maximum)
+        let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        let relativeX = (anchor.x - frame.minX) / max(frame.width, 1)
+        let relativeY = (anchor.y - frame.minY) / max(frame.height, 1)
+        return CGRect(x: min(max(anchor.x - size.width * relativeX, visibleFrame.minX), visibleFrame.maxX - size.width),
+                      y: min(max(anchor.y - size.height * relativeY, visibleFrame.minY), visibleFrame.maxY - size.height),
+                      width: size.width, height: size.height)
+    }
     static func initialSize(
         imageSize: CGSize,
         visibleFrame: CGRect,
@@ -12,17 +63,40 @@ enum PinnedImageLayout {
         let maximumWidth = visibleFrame.width * maximumFraction
         let maximumHeight = visibleFrame.height * maximumFraction
         let scale = min(
-            1,
+            max(1, max(220 / imageSize.width, 120 / imageSize.height)),
             min(maximumWidth / imageSize.width, maximumHeight / imageSize.height)
         )
         return CGSize(
-            width: max(220, imageSize.width * scale),
-            height: max(120, imageSize.height * scale)
+            width: imageSize.width * scale,
+            height: imageSize.height * scale
         )
     }
 
     static func proportionalHeight(forWidth width: CGFloat, aspectRatio: CGFloat) -> CGFloat {
         max(80, width / max(aspectRatio, 0.01))
+    }
+
+    static func controlsFrame(
+        imageFrame: CGRect,
+        controlsSize: CGSize,
+        visibleFrame: CGRect
+    ) -> CGRect {
+        let gap: CGFloat = 6
+        let margin: CGFloat = 8
+        let above = imageFrame.maxY + gap
+        let below = imageFrame.minY - gap - controlsSize.height
+        let preferredY = above + controlsSize.height <= visibleFrame.maxY - margin
+            ? above
+            : below
+        let y = min(
+            max(preferredY, visibleFrame.minY + margin),
+            visibleFrame.maxY - controlsSize.height - margin
+        )
+        let x = min(
+            max(imageFrame.minX, visibleFrame.minX + margin),
+            visibleFrame.maxX - controlsSize.width - margin
+        )
+        return CGRect(origin: CGPoint(x: x, y: y), size: controlsSize)
     }
 }
 
@@ -42,12 +116,13 @@ final class PinnedImageManager {
 
     var windowCount: Int { controllers.count }
 
-    func pin(_ image: CGImage) {
+    func pin(_ image: CGImage, restoreApplication: NSRunningApplication? = nil) {
         let id = UUID()
         let controller = PinnedImageWindowController(
             image: image,
             saver: saver,
             presentError: presentError,
+            restoreApplication: restoreApplication,
             onClose: { [weak self] in
                 self?.controllers.removeValue(forKey: id)
             }
@@ -71,17 +146,20 @@ final class PinnedImageWindowController: NSWindowController {
     private let saver: any ScreenshotSaving
     private let presentError: @MainActor (Error) -> Void
     private let content: PinnedImageContentView
+    private let restoreApplication: NSRunningApplication?
     private let onClose: () -> Void
 
     init(
         image: CGImage,
         saver: any ScreenshotSaving,
         presentError: @escaping @MainActor (Error) -> Void,
+        restoreApplication: NSRunningApplication? = nil,
         onClose: @escaping () -> Void
     ) {
         self.image = image
         self.saver = saver
         self.presentError = presentError
+        self.restoreApplication = restoreApplication
         self.onClose = onClose
         let screen = NSScreen.main ?? NSScreen.screens.first
         let visibleFrame = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
@@ -108,13 +186,16 @@ final class PinnedImageWindowController: NSWindowController {
         window.hasShadow = false
         window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        window.minSize = CGSize(width: 220, height: 100)
+        // Narrow long screenshots must remain proportional and fit the display.
+        window.minSize = CGSize(width: 1, height: 1)
         window.contentView = content
         super.init(window: window)
         window.delegate = content
         content.onClose = { [weak self] in self?.requestClose() }
         content.onCopy = { [weak self] in self?.copy() }
         content.onSave = { [weak self] in self?.save() }
+        content.attachControls()
+        window.makeFirstResponder(content)
     }
 
     @available(*, unavailable)
@@ -142,6 +223,7 @@ final class PinnedImageWindowController: NSWindowController {
     private func requestClose() {
         close()
         onClose()
+        restoreApplication?.activate(options: [.activateAllWindows])
     }
 
     private func save() {
@@ -172,11 +254,12 @@ private final class PinnedImageContentView: NSView, NSWindowDelegate {
     private let chrome = NSVisualEffectView()
     private let opacitySlider = NSSlider(value: 1, minValue: 0.1, maxValue: 1, target: nil, action: nil)
     private let opacityLabel = NSTextField(labelWithString: "100%")
-    private let resizeHandle = PinnedResizeHandleView(frame: .zero)
+    private let zoomLabel = NSTextField(labelWithString: "")
+    private let originalSize: CGSize
+    private let imageContentBounds: CGRect
+    private var floatingControls: PinnedControlsPanel?
     private var dragStartMouse: CGPoint?
     private var dragStartOrigin: CGPoint?
-    private var resizeStartFrame: CGRect?
-    private var resizeStartMouse: CGPoint?
 
     var imageOpacity: CGFloat {
         get { imageView.alphaValue }
@@ -196,6 +279,8 @@ private final class PinnedImageContentView: NSView, NSWindowDelegate {
     override var acceptsFirstResponder: Bool { true }
 
     init(image: CGImage, frame: NSRect) {
+        originalSize = CGSize(width: image.width, height: image.height)
+        imageContentBounds = PinnedImageLayout.visibleContentBounds(of: image)
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -237,13 +322,29 @@ private final class PinnedImageContentView: NSView, NSWindowDelegate {
         opacitySlider.target = self
         opacitySlider.action = #selector(opacityChanged)
         opacitySlider.controlSize = .mini
-        opacitySlider.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        opacitySlider.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        opacitySlider.toolTip = L10n.shared.string("透明度")
         opacityLabel.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .medium)
         opacityLabel.alignment = .right
         opacityLabel.widthAnchor.constraint(equalToConstant: 30).isActive = true
 
+        let opacityIcon = NSImageView(image: NSImage(systemSymbolName: "circle.lefthalf.filled", accessibilityDescription: L10n.shared.string("透明度")) ?? NSImage())
+        let zoomIcon = NSImageView(image: NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: L10n.shared.string("缩放比例")) ?? NSImage())
+        for icon in [opacityIcon, zoomIcon] {
+            icon.widthAnchor.constraint(equalToConstant: 12).isActive = true
+            icon.heightAnchor.constraint(equalToConstant: 12).isActive = true
+        }
+        zoomLabel.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .medium)
+        zoomLabel.alignment = .right
+        zoomLabel.widthAnchor.constraint(equalToConstant: 37).isActive = true
+        zoomLabel.toolTip = L10n.shared.string("滚轮缩放")
+        zoomLabel.setAccessibilityLabel(L10n.shared.string("缩放比例"))
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        separator.heightAnchor.constraint(equalToConstant: 16).isActive = true
         let stack = NSStackView(views: [
-            closeButton, opacitySlider, opacityLabel, copyButton, saveButton,
+            closeButton, opacityIcon, opacitySlider, opacityLabel, separator, zoomIcon, zoomLabel, copyButton, saveButton,
         ])
         stack.orientation = .horizontal
         stack.alignment = .centerY
@@ -257,19 +358,6 @@ private final class PinnedImageContentView: NSView, NSWindowDelegate {
             stack.bottomAnchor.constraint(equalTo: chrome.bottomAnchor, constant: -5),
         ])
 
-        resizeHandle.onResizeBegan = { [weak self] event in
-            guard let self, let window else { return }
-            resizeStartFrame = window.frame
-            resizeStartMouse = NSEvent.mouseLocation
-        }
-        resizeHandle.onResizeDragged = { [weak self] event in
-            self?.resizeWindow(with: event)
-        }
-        resizeHandle.onResizeEnded = { [weak self] in
-            self?.resizeStartFrame = nil
-            self?.resizeStartMouse = nil
-        }
-        addSubview(resizeHandle)
     }
 
     @available(*, unavailable)
@@ -280,13 +368,8 @@ private final class PinnedImageContentView: NSView, NSWindowDelegate {
     override func layout() {
         super.layout()
         imageView.frame = bounds
-        chrome.frame = CGRect(x: 8, y: 8, width: min(300, bounds.width - 16), height: 34)
-        resizeHandle.frame = CGRect(
-            x: bounds.width - 24,
-            y: bounds.height - 24,
-            width: 20,
-            height: 20
-        )
+        zoomLabel.stringValue = "\(Int((bounds.width / originalSize.width * 100).rounded()))%"
+        layoutControls()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -302,6 +385,7 @@ private final class PinnedImageContentView: NSView, NSWindowDelegate {
             x: dragStartOrigin.x + mouse.x - dragStartMouse.x,
             y: dragStartOrigin.y + mouse.y - dragStartMouse.y
         ))
+        layoutControls()
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -309,30 +393,75 @@ private final class PinnedImageContentView: NSView, NSWindowDelegate {
         dragStartOrigin = nil
     }
 
-    func windowDidResize(_ notification: Notification) {
+    override func cancelOperation(_ sender: Any?) { onClose() }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard let window, event.scrollingDeltaY != 0 else { return }
+        let delta = event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 0.008 : 0.06)
+        let frame = PinnedImageLayout.zoomedFrame(window.frame, factor: exp(min(max(delta, -0.5), 0.5)),
+                                                anchor: window.convertPoint(toScreen: event.locationInWindow),
+                                                imageSize: originalSize,
+                                                visibleFrame: window.screen?.visibleFrame ?? window.frame)
+        window.setFrame(frame, display: true)
         needsLayout = true
+        layoutSubtreeIfNeeded()
     }
 
-    private func resizeWindow(with event: NSEvent) {
-        guard let window,
-              let resizeStartFrame,
-              let resizeStartMouse else { return }
-        let mouse = NSEvent.mouseLocation
-        let width = max(window.minSize.width, resizeStartFrame.width + mouse.x - resizeStartMouse.x)
-        let aspect = resizeStartFrame.width / max(resizeStartFrame.height, 1)
-        let height = PinnedImageLayout.proportionalHeight(
-            forWidth: width,
-            aspectRatio: aspect
+    func windowDidResize(_ notification: Notification) {
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+
+    func windowDidMove(_ notification: Notification) { layoutControls() }
+    func windowDidBecomeKey(_ notification: Notification) { needsLayout = true }
+
+    func windowWillClose(_ notification: Notification) {
+        if let panel = floatingControls { panel.parent?.removeChildWindow(panel) }
+        floatingControls?.orderOut(nil)
+        floatingControls = nil
+    }
+
+    func attachControls() {
+        guard let window else { return }
+        let panel = PinnedControlsPanel(
+            contentRect: CGRect(x: 0, y: 0, width: 310, height: 34),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
         )
-        window.setFrame(
-            CGRect(
-                x: resizeStartFrame.minX,
-                y: resizeStartFrame.maxY - height,
-                width: width,
-                height: height
-            ),
-            display: true
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.level = .floating
+        panel.hasShadow = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        chrome.removeFromSuperview()
+        panel.contentView = chrome
+        window.addChildWindow(panel, ordered: .above)
+        floatingControls = panel
+        layoutControls()
+    }
+
+    private func layoutControls() {
+        guard let window else { return }
+        let visibleImage = CGRect(x: bounds.minX + bounds.width * imageContentBounds.minX,
+                                  y: bounds.minY + bounds.height * imageContentBounds.minY,
+                                  width: bounds.width * imageContentBounds.width,
+                                  height: bounds.height * imageContentBounds.height)
+        let imageFrame = window.convertToScreen(convert(visibleImage, to: nil))
+        let controlsSize = CGSize(width: 310, height: 34)
+        let visibleFrame = window.screen?.visibleFrame
+            ?? window.frame.insetBy(dx: -controlsSize.width, dy: -controlsSize.height)
+        let frame = PinnedImageLayout.controlsFrame(
+            imageFrame: imageFrame,
+            controlsSize: controlsSize,
+            visibleFrame: visibleFrame
         )
+        floatingControls?.setFrame(frame, display: true)
+        if window.isVisible {
+            floatingControls?.orderFrontRegardless()
+        }
     }
 
     private func makeIconButton(
@@ -369,45 +498,21 @@ private final class PinnedImageContentView: NSView, NSWindowDelegate {
     }
 }
 
+@MainActor
+private final class PinnedControlsPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    override func makeKey() {}
+    override func makeKeyAndOrderFront(_ sender: Any?) {
+        orderFrontRegardless()
+    }
+}
 // The image is a passive surface; mouse events must reach the window content
 // view so the whole image remains draggable.
 @MainActor
 private final class PinnedImageView: NSImageView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
-    }
-}
-
-@MainActor
-private final class PinnedResizeHandleView: NSView {
-    var onResizeBegan: ((NSEvent) -> Void)?
-    var onResizeDragged: ((NSEvent) -> Void)?
-    var onResizeEnded: (() -> Void)?
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.withAlphaComponent(0.9).setStroke()
-        let path = NSBezierPath()
-        path.lineWidth = 1.5
-        for inset in [5.0, 9.0, 13.0] {
-            path.move(to: CGPoint(x: bounds.maxX - inset, y: bounds.minY + 3))
-            path.line(to: CGPoint(x: bounds.maxX - 3, y: bounds.minY + inset))
-        }
-        path.stroke()
-    }
-
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .crosshair)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        onResizeBegan?(event)
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        onResizeDragged?(event)
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        onResizeEnded?()
     }
 }

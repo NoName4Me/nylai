@@ -182,7 +182,7 @@ final class ShortcutRecorderView: NSView {
         let start = bounds.midX - (CGFloat(labels.count) * (width + gap) - gap) / 2
         var attributes: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.labelColor]
         for (index, label) in labels.enumerated() {
-            let modifier = index < labels.count - 1
+            let modifier = index < labels.count - 1 || ShortcutDisplayFormatter.isSymbolKey(label)
             attributes[.font] = modifier ? NSFont.systemFont(ofSize: 14.5, weight: .medium)
                 : NSFont(name: "Menlo", size: 11)
             let rect = CGRect(x: start + CGFloat(index) * (width + gap), y: bounds.midY - height / 2,
@@ -397,8 +397,8 @@ struct ShortcutKeycaps: View {
             let keys = ShortcutDisplayFormatter.keycaps(for: shortcut)
             ForEach(Array(keys.enumerated()), id: \.offset) { index, key in
                 Text(key)
-                    .font(.system(size: index < keys.count - 1 ? 14.5 : 11, weight: .medium,
-                                  design: index < keys.count - 1 ? .default : .monospaced))
+                    .font(.system(size: index < keys.count - 1 || ShortcutDisplayFormatter.isSymbolKey(key) ? 14.5 : 11, weight: .medium,
+                                  design: index < keys.count - 1 || ShortcutDisplayFormatter.isSymbolKey(key) ? .default : .monospaced))
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
                     .frame(width: 24, height: 21)
@@ -411,6 +411,10 @@ struct ShortcutKeycaps: View {
 }
 
 enum ShortcutDisplayFormatter {
+    static func isSymbolKey(_ key: String) -> Bool {
+        ["←", "→", "↑", "↓", "↩", "⌤", "⇥", "⇤", "⌫", "⌦", "⎋", "↖", "↘"].contains(key)
+    }
+
     static func string(for shortcut: ShortcutKey) -> String {
         keycaps(for: shortcut).joined()
     }

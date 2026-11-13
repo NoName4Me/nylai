@@ -47,6 +47,7 @@ final class ToolbarIconButton: NSButton, NSViewToolTipOwner {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        contentTintColor = .labelColor
         updateSurface()
     }
 
@@ -157,6 +158,7 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         didSet {
             guard !isUpdatingStyleControls else { return }
             updateStyleControls()
+            updateEnabledState()
         }
     }
     var outputAppearance = ScreenshotOutputAppearance.default {
@@ -164,7 +166,7 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
     }
 
     var preferredContentSize: CGSize {
-        CGSize(width: 330, height: styleControlsEnabled ? (styleKind == .arrow ? 128 : 78) : 44)
+        CGSize(width: 330, height: styleControlsEnabled ? (styleKind == .arrow ? 104 : 78) : 44)
     }
 
     private let tools: [ScreenshotEditorTool] = [
@@ -221,7 +223,7 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
             rootView: AnyView(makeArrowOptionsView().nylaiLocalized())
         )
         arrowOptionsHost.widthAnchor.constraint(equalToConstant: 310).isActive = true
-        arrowOptionsHost.heightAnchor.constraint(equalToConstant: 47).isActive = true
+        arrowOptionsHost.heightAnchor.constraint(equalToConstant: 24).isActive = true
         arrowOptionsHost.isHidden = true
         self.arrowOptionsHost = arrowOptionsHost
         let stack = NSStackView(views: [toolRow, styleRow, arrowOptionsHost])
@@ -342,8 +344,11 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         colorButton.isHidden = !supportsColor
         colorButton.isEnabled = stylesEnabled && supportsColor
         widthStepper.isEnabled = stylesEnabled && styleKind != .step
+        widthStepper.isHidden = styleKind == .step
+        widthLabel.isHidden = styleKind == .step
         widthLabel.textColor = widthStepper.isEnabled ? .labelColor : .tertiaryLabelColor
-        let supportsLine = styleKind != .arrow && (styleKind?.supportsLineStyleControl ?? false)
+        let supportsLine = (styleKind?.supportsLineStyleControl ?? false)
+            && (styleKind != .arrow || style.arrowOptions?.widthStyle != .tapered)
         solidButton.isHidden = !supportsLine
         dashedButton.isHidden = !supportsLine
         solidButton.isEnabled = stylesEnabled && supportsLine
@@ -424,18 +429,14 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
     }
 
     private func makeArrowOptionsView() -> ArrowOptionsView {
-        let options = style.arrowOptions ?? (style.arrowStyle == .solid
-            ? ScreenshotArrowOptions(form: .body, tip: .triangle)
-            : ScreenshotArrowOptions())
+        let options = style.arrowOptions ?? .default
         return ArrowOptionsView(
-            options: options.normalized(), lineStyle: style.lineStyle,
+            options: options,
             enabled: !isOutputting && styleControlsEnabled
-        ) { [weak self] options, lineStyle in
+        ) { [weak self] options in
             guard let self, self.styleKind == .arrow else { return }
             var updated = self.style
             updated.arrowOptions = options
-            updated.arrowStyle = nil
-            updated.lineStyle = lineStyle
             self.style = updated
             self.onStyleChanged?(updated)
         }
@@ -565,31 +566,25 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
 
 private struct ArrowOptionsView: View {
     let options: ScreenshotArrowOptions
-    let lineStyle: ScreenshotAnnotationLineStyle
     let enabled: Bool
-    let onChange: (ScreenshotArrowOptions, ScreenshotAnnotationLineStyle) -> Void
+    let onChange: (ScreenshotArrowOptions) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 5) {
-                choices("形状", [.line, .body], \.form, title: { $0.title })
-                Picker("线型", selection: Binding(get: { lineStyle }, set: { onChange(options, $0) })) {
-                    Text("实线").tag(ScreenshotAnnotationLineStyle.solid)
-                    Text("虚线").tag(ScreenshotAnnotationLineStyle.dashed)
-                }
-                .pickerStyle(.segmented)
-                if options.form == .body {
-                    choices("比例", [false, true], \.tapered, title: { $0 ? "渐宽" : "常规" })
-                    if !options.tapered {
-                        choices("填充", [false, true], \.filled, title: { $0 ? "填充" : "描边" })
-                    }
-                }
-            }
-            HStack(spacing: 5) {
-                choices("起点", options.allowedStarts, \.start, title: { $0.title })
-                choices("末端", options.allowedTips, \.tip, title: { $0.title })
-            }
+        HStack(spacing: 8) {
+            choices(
+                "粗细方式",
+                ScreenshotArrowWidthStyle.allCases,
+                \.widthStyle,
+                title: { $0.title }
+            )
+            choices(
+                "路径",
+                ScreenshotArrowPathStyle.allCases,
+                \.pathStyle,
+                title: { $0.title }
+            )
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .labelsHidden()
         .controlSize(.mini)
         .font(.system(size: 10))
@@ -605,18 +600,22 @@ private struct ArrowOptionsView: View {
             set: { value in
                 var updated = options
                 updated[keyPath: keyPath] = value
-                onChange(updated.normalized(), lineStyle)
+                onChange(updated)
             }
         )) {
             ForEach(values, id: \.self) { value in Text(title(value)).tag(value) }
         }
         .pickerStyle(.segmented)
         .help(label)
+        .frame(maxWidth: .infinity)
     }
 }
 
 @MainActor
 final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
+    var onRecognizeText: (RecognizedTextLayout) -> Void = { _ in }
+    private let recognitionMenu = TextRecognitionMenu()
+    private let recognizeButton = ToolbarIconButton()
     var onCancel: () -> Void = {}
     var onUndo: () -> Void = {}
     var onRedo: () -> Void = {}
@@ -672,6 +671,18 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
         configure(scrollButton, icon: .scroll, action: #selector(scrollCaptureClicked))
         configure(reselectButton, icon: .reselect, action: #selector(reselectClicked))
         configure(copyButton, icon: .copy, action: #selector(copyClicked))
+        recognizeButton.image = NylaiIcon.recognize.image(pointSize: 15)
+        recognizeButton.imagePosition = .imageOnly
+        recognizeButton.imageScaling = .scaleProportionallyDown
+        recognizeButton.toolTip = L10n.shared.string("提取文字")
+        recognizeButton.setAccessibilityLabel(L10n.shared.string("提取文字"))
+        recognizeButton.isBordered = false
+        recognizeButton.target = self
+        recognizeButton.action = #selector(recognizeClicked)
+        recognizeButton.widthAnchor.constraint(equalToConstant: 26).isActive = true
+        recognizeButton.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        recognitionMenu.onSelect = { [weak self] in self?.onRecognizeText($0) }
+        recognizeButton.menu = recognitionMenu.makeMenu()
         configure(saveButton, icon: .save, action: #selector(saveClicked))
         configure(pinButton, icon: .pin, action: #selector(pinClicked))
         configure(cancelButton, icon: .close, action: #selector(cancelClicked))
@@ -711,7 +722,7 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
         if !scrollGroup.isEmpty {
             groups.append(scrollGroup)
         }
-        groups.append([copyButton, saveButton, pinButton, cancelButton])
+        groups.append([recognizeButton, copyButton, saveButton, pinButton, cancelButton])
         if showsZoomControls {
             groups.append([zoomOutButton, zoomInButton, fitButton])
         }
@@ -771,7 +782,7 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
     private func updateEnabledState() {
         for button in [
             cropButton, cursorButton, scrollButton, reselectButton,
-            copyButton, saveButton, pinButton, cancelButton,
+            recognizeButton, copyButton, saveButton, pinButton, cancelButton,
             zoomOutButton, zoomInButton, fitButton,
         ] {
             button.isEnabled = !isOutputting
@@ -791,6 +802,9 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
     @objc private func scrollCaptureClicked() { onScrollCapture() }
     @objc private func reselectClicked() { onReselect() }
     @objc private func copyClicked() { onCopy() }
+    @objc private func recognizeClicked() {
+        onRecognizeText(NSApp.currentEvent?.modifierFlags.contains(.option) == true ? .paragraph : .lines)
+    }
     @objc private func saveClicked() { onSave() }
     @objc private func pinClicked() { onPin() }
     @objc private func cancelClicked() { onCancel() }

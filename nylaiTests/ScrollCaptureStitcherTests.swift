@@ -457,7 +457,7 @@ final class ScrollPreviewLayoutSolverTests: XCTestCase {
         XCTAssertTrue(screen.contains(layout.frame))
     }
 
-    func testPrefersRightSideWhenItHasSpace() {
+    func testPrefersLeftSideCenteredWhenBothSidesHaveSpace() {
         let screen = CGRect(x: 0, y: 0, width: 1_400, height: 900)
         let selection = CGRect(x: 420, y: 300, width: 400, height: 320)
 
@@ -466,7 +466,8 @@ final class ScrollPreviewLayoutSolverTests: XCTestCase {
             screenFrame: screen
         )
 
-        XCTAssertEqual(layout.position, .right)
+        XCTAssertEqual(layout.position, .left)
+        XCTAssertEqual(layout.frame.midY, selection.midY)
         XCTAssertFalse(layout.frame.intersects(selection))
         XCTAssertTrue(screen.contains(layout.frame))
     }
@@ -789,7 +790,9 @@ final class ScrollCaptureControllerTests: XCTestCase {
             $0.identifier?.rawValue == "nylai.scroll-capture-completion"
         })
         let buttons = try XCTUnwrap(completion.contentView?.subviews.compactMap { $0 as? NSButton })
-        XCTAssertEqual(buttons.map(\.title), ["编辑", "复制", "保存", "取消"])
+        XCTAssertEqual(buttons.map(\.toolTip), ["编辑", "复制", "保存", "取消"])
+        XCTAssertTrue(buttons.allSatisfy { $0.imagePosition == .imageOnly })
+        XCTAssertTrue(completion.styleMask.contains(.nonactivatingPanel))
         let button = try XCTUnwrap(buttons.first)
         XCTAssertGreaterThan(completion.frame.midX, 240)
         XCTAssertFalse(button.isEnabled)

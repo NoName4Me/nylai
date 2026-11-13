@@ -11,6 +11,8 @@ enum NylaiIcon: String, CaseIterable {
     case text
     case step
     case mosaic
+    case recognize
+    case edit
     case undo
     case redo
     case trash
@@ -39,6 +41,8 @@ enum NylaiIcon: String, CaseIterable {
         case .text: L10n.shared.string("文字")
         case .step: L10n.shared.string("步骤")
         case .mosaic: L10n.shared.string("马赛克")
+        case .recognize: L10n.shared.string("提取文字")
+        case .edit: L10n.shared.string("编辑")
         case .undo: L10n.shared.string("撤销")
         case .redo: L10n.shared.string("重做")
         case .trash: L10n.shared.string("删除标注")
@@ -58,18 +62,7 @@ enum NylaiIcon: String, CaseIterable {
     }
 
     func image(pointSize: CGFloat = 16) -> NSImage {
-        let symbol: String? = switch self {
-        case .reselect: "viewfinder"
-        case .mosaic: "square.grid.3x3.fill"
-        case .scroll: "arrow.down.to.line"
-        case .save: "square.and.arrow.down"
-        default: nil
-        }
-        let systemImage = symbol.flatMap {
-            NSImage(systemSymbolName: $0, accessibilityDescription: accessibilityLabel)?
-                .withSymbolConfiguration(.init(pointSize: pointSize, weight: .regular))
-        }
-        let image = systemImage ?? NSImage(named: assetName)
+        let image = NSImage(named: assetName)
             ?? NSImage(
                 systemSymbolName: "questionmark",
                 accessibilityDescription: accessibilityLabel
@@ -79,7 +72,7 @@ enum NylaiIcon: String, CaseIterable {
         return image
     }
 
-    var assetName: String { "Phosphor-\(rawValue)" }
+    var assetName: String { "Remix-\(rawValue)" }
 }
 
 @MainActor
@@ -94,32 +87,32 @@ enum NylaiTheme {
         for appearance: NSAppearance = NSApp.effectiveAppearance
     ) -> NSColor {
         isDark(appearance)
-            ? NSColor(srgbRed: 0.12, green: 0.14, blue: 0.10, alpha: 0.97)
-            : NSColor(srgbRed: 0.985, green: 0.98, blue: 0.965, alpha: 0.97)
+            ? NylaiPalette.charcoal.withAlphaComponent(0.97)
+            : NylaiPalette.paper.withAlphaComponent(0.97)
     }
 
     static func imageBackground(
         for appearance: NSAppearance = NSApp.effectiveAppearance
     ) -> NSColor {
         isDark(appearance)
-            ? NSColor(srgbRed: 0.08, green: 0.10, blue: 0.07, alpha: 1)
-            : NSColor(srgbRed: 0.97, green: 0.965, blue: 0.95, alpha: 1)
+            ? NSColor(srgbRed: 0.085, green: 0.095, blue: 0.09, alpha: 1)
+            : NSColor(srgbRed: 0.94, green: 0.945, blue: 0.93, alpha: 1)
     }
 
     static func primaryText(
         for appearance: NSAppearance = NSApp.effectiveAppearance
     ) -> NSColor {
         isDark(appearance)
-            ? NylaiPalette.cream.withAlphaComponent(0.94)
-            : NSColor(srgbRed: 0.18, green: 0.21, blue: 0.15, alpha: 1)
+            ? NylaiPalette.paper.withAlphaComponent(0.94)
+            : NylaiPalette.ink
     }
 
     static func secondaryText(
         for appearance: NSAppearance = NSApp.effectiveAppearance
     ) -> NSColor {
         isDark(appearance)
-            ? NylaiPalette.cream.withAlphaComponent(0.64)
-            : NSColor(srgbRed: 0.35, green: 0.38, blue: 0.30, alpha: 1)
+            ? NylaiPalette.paper.withAlphaComponent(0.64)
+            : NSColor(srgbRed: 0.36, green: 0.39, blue: 0.37, alpha: 1)
     }
 
     static func border(

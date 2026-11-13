@@ -207,6 +207,13 @@ final class LongScreenshotEditorModel {
         }
     }
 
+    func recognizeText(_ layout: RecognizedTextLayout) {
+        runOutput { image in
+            try await ScreenshotTextRecognition.review(image, layout: layout)
+            return true
+        }
+    }
+
     func pin(onSuccess: @escaping @MainActor () -> Void = {}) {
         runOutput(onSuccess: onSuccess) { [pinImage] image in
             pinImage(image)
@@ -382,8 +389,8 @@ final class LongScreenshotEditorWindowController: NSWindowController {
     func present() {
         guard let window else { return }
         showWindow(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        window.makeKey()
         window.makeFirstResponder(overlayView)
         DispatchQueue.main.async { [weak self] in
             self?.fitWidth(animated: false)
@@ -417,7 +424,7 @@ final class LongScreenshotEditorWindowController: NSWindowController {
         let frame = CGRect(origin: origin, size: size)
         let window = LongScreenshotEditorWindow(
             contentRect: frame,
-            styleMask: [.borderless],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -425,7 +432,7 @@ final class LongScreenshotEditorWindowController: NSWindowController {
         window.identifier = NSUserInterfaceItemIdentifier("nylai.long-screenshot-editor")
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.level = .normal
+        window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.backgroundColor = NSColor(calibratedWhite: 0.09, alpha: 1)
         window.isOpaque = true
@@ -470,6 +477,7 @@ final class LongScreenshotEditorWindowController: NSWindowController {
     }
 
     private func configureOverlay() {
+        overlayView.usesExternalToolbars = true
         overlayView.showsSelectionChrome = false
         overlayView.showsSelectionTool = false
         overlayView.showsScrollCaptureAction = false
@@ -535,6 +543,7 @@ final class LongScreenshotEditorWindowController: NSWindowController {
             self?.refreshOverlay()
         }
         overlayView.onCopy = { [weak self] in self?.model.copy() }
+        overlayView.onRecognizeText = { [weak self] in self?.model.recognizeText($0) }
         overlayView.onSave = { [weak self] in self?.model.save() }
         overlayView.onPin = { [weak self] in
             self?.model.pin { [weak self] in self?.close() }
@@ -665,9 +674,12 @@ final class LongScreenshotEditorWindowController: NSWindowController {
 }
 
 extension LongScreenshotEditorWindowController: NSWindowDelegate {
+    func windowDidMove(_ notification: Notification) { updateToolbarAnchor() }
+    func windowDidResize(_ notification: Notification) { updateToolbarAnchor() }
     func windowWillClose(_ notification: Notification) {
         overlayView.commitActiveTextEditing()
         model.close()
+        overlayView.closeExternalToolbars()
         onClose?()
         if let boundsObserver {
             NotificationCenter.default.removeObserver(boundsObserver)
@@ -677,7 +689,7 @@ extension LongScreenshotEditorWindowController: NSWindowDelegate {
 }
 
 @MainActor
-private final class LongScreenshotEditorWindow: NSWindow {
+private final class LongScreenshotEditorWindow: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }

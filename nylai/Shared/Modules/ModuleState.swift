@@ -7,6 +7,7 @@ enum NylaiModuleID: String, CaseIterable, Codable, Equatable, Sendable {
     case mouseGestures
     case clipboard
     case windowSwitcher
+    case systemMonitor
 
     var title: String {
         switch self {
@@ -20,6 +21,8 @@ enum NylaiModuleID: String, CaseIterable, Codable, Equatable, Sendable {
             L10n.shared.string("剪贴板")
         case .windowSwitcher:
             L10n.shared.string("窗口切换")
+        case .systemMonitor:
+            L10n.shared.string("系统监控")
         }
     }
 
@@ -35,6 +38,8 @@ enum NylaiModuleID: String, CaseIterable, Codable, Equatable, Sendable {
             L10n.shared.string("记录、搜索并复用复制的文本与图片。")
         case .windowSwitcher:
             L10n.shared.string("按应用分组预览窗口，并用 Command 快速切换。")
+        case .systemMonitor:
+            L10n.shared.string("在菜单栏查看 CPU、内存、网络与存储。")
         }
     }
 }
@@ -87,6 +92,8 @@ final class ModuleStateController {
             preferences.clipboardEnabled
         case .windowSwitcher:
             preferences.windowSwitcherEnabled
+        case .systemMonitor:
+            preferences.systemMonitorEnabled
         }
     }
 
@@ -109,7 +116,7 @@ final class ModuleStateController {
                 }
             }
             return .available
-        case .screenshot, .mouseGestures, .clipboard, .windowSwitcher:
+        case .screenshot, .mouseGestures, .clipboard, .windowSwitcher, .systemMonitor:
             return .available
         }
     }
@@ -131,6 +138,8 @@ final class ModuleStateController {
             preferences.clipboardEnabled = enabled
         case .windowSwitcher:
             preferences.windowSwitcherEnabled = enabled
+        case .systemMonitor:
+            preferences.systemMonitorEnabled = enabled
         }
         reportedStatuses[module] = nil
         onLifecycleChange?(module, enabled)

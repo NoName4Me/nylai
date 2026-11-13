@@ -18,6 +18,9 @@ final class WindowSwitcherPanelModel {
     var loadingWindowIDs: Set<CGWindowID> = []
     @ObservationIgnored var onSelectApplication: (Int) -> Void = { _ in }
     @ObservationIgnored var onSelectWindow: (CGWindowID) -> Void = { _ in }
+    @ObservationIgnored var onTogglePin: (WindowSwitcherApplication) -> Void = { _ in }
+    @ObservationIgnored var onMovePin: (String, Int) -> Void = { _, _ in }
+    @ObservationIgnored var onConfirmApplication: () -> Void = {}
 
     var selectedApplication: WindowSwitcherApplication? {
         guard applications.indices.contains(selectedApplicationIndex) else {
@@ -73,7 +76,7 @@ final class WindowSwitcherPanelController {
         panel.contentView = contentView
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = false
+        panel.hasShadow = true
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
@@ -87,7 +90,8 @@ final class WindowSwitcherPanelController {
         let screen = NSScreen.screens.first(where: {
             $0.frame.contains(NSEvent.mouseLocation)
         }) ?? NSScreen.main
-        guard let frame = screen?.frame else { return }
+        guard let visibleFrame = screen?.visibleFrame else { return }
+        let frame = Self.panelFrame(in: visibleFrame)
         panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()
     }
@@ -95,11 +99,24 @@ final class WindowSwitcherPanelController {
     func close() {
         panel.orderOut(nil)
     }
+
+    static func panelFrame(in visibleFrame: CGRect) -> CGRect {
+        let width = max(1, visibleFrame.width - 48)
+        let height = max(1, visibleFrame.height - 48)
+        return CGRect(
+            x: visibleFrame.midX - width / 2,
+            y: visibleFrame.midY - height / 2,
+            width: max(1, width),
+            height: max(1, height)
+        )
+    }
 }
 
-private struct WindowSwitcherPanelView: View {
+struct WindowSwitcherPanelView: View {
     @Bindable var model: WindowSwitcherPanelModel
     @Environment(\.colorScheme) private var colorScheme
+    @State var hoveredApplicationID: pid_t?
+    @State var hoveredWindowID: CGWindowID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -117,6 +134,7 @@ private struct WindowSwitcherPanelView: View {
                     Color.black.opacity(colorScheme == .dark ? 0.12 : 0.035)
                 )
         }
+        .clipShape(RoundedRectangle(cornerRadius: 20))
     }
 
     private var applicationStrip: some View {
@@ -158,7 +176,10 @@ private struct WindowSwitcherPanelView: View {
         index: Int,
         isSelected: Bool
     ) -> some View {
-        Button {
+        let canManagePin = application.isPinned || !model.applications.contains {
+            $0.isPinned && $0.bundleIdentifier == application.bundleIdentifier
+        }
+        return Button {
             model.selectApplication(at: index)
         } label: {
             VStack(spacing: 8) {
@@ -169,7 +190,8 @@ private struct WindowSwitcherPanelView: View {
                         .background(
                             isSelected
                                 ? Color.primary.opacity(0.14)
-                                : Color.clear,
+                                : hoveredApplicationID == application.id
+                                    ? Color.primary.opacity(0.06) : Color.clear,
                             in: RoundedRectangle(cornerRadius: 18)
                         )
                         .overlay {
@@ -177,8 +199,9 @@ private struct WindowSwitcherPanelView: View {
                                 .strokeBorder(
                                     isSelected
                                         ? NylaiPalette.accent.opacity(0.95)
-                                        : Color.clear,
-                                    lineWidth: 2
+                                        : hoveredApplicationID == application.id
+                                            ? Color.primary.opacity(0.24) : Color.clear,
+                                    lineWidth: isSelected ? 2 : 1
                                 )
                         }
                     if !application.windows.isEmpty {
@@ -202,6 +225,39 @@ private struct WindowSwitcherPanelView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .overlay(alignment: .topTrailing) {
+            if canManagePin, application.bundleIdentifier != nil,
+               application.isPinned || isSelected || hoveredApplicationID == application.id {
+                Button { model.onTogglePin(application) } label: {
+                    Image(systemName: application.isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(application.isPinned ? NylaiPalette.accent : Color.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(.regularMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help(application.isPinned ? L10n.shared.string("取消固定") : L10n.shared.string("固定到前排"))
+                .accessibilityLabel(application.isPinned ? L10n.shared.string("取消固定") : L10n.shared.string("固定到前排"))
+                .offset(x: 0, y: 60)
+            }
+        }
+        .contextMenu {
+            if canManagePin, let identifier = application.bundleIdentifier {
+                Button(application.isPinned ? L10n.shared.string("取消固定") : L10n.shared.string("固定到前排")) {
+                    model.onTogglePin(application)
+                }
+                if let order = application.pinnedOrder {
+                    Divider()
+                    Button("向前移动") { model.onMovePin(identifier, -1) }.disabled(order == 0)
+                    Button("向后移动") { model.onMovePin(identifier, 1) }
+                        .disabled(order >= model.applications.filter(\.isPinned).count - 1)
+                }
+            }
+        }
+        .onHover { hovering in
+            if hovering { hoveredApplicationID = application.id }
+            else if hoveredApplicationID == application.id { hoveredApplicationID = nil }
+        }
     }
 
     @ViewBuilder
@@ -210,10 +266,11 @@ private struct WindowSwitcherPanelView: View {
             GeometryReader { geometry in
                 let layout = WindowPreviewGridLayout(
                     windowCount: application.windows.count,
-                    availableWidth: geometry.size.width
+                    availableWidth: geometry.size.width,
+                    availableHeight: geometry.size.height
                 )
                 ScrollViewReader { proxy in
-                    ScrollView {
+                    ScrollView(showsIndicators: application.windows.count > 8) {
                         LazyVGrid(
                             columns: layout.columns,
                             alignment: .center,
@@ -221,6 +278,7 @@ private struct WindowSwitcherPanelView: View {
                         ) {
                             ForEach(application.windows) { window in
                                 windowItem(window, isSelected: window.id == model.selectedWindowID)
+                                    .frame(width: layout.itemWidth)
                                     .id(window.id)
                             }
                         }
@@ -233,6 +291,7 @@ private struct WindowSwitcherPanelView: View {
                             alignment: .center
                         )
                     }
+                    .scrollDisabled(application.windows.count <= 8)
                     .onChange(of: model.selectedWindowID) {
                         guard let id = model.selectedWindowID else { return }
                         withAnimation(.easeOut(duration: 0.12)) {
@@ -243,11 +302,17 @@ private struct WindowSwitcherPanelView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ContentUnavailableView(
-                "没有可预览的窗口",
-                systemImage: "macwindow",
-                description: Text("松开 Command 只会激活应用。")
-            )
+            ContentUnavailableView {
+                if let application = model.selectedApplication {
+                    applicationIcon(application).frame(width: 64, height: 64)
+                    Text(application.name)
+                }
+            } description: {
+                Text(model.selectedApplication?.isRunning == false
+                     ? L10n.shared.string("尚未运行") : L10n.shared.string("没有可预览的窗口"))
+            } actions: {
+                Button("打开应用") { model.onConfirmApplication() }
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -290,19 +355,24 @@ private struct WindowSwitcherPanelView: View {
             .background(
                 isSelected
                     ? Color.primary.opacity(0.12)
-                    : Color.clear,
+                    : hoveredWindowID == window.id ? Color.primary.opacity(0.05) : Color.clear,
                 in: RoundedRectangle(cornerRadius: 14)
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 14)
                     .strokeBorder(
-                        isSelected ? NylaiPalette.accent : Color.clear,
+                        isSelected ? NylaiPalette.accent
+                            : hoveredWindowID == window.id ? Color.primary.opacity(0.24) : Color.clear,
                         lineWidth: isSelected ? 2.5 : 1
                     )
             }
             .contentShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering { hoveredWindowID = window.id }
+            else if hoveredWindowID == window.id { hoveredWindowID = nil }
+        }
     }
 
     private var footer: some View {
@@ -316,7 +386,7 @@ private struct WindowSwitcherPanelView: View {
             keycap("⌘")
             Text("松开确认")
                 .padding(.trailing, 10)
-            keycap("esc")
+            keycap("Esc")
             Text("取消")
         }
         .font(.system(size: 11.5))
@@ -326,7 +396,7 @@ private struct WindowSwitcherPanelView: View {
 
     private func keycap(_ label: String) -> some View {
         Text(label)
-            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+            .font(.system(size: label == "⌘" || label == "`" ? 15 : 10.5, weight: .semibold, design: .monospaced))
             .foregroundStyle(.primary)
             .padding(.horizontal, 7)
             .frame(minWidth: 24, minHeight: 21)
@@ -343,10 +413,14 @@ private struct WindowSwitcherPanelView: View {
 
     private func applicationIcon(_ application: WindowSwitcherApplication) -> some View {
         Group {
-            if let icon = NSRunningApplication(
+            if application.isRunning, let icon = NSRunningApplication(
                 processIdentifier: application.id
             )?.icon {
                 Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+            } else if let url = application.applicationURL {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
                     .resizable()
                     .interpolation(.high)
             } else {
@@ -359,11 +433,12 @@ private struct WindowSwitcherPanelView: View {
     }
 }
 
-private struct WindowPreviewGridLayout {
+struct WindowPreviewGridLayout {
     let columns: [GridItem]
     let maximumWidth: CGFloat
+    let itemWidth: CGFloat
 
-    init(windowCount: Int, availableWidth: CGFloat) {
+    init(windowCount: Int, availableWidth: CGFloat, availableHeight: CGFloat) {
         let safeWidth = max(360, availableWidth)
         let contentWidth = max(0, safeWidth - 48)
         let responsiveColumnCount = max(
@@ -380,25 +455,26 @@ private struct WindowPreviewGridLayout {
             columnCount = 3
         case 4:
             columnCount = 2
-        case 5...9:
+        case 5...6:
+            columnCount = 3
+        case 7...8:
+            columnCount = 4
+        case 9:
             columnCount = 3
         case 10...12:
             columnCount = 4
         default:
             columnCount = max(4, responsiveColumnCount)
         }
+        let rows = CGFloat(max(1, (windowCount + columnCount - 1) / columnCount))
+        let widthLimit = max(1, (contentWidth - CGFloat(columnCount - 1) * 20) / CGFloat(columnCount))
+        let heightLimit = max(1, (availableHeight - 48 - (rows - 1) * 20) / rows - 40) * 1.6 + 16
+        itemWidth = windowCount <= 8 ? min(widthLimit, heightLimit) : widthLimit
         columns = Array(
-            repeating: GridItem(.flexible(minimum: 0), spacing: 20, alignment: .top),
+            repeating: GridItem(.fixed(itemWidth), spacing: 20, alignment: .top),
             count: columnCount
         )
-        switch windowCount {
-        case 1:
-            maximumWidth = min(safeWidth, 980)
-        case 2, 4:
-            maximumWidth = min(safeWidth, 1360)
-        default:
-            maximumWidth = safeWidth
-        }
+        maximumWidth = safeWidth
     }
 }
 
@@ -408,7 +484,7 @@ private struct WindowSwitcherBackdrop: NSViewRepresentable {
         if #available(macOS 26.0, *) {
             let view = NSGlassEffectView()
             view.style = .clear
-            view.cornerRadius = 0
+            view.cornerRadius = 20
             return view
         }
 #endif
@@ -420,7 +496,7 @@ private struct WindowSwitcherBackdrop: NSViewRepresentable {
         if #available(macOS 26.0, *),
            let glassView = nsView as? NSGlassEffectView {
             glassView.style = .clear
-            glassView.cornerRadius = 0
+            glassView.cornerRadius = 20
             return
         }
 #endif

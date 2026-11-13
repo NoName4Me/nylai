@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import FinderSync
 
 struct SettingsView: View {
     @Bindable var preferences: AppPreferences
@@ -14,6 +15,7 @@ struct SettingsView: View {
     @State private var screenRecordingGranted = false
     @State private var accessibilityGranted = false
     @State private var inputMonitoringGranted = false
+    @State private var finderExtensionEnabled = FIFinderSyncController.isExtensionEnabled
     @State private var showSettingsError = false
     @State private var missingSettingsPage = "屏幕录制"
     @State private var selectedSection = SettingsSection.modules
@@ -138,7 +140,7 @@ struct SettingsView: View {
                 }
             }
         } message: {
-            Text("这会同时删除置顶记录，但不会修改系统剪贴板当前内容。")
+            Text("这会同时删除分组中的内容，但不会修改系统剪贴板当前内容。")
         }
         .sheet(item: $editingGestureRule, onDismiss: {
             mouseGestureController.setRuleEditing(false)
@@ -215,6 +217,9 @@ struct SettingsView: View {
                 if moduleStateController.isEnabled(.clipboard) {
                     sidebarItem(.clipboard)
                 }
+                if moduleStateController.isEnabled(.systemMonitor) {
+                    sidebarItem(.systemMonitor)
+                }
                 sidebarItem(.general)
                 sidebarItem(.permissions)
             }
@@ -271,6 +276,8 @@ struct SettingsView: View {
             gesturesPage
         case .clipboard:
             clipboardPage
+        case .systemMonitor:
+            SystemMonitorSettingsView(preferences: preferences)
         case .general:
             generalPage
         case .permissions:
@@ -363,6 +370,22 @@ struct SettingsView: View {
                 ForEach(Array(NylaiModuleID.allCases.enumerated()), id: \.element) { index, module in
                     moduleRow(module, isLast: index == NylaiModuleID.allCases.count - 1)
                 }
+            }
+            SettingsCard {
+                HStack(spacing: 12) {
+                    ActionIcon(symbol: "folder", isEnabled: finderExtensionEnabled)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("访达增强").font(.system(size: 13, weight: .medium))
+                        Text("新建文件、复制路径、在此打开终端。")
+                            .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(finderExtensionEnabled ? "管理扩展" : "启用扩展") {
+                        FIFinderSyncController.showExtensionManagementInterface()
+                    }
+                    .controlSize(.small)
+                }
+                .padding(14)
             }
         }
     }
@@ -599,14 +622,14 @@ struct SettingsView: View {
                         VStack(spacing: 0) {
                             HStack(spacing: 12) {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text("普通记录上限")
+                                    Text("未分组记录上限")
                                         .font(.system(size: 13, weight: .medium))
-                                    Text("置顶记录不计入上限。完成输入后点应用才会清理。")
+                                    Text("分组内容不计入上限。完成输入后点应用才会清理。")
                                         .font(.system(size: 11.5))
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                TextField("200", text: $clipboardLimitDraft)
+                                TextField("1000", text: $clipboardLimitDraft)
                                     .textFieldStyle(.roundedBorder)
                                     .frame(width: 76)
                                 Text("条")
@@ -625,7 +648,7 @@ struct SettingsView: View {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text("按天自动清理")
                                         .font(.system(size: 13, weight: .medium))
-                                    Text("按最后复制时间计算；置顶记录永不自动删除。")
+                                    Text("按最后复制时间计算；分组内容不自动删除。")
                                         .font(.system(size: 11.5))
                                         .foregroundStyle(.secondary)
                                 }
@@ -700,7 +723,7 @@ struct SettingsView: View {
                             HStack(spacing: 12) {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(L10n.shared.string(
-                                        "%@ 条普通 · %@ 条置顶",
+                                        "%@ 条未分组 · %@ 条已分组",
                                         String(store.ordinaryRecords.count),
                                         String(store.pinnedRecords.count)
                                     ))
@@ -710,7 +733,7 @@ struct SettingsView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Button("清空普通记录") {
+                                Button("清空未分组记录") {
                                     do {
                                         try store.clearOrdinary()
                                     } catch {
@@ -740,8 +763,31 @@ struct SettingsView: View {
     private func gestureRuleRow(_ rule: MouseGestureRule, isLast: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
+                Toggle("", isOn: Binding(
+                    get: { rule.isEnabled },
+                    set: { enabled in
+                        do {
+                            try mouseGestureController.setRuleEnabled(enabled, id: rule.id)
+                        } catch {
+                            gestureErrorMessage = error.localizedDescription
+                        }
+                    }
+                ))
+                .labelsHidden()
+                .compactSettingsSwitch()
+                .help(rule.isEnabled ? "停用规则" : "启用规则")
+                .accessibilityLabel(rule.isEnabled ? "停用规则" : "启用规则")
+                .padding(.trailing, 4)
                 GesturePathThumbnail(path: rule.path)
                     .frame(width: 74, height: 42)
+                    .background(
+                        Color.primary.opacity(0.035),
+                        in: RoundedRectangle(cornerRadius: 7)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7)
+                            .strokeBorder(theme.border, lineWidth: 0.5)
+                    }
                 VStack(alignment: .leading, spacing: 3) {
                     if case .sendShortcut(let shortcut) = rule.action {
                         ShortcutKeycaps(shortcut: shortcut)
@@ -756,33 +802,35 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("编辑") {
-                    mouseGestureController.setRuleEditing(true)
-                    editingGestureRule = rule
-                }
-                .buttonStyle(.borderless)
-                Button {
-                    do {
-                        try mouseGestureController.setRuleEnabled(!rule.isEnabled, id: rule.id)
-                    } catch {
-                        gestureErrorMessage = error.localizedDescription
+                HStack(spacing: 2) {
+                    Button {
+                        mouseGestureController.setRuleEditing(true)
+                        editingGestureRule = rule
+                    } label: {
+                        Image(nsImage: NylaiIcon.edit.image(pointSize: 15))
+                            .frame(width: 26, height: 26)
+                            .contentShape(Rectangle())
                     }
-                } label: {
-                    Image(systemName: rule.isEnabled ? "pause.circle" : "play.circle")
-                }
-                .buttonStyle(.borderless)
-                .help(rule.isEnabled ? "停用规则" : "启用规则")
-                Button {
-                    do {
-                        try mouseGestureController.removeRule(rule.id)
-                    } catch {
-                        gestureErrorMessage = error.localizedDescription
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.primary)
+                    .help("编辑规则")
+                    .accessibilityLabel("编辑规则")
+                    Button {
+                        do {
+                            try mouseGestureController.removeRule(rule.id)
+                        } catch {
+                            gestureErrorMessage = error.localizedDescription
+                        }
+                    } label: {
+                        Image(nsImage: NylaiIcon.trash.image(pointSize: 15))
+                            .frame(width: 26, height: 26)
+                            .contentShape(Rectangle())
                     }
-                } label: {
-                    Image(systemName: "trash")
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.primary)
+                    .help("删除规则")
+                    .accessibilityLabel("删除规则")
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
             }
             .padding(14)
             if !isLast {
@@ -1146,8 +1194,7 @@ struct SettingsView: View {
                         handle(error)
                     }
                 } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 12))
+                    Image(nsImage: NylaiIcon.trash.image(pointSize: 14))
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
@@ -1617,6 +1664,7 @@ struct SettingsView: View {
     }
 
     private func refreshPermission() {
+        finderExtensionEnabled = FIFinderSyncController.isExtensionEnabled
         screenRecordingGranted = ScreenRecordingPermission.isGranted
         accessibilityGranted = AccessibilityPermission.isGranted
         inputMonitoringGranted = InputMonitoringPermission.isGranted
@@ -1658,6 +1706,7 @@ private enum SettingsSection: Hashable {
     case shortcuts
     case gestures
     case clipboard
+    case systemMonitor
 
     var title: String {
         switch self {
@@ -1671,6 +1720,8 @@ private enum SettingsSection: Hashable {
             L10n.shared.string("鼠标手势")
         case .clipboard:
             L10n.shared.string("剪贴板")
+        case .systemMonitor:
+            L10n.shared.string("系统监控")
         case .general:
             L10n.shared.string("通用")
         case .permissions:
@@ -1693,6 +1744,8 @@ private enum SettingsSection: Hashable {
             L10n.shared.string("按住右键绘制路径，松开后执行绑定动作。")
         case .clipboard:
             L10n.shared.string("管理剪贴板历史、来源屏蔽和保留期限。")
+        case .systemMonitor:
+            L10n.shared.string("选择监控项目与菜单栏显示内容。")
         case .general:
             L10n.shared.string(
                 "控制 %@ 的视觉模式与启动行为。",
@@ -1715,6 +1768,8 @@ private enum SettingsSection: Hashable {
             "hand.draw"
         case .clipboard:
             "doc.on.clipboard"
+        case .systemMonitor:
+            "waveform.path.ecg"
         case .general:
             "gearshape"
         case .permissions:
@@ -1732,6 +1787,8 @@ private enum SettingsSection: Hashable {
             self = .gestures
         case .clipboard:
             self = .clipboard
+        case .systemMonitor:
+            self = .systemMonitor
         case .windowSwitcher:
             return nil
         }
@@ -1751,6 +1808,8 @@ private extension NylaiModuleID {
             "doc.on.clipboard"
         case .windowSwitcher:
             "rectangle.on.rectangle"
+        case .systemMonitor:
+            "waveform.path.ecg"
         }
     }
 }
@@ -2194,23 +2253,23 @@ struct SettingsTheme {
     init(colorScheme: ColorScheme) {
         switch colorScheme {
         case .dark:
-            page = Color(red: 0.10, green: 0.11, blue: 0.08)
-            sidebar = Color(red: 0.12, green: 0.14, blue: 0.10)
-            card = Color(red: 0.16, green: 0.18, blue: 0.13)
-            border = Color(red: 0.96, green: 0.94, blue: 0.90).opacity(0.08)
-            selected = Color(red: 0.96, green: 0.94, blue: 0.90).opacity(0.09)
+            page = Color(nsColor: NylaiPalette.charcoal)
+            sidebar = Color(red: 0.125, green: 0.14, blue: 0.132)
+            card = Color(red: 0.155, green: 0.17, blue: 0.162)
+            border = Color.white.opacity(0.08)
+            selected = NylaiPalette.accent.opacity(0.10)
             selectedBorder = NylaiPalette.accent.opacity(0.38)
-            success = Color(red: 0.67, green: 0.78, blue: 0.55)
+            success = Color(nsColor: NylaiPalette.palePine)
             warning = Color(red: 0.82, green: 0.57, blue: 0.22)
             danger = Color(red: 0.95, green: 0.52, blue: 0.48)
         default:
-            page = Color(red: 0.985, green: 0.98, blue: 0.965)
-            sidebar = Color(red: 0.95, green: 0.945, blue: 0.925)
-            card = Color(red: 0.995, green: 0.992, blue: 0.982)
-            border = Color(nsColor: NylaiPalette.olive).opacity(0.08)
+            page = Color(nsColor: NylaiPalette.paper)
+            sidebar = Color(red: 0.94, green: 0.945, blue: 0.93)
+            card = Color(red: 0.995, green: 0.995, blue: 0.985)
+            border = Color(nsColor: NylaiPalette.ink).opacity(0.08)
             selected = .white.opacity(0.92)
             selectedBorder = NylaiPalette.accent.opacity(0.24)
-            success = Color(nsColor: NylaiPalette.olive)
+            success = Color(nsColor: NylaiPalette.pine)
             warning = Color(red: 0.66, green: 0.39, blue: 0.12)
             danger = Color(red: 0.72, green: 0.17, blue: 0.16)
         }

@@ -43,6 +43,7 @@ final class ScreenshotOverlayController {
     private var sourceDisplayID: CGDirectDisplayID?
     private var displayTargetApplication: NSRunningApplication?
     private var targetApplication: NSRunningApplication?
+    private var applicationToRestore: NSRunningApplication?
     private var isClosing = false
     private var outputTask: Task<Void, Never>?
     private var windowCaptureTask: Task<Void, Never>?
@@ -106,6 +107,7 @@ final class ScreenshotOverlayController {
                     ? nil
                     : application
             }
+            applicationToRestore = originalTarget
             displayTargetApplication = originalTarget
             targetApplication = originalTarget
             guard let targetScreen = screen(containing: NSEvent.mouseLocation) else {
@@ -169,6 +171,7 @@ final class ScreenshotOverlayController {
         windowCaptureTask = nil
         session.cancel()
         closeOverlay()
+        restorePreviousApplication()
     }
 
     func closePinnedImages() {
@@ -271,6 +274,12 @@ final class ScreenshotOverlayController {
         view.onReselect = { [weak self] in self?.returnToDisplaySelection() }
         view.onScrollCapture = { [weak self] in self?.beginScrollCapture() }
         view.onCopy = { [weak self] in self?.copySelection() }
+        view.onRecognizeText = { [weak self] layout in
+            self?.runOutput { image in
+                try await ScreenshotTextRecognition.review(image, layout: layout)
+                return true
+            }
+        }
         view.onSave = { [weak self] in self?.saveSelection() }
         view.onPin = { [weak self] in self?.pinSelection() }
         view.onUndo = { [weak self] in
@@ -616,7 +625,8 @@ final class ScreenshotOverlayController {
 
     private func pinSelection() {
         runOutput { [self] image in
-            pinnedImageManager.pin(image)
+            pinnedImageManager.pin(image, restoreApplication: applicationToRestore)
+            restorePreviousApplication()
             return true
         }
     }
@@ -780,6 +790,16 @@ final class ScreenshotOverlayController {
             return
         }
         close()
+    }
+
+    private func restorePreviousApplication() {
+        guard let application = applicationToRestore else { return }
+        applicationToRestore = nil
+        guard !application.isTerminated,
+              application.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            return
+        }
+        application.activate(options: [.activateAllWindows])
     }
 
     @objc private func applicationDidResignActive() {

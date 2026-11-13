@@ -63,9 +63,10 @@ final class ClipboardHistoryStore {
     }
 
     @discardableResult
-    func add(_ capture: ClipboardCapture) throws -> ClipboardRecord? {
+    func add(_ capture: ClipboardCapture, retained: Bool = false) throws -> ClipboardRecord? {
         let now = clock()
         if let duplicate = try updateDuplicate(capture, now: now) {
+            if retained { try setPinned(true, id: duplicate.id) }
             return duplicate
         }
 
@@ -88,7 +89,7 @@ final class ClipboardHistoryStore {
             sourceBundleIdentifier: capture.sourceBundleIdentifier,
             sourceName: capture.sourceName,
             copiedAt: now,
-            pinnedAt: nil
+            pinnedAt: retained ? now : nil
         )
         var updated = index
         updated.records.append(record)
@@ -169,7 +170,7 @@ final class ClipboardHistoryStore {
         try applyCleanupAndCommit(index, now: clock())
     }
 
-    func setPinned(_ pinned: Bool, id: UUID) throws {
+    func setPinned(_ pinned: Bool, id: UUID, cleanup: Bool = true) throws {
         guard let recordIndex = index.records.firstIndex(where: { $0.id == id }) else {
             throw ClipboardStoreError.recordNotFound
         }
@@ -181,15 +182,21 @@ final class ClipboardHistoryStore {
         } else {
             updated.records[recordIndex].pinnedAt = nil
         }
-        try applyCleanupAndCommit(updated, now: clock())
+        if cleanup { try applyCleanupAndCommit(updated, now: clock()) }
+        else { try commit(updated) }
     }
 
     func delete(id: UUID) throws {
-        guard let record = index.records.first(where: { $0.id == id }) else { return }
+        try delete(ids: [id])
+    }
+
+    func delete(ids: Set<UUID>) throws {
+        let removed = index.records.filter { ids.contains($0.id) }
+        guard !removed.isEmpty else { return }
         var updated = index
-        updated.records.removeAll { $0.id == id }
+        updated.records.removeAll { ids.contains($0.id) }
         try commit(updated)
-        removeFiles(for: record)
+        removed.forEach(removeFiles)
     }
 
     func clearOrdinary() throws {

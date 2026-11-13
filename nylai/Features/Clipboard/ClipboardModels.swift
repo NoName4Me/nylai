@@ -41,7 +41,7 @@ struct ClipboardSettings: Codable, Equatable, Sendable {
 
     static let defaults = ClipboardSettings(
         version: currentVersion,
-        maximumItems: 200,
+        maximumItems: 1_000,
         retentionEnabled: false,
         retentionDays: 30,
         disabledBundleIdentifiers: []

@@ -16,11 +16,13 @@ final class LongScreenshotEditorTests: XCTestCase {
         let window = try XCTUnwrap(controller.window)
         let root = try XCTUnwrap(window.contentView)
 
-        XCTAssertEqual(window.styleMask, [.borderless])
+        XCTAssertEqual(window.styleMask, [.borderless, .nonactivatingPanel])
         XCTAssertEqual(window.frame.size, preferredFrame.size)
-        XCTAssertNotNil(findButton(titled: "矩形", in: root))
-        XCTAssertNotNil(findButton(titled: "复制", in: root))
-        XCTAssertNotNil(findButton(titled: "放大", in: root))
+        let surfaces = (window.childWindows ?? []).compactMap(\.contentView) + [root]
+        XCTAssertTrue(surfaces.contains { findButton(titled: "矩形", in: $0) != nil })
+        XCTAssertTrue(surfaces.contains { findButton(titled: "复制", in: $0) != nil })
+        XCTAssertTrue(surfaces.contains { findButton(titled: "放大", in: $0) != nil })
+        XCTAssertEqual(window.childWindows?.count, 2)
         XCTAssertNil(findButton(titled: "选区", in: root))
         XCTAssertNil(findButton(titled: "滚动截图", in: root))
     }

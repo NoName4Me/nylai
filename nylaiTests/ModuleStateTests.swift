@@ -25,7 +25,7 @@ final class ModuleStateTests: XCTestCase {
         var changes: [(NylaiModuleID, Bool)] = []
         controller.onLifecycleChange = { changes.append(($0, $1)) }
 
-        XCTAssertFalse(controller.isEnabled(.screenshot))
+        XCTAssertTrue(controller.isEnabled(.screenshot))
         XCTAssertTrue(controller.isEnabled(.globalShortcuts))
         XCTAssertFalse(controller.isEnabled(.mouseGestures))
         XCTAssertFalse(controller.isEnabled(.clipboard))
@@ -37,14 +37,14 @@ final class ModuleStateTests: XCTestCase {
         try controller.setEnabled(true, for: .globalShortcuts)
         XCTAssertEqual(runtime.configuration?.isEnabled, true)
         XCTAssertEqual(controller.status(for: .globalShortcuts), .available)
-        try controller.setEnabled(true, for: .screenshot)
+        try controller.setEnabled(false, for: .screenshot)
         try controller.setEnabled(true, for: .clipboard)
 
         XCTAssertEqual(
             changes.map(\.0),
             [.globalShortcuts, .globalShortcuts, .screenshot, .clipboard]
         )
-        XCTAssertEqual(changes.map(\.1), [false, true, true, true])
+        XCTAssertEqual(changes.map(\.1), [false, true, false, true])
         XCTAssertTrue(AppPreferences(defaults: defaults).clipboardEnabled)
     }
 
@@ -110,6 +110,7 @@ final class ModuleStateTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let preferences = AppPreferences(defaults: defaults)
         preferences.clipboardEnabled = true
+        preferences.screenshotEnabled = false
         let store = ShortcutBindingStore(
             fileURL: FileManager.default.temporaryDirectory
                 .appending(path: "nylai-module-target-\(UUID().uuidString).json")

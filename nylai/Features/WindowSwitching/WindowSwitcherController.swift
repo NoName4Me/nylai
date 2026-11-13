@@ -8,6 +8,9 @@ final class WindowSwitcherController {
     private let windowCapturer: any WindowCapturing
     private let panelController = WindowSwitcherPanelController()
     private let isInteractionSuppressed: @MainActor () -> Bool
+    private let pinnedApplications: WindowSwitcherPinnedApplications
+    private var menuObservers: [NSObjectProtocol] = []
+    private var isMenuTracking = false
     private var snapshotTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
     private var session: WindowSwitcherSession?
@@ -20,12 +23,14 @@ final class WindowSwitcherController {
     var onError: @MainActor (Error) -> Void = { _ in }
 
     init(
-        catalogProvider: any WindowSwitcherCatalogProviding = WindowSwitcherCatalogProvider(),
+        catalogProvider: (any WindowSwitcherCatalogProviding)? = nil,
         activator: any WindowSwitcherActivating = WindowSwitcherActivator(),
         windowCapturer: any WindowCapturing = ScreenCaptureService(),
+        pinnedApplications: WindowSwitcherPinnedApplications = WindowSwitcherPinnedApplications(),
         isInteractionSuppressed: @escaping @MainActor () -> Bool
     ) {
-        self.catalogProvider = catalogProvider
+        self.catalogProvider = catalogProvider ?? WindowSwitcherCatalogProvider(pinnedApplications: pinnedApplications)
+        self.pinnedApplications = pinnedApplications
         self.activator = activator
         self.windowCapturer = windowCapturer
         self.isInteractionSuppressed = isInteractionSuppressed
@@ -38,6 +43,18 @@ final class WindowSwitcherController {
         panelController.model.onSelectWindow = { [weak self] windowID in
             self?.selectWindow(windowID)
         }
+        panelController.model.onTogglePin = { [weak self] application in
+            guard let self else { return }
+            self.changePins { try self.pinnedApplications.toggle(application) }
+        }
+        panelController.model.onMovePin = { [weak self] identifier, offset in
+            guard let self else { return }
+            self.changePins { try self.pinnedApplications.move(identifier, offset: offset) }
+        }
+        panelController.model.onConfirmApplication = { [weak self] in
+            guard let self, let session = self.session else { return }
+            self.finish(with: session)
+        }
     }
 
     var isActive: Bool {
@@ -46,6 +63,7 @@ final class WindowSwitcherController {
 
     func start(requestPermission: Bool) {
         observeSleepIfNeeded()
+        observeMenusIfNeeded()
         onRuntimeStatusChange(.starting)
         let missingPermission = WindowSwitcherPermissionPolicy.firstMissing(
             accessibilityGranted: AccessibilityPermission.isGranted,
@@ -81,6 +99,9 @@ final class WindowSwitcherController {
     func stop() {
         cancelSession()
         monitor.stop()
+        for observer in menuObservers { NotificationCenter.default.removeObserver(observer) }
+        menuObservers = []
+        isMenuTracking = false
         if let sleepObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver)
             self.sleepObserver = nil
@@ -158,6 +179,7 @@ final class WindowSwitcherController {
     }
 
     private func handleCommand(_ command: WindowSwitcherSessionCommand) {
+        if command == .confirm, isMenuTracking { return }
         if command == .cancel {
             cancelSession()
             return
@@ -193,7 +215,51 @@ final class WindowSwitcherController {
         session?.apply(.selectApplication(index))
         guard let session else { return }
         panelController.model.update(with: session)
+        if session.selectedApplication.windows.isEmpty {
+            finish(with: session)
+            return
+        }
         loadPreviews(for: session.selectedApplication, generation: generation)
+    }
+
+    private func changePins(_ change: () throws -> Void) {
+        do {
+            try change()
+            guard let previous = session else { return }
+            let snapshot = pinnedApplications.applying(to: previous.snapshot)
+            var updated = try WindowSwitcherSession(snapshot: snapshot, mode: previous.mode, reverse: false)
+            let selected = previous.selectedApplication
+            if let index = snapshot.applications.firstIndex(where: {
+                selected.isRunning ? $0.id == selected.id : $0.bundleIdentifier == selected.bundleIdentifier
+            }) {
+                updated.apply(.selectApplication(index))
+                if let window = previous.selectedWindow { updated.apply(.selectWindow(window.id)) }
+            }
+            session = updated
+            panelController.model.update(with: updated)
+            loadPreviews(for: updated.selectedApplication, generation: generation)
+        } catch {
+            cancelSession()
+            onError(error)
+        }
+    }
+
+    private func observeMenusIfNeeded() {
+        guard menuObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard self?.session != nil else { return }
+                self?.isMenuTracking = true
+            }
+        })
+        menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isMenuTracking else { return }
+                self.isMenuTracking = false
+                if !NSEvent.modifierFlags.contains(.command) { self.cancelSession() }
+            }
+        })
     }
 
     private func selectWindow(_ windowID: CGWindowID) {
@@ -245,7 +311,7 @@ final class WindowSwitcherController {
     private func finish(with session: WindowSwitcherSession) {
         let target = session.confirmationTarget
         monitor.setSessionActive(false)
-        closePanel()
+        resetSessionState()
         Task { [weak self] in
             guard let self else { return }
             do {
