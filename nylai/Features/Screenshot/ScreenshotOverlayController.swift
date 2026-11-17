@@ -32,6 +32,8 @@ final class ScreenshotOverlayController {
     private let isHistoryEnabled: @MainActor () -> Bool
     private let startScrollCapture: @MainActor (ScrollCaptureStartRequest) -> Void
     private let presentError: @MainActor (Error) -> Void
+    private let restoreApplication: @MainActor (NSRunningApplication) -> Void
+    private let foregroundApplication: @MainActor () -> NSRunningApplication?
     private var overlayWindow: ScreenshotOverlayWindow?
     private var overlayView: ScreenshotOverlayView?
     private var screen: NSScreen?
@@ -45,6 +47,7 @@ final class ScreenshotOverlayController {
     private var targetApplication: NSRunningApplication?
     private var applicationToRestore: NSRunningApplication?
     private var isClosing = false
+    private var isEndingSession = false
     private var outputTask: Task<Void, Never>?
     private var windowCaptureTask: Task<Void, Never>?
     private var styleInteractionID: UUID?
@@ -53,6 +56,7 @@ final class ScreenshotOverlayController {
 
     private(set) var session = ScreenshotSession()
     private(set) var isCapturing = false
+    var onOutputSucceeded: @MainActor () -> Void = {}
 
     init(
         displayCapturer: any ScreenCapturing = ScreenCaptureService(),
@@ -65,7 +69,15 @@ final class ScreenshotOverlayController {
         historyStore: ScreenshotHistoryStore? = nil,
         isHistoryEnabled: @escaping @MainActor () -> Bool = { false },
         startScrollCapture: @escaping @MainActor (ScrollCaptureStartRequest) -> Void = { _ in },
-        presentError: @escaping @MainActor (Error) -> Void = ScreenshotErrorPresenter.show
+        presentError: @escaping @MainActor (Error) -> Void = ScreenshotErrorPresenter.show,
+        restoreApplication: @escaping @MainActor (NSRunningApplication) -> Void = {
+            try? ApplicationActivationService().bringToFront(
+                ApplicationActivationTarget($0)
+            )
+        },
+        foregroundApplication: @escaping @MainActor () -> NSRunningApplication? = {
+            NSWorkspace.shared.frontmostApplication
+        }
     ) {
         self.displayCapturer = displayCapturer
         self.windowCapturer = windowCapturer
@@ -78,6 +90,8 @@ final class ScreenshotOverlayController {
         self.isHistoryEnabled = isHistoryEnabled
         self.startScrollCapture = startScrollCapture
         self.presentError = presentError
+        self.restoreApplication = restoreApplication
+        self.foregroundApplication = foregroundApplication
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(applicationDidResignActive),
@@ -101,8 +115,7 @@ final class ScreenshotOverlayController {
         defer { isCapturing = false }
 
         do {
-            let foregroundApplication = NSWorkspace.shared.frontmostApplication
-            let originalTarget = foregroundApplication.flatMap { application in
+            let originalTarget = foregroundApplication().flatMap { application in
                 application.processIdentifier == ProcessInfo.processInfo.processIdentifier
                     ? nil
                     : application
@@ -116,7 +129,9 @@ final class ScreenshotOverlayController {
             guard let resolvedDisplayID = displayID(for: targetScreen) else {
                 throw ScreenshotError.displayUnavailable
             }
-            let image = try await displayCapturer.captureDisplay(resolvedDisplayID)
+            let image = try await displayCapturer.captureDisplayExcludingOwnApplication(
+                resolvedDisplayID
+            )
             try Task.checkCancellation()
             screen = targetScreen
             activeOverlayFrame = targetScreen.frame
@@ -162,6 +177,9 @@ final class ScreenshotOverlayController {
 
     func close() {
         guard session.isActive || overlayWindow != nil else { return }
+        guard !isEndingSession else { return }
+        isEndingSession = true
+        defer { isEndingSession = false }
         outputTask?.cancel()
         outputTask = nil
         styleCommitTask?.cancel()
@@ -169,9 +187,9 @@ final class ScreenshotOverlayController {
         styleInteractionID = nil
         windowCaptureTask?.cancel()
         windowCaptureTask = nil
+        restorePreviousApplication()
         session.cancel()
         closeOverlay()
-        restorePreviousApplication()
     }
 
     func closePinnedImages() {
@@ -450,7 +468,7 @@ final class ScreenshotOverlayController {
             scheduleStyleCommit()
             return
         }
-        guard let kind = overlayView?.activeTool.annotationKind else { return }
+        guard let kind = overlayView?.activeAnnotationKind else { return }
         let validated = style.validated(for: kind)
         annotationStyleStore.setStyle(validated, for: kind)
         overlayView?.setDefaultStyle(validated, for: kind)
@@ -610,23 +628,22 @@ final class ScreenshotOverlayController {
     }
 
     private func copySelection() {
-        runOutput { [self] image in
+        runOutput(restoresApplicationOnSuccess: true) { [self] image in
             try paster.copy(image)
             return true
         }
     }
 
     private func saveSelection() {
-        runOutput(lowersOverlay: true) { [self] image in
+        runOutput(lowersOverlay: true, restoresApplicationOnSuccess: true) { [self] image in
             let url = try await saver.save(image)
             return url != nil
         }
     }
 
     private func pinSelection() {
-        runOutput { [self] image in
+        runOutput(restoresApplicationOnSuccess: true) { [self] image in
             pinnedImageManager.pin(image, restoreApplication: applicationToRestore)
-            restorePreviousApplication()
             return true
         }
     }
@@ -641,6 +658,7 @@ final class ScreenshotOverlayController {
               let displayID = sourceDisplayID else {
             return
         }
+        overlayView?.commitPendingDrawing()
         let selectionGlobalRect = source.geometry.mapper.globalScreenRect(fromPixelRect: selection)
         let visibleSelection = selectionGlobalRect.intersection(screen.frame)
         guard !visibleSelection.isNull, !visibleSelection.isEmpty else {
@@ -685,9 +703,11 @@ final class ScreenshotOverlayController {
 
     private func runOutput(
         lowersOverlay: Bool = false,
+        restoresApplicationOnSuccess: Bool = false,
         _ operation: @escaping @MainActor (CGImage) async throws -> Bool
     ) {
         overlayView?.commitActiveTextEditing()
+        overlayView?.commitPendingDrawing()
         guard outputTask == nil, session.phase == .editing, let selection = session.selection,
               let source = session.source else {
             return
@@ -733,7 +753,13 @@ final class ScreenshotOverlayController {
                 try Task.checkCancellation()
                 recordHistory(rendered)
                 if session.phase == .outputting {
+                    isEndingSession = true
+                    defer { isEndingSession = false }
+                    if restoresApplicationOnSuccess {
+                        restorePreviousApplication()
+                    }
                     session.outputSucceeded()
+                    onOutputSucceeded()
                     closeOverlay()
                 }
             } catch is CancellationError {
@@ -799,16 +825,18 @@ final class ScreenshotOverlayController {
               application.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
             return
         }
-        application.activate(options: [.activateAllWindows])
+        restoreApplication(application)
     }
 
     @objc private func applicationDidResignActive() {
+        guard !isEndingSession else { return }
         close()
     }
 
     private func closeOverlay() {
         guard !isClosing else { return }
         isClosing = true
+        ScreenshotHoverHintPresenter.shared.dismissAll()
         overlayWindow?.orderOut(nil)
         overlayWindow?.contentView = nil
         overlayWindow = nil

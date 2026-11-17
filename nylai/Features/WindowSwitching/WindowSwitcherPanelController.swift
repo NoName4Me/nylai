@@ -16,11 +16,13 @@ final class WindowSwitcherPanelModel {
     var selectedWindowID: CGWindowID?
     var previews: [CGWindowID: CGImage] = [:]
     var loadingWindowIDs: Set<CGWindowID> = []
+    var closingWindowIDs: Set<CGWindowID> = []
     @ObservationIgnored var onSelectApplication: (Int) -> Void = { _ in }
     @ObservationIgnored var onSelectWindow: (CGWindowID) -> Void = { _ in }
     @ObservationIgnored var onTogglePin: (WindowSwitcherApplication) -> Void = { _ in }
     @ObservationIgnored var onMovePin: (String, Int) -> Void = { _, _ in }
     @ObservationIgnored var onConfirmApplication: () -> Void = {}
+    @ObservationIgnored var onCloseWindow: (WindowSwitcherWindow) -> Void = { _ in }
 
     var selectedApplication: WindowSwitcherApplication? {
         guard applications.indices.contains(selectedApplicationIndex) else {
@@ -33,6 +35,10 @@ final class WindowSwitcherPanelModel {
         applications = session.snapshot.applications
         selectedApplicationIndex = session.selectedApplicationIndex
         selectedWindowID = session.selectedWindow?.id
+        let currentIDs = Set(applications.flatMap(\.windows).map(\.id))
+        previews = previews.filter { currentIDs.contains($0.key) }
+        loadingWindowIDs.formIntersection(currentIDs)
+        closingWindowIDs.formIntersection(currentIDs)
     }
 
     func clear() {
@@ -41,6 +47,7 @@ final class WindowSwitcherPanelModel {
         selectedWindowID = nil
         previews = [:]
         loadingWindowIDs = []
+        closingWindowIDs = []
     }
 
     func selectApplication(at index: Int) {
@@ -55,6 +62,11 @@ final class WindowSwitcherPanelModel {
             return
         }
         onSelectWindow(windowID)
+    }
+
+    func closeWindow(_ window: WindowSwitcherWindow) {
+        guard !closingWindowIDs.contains(window.id) else { return }
+        onCloseWindow(window)
     }
 }
 
@@ -321,54 +333,90 @@ struct WindowSwitcherPanelView: View {
         _ window: WindowSwitcherWindow,
         isSelected: Bool
     ) -> some View {
-        Button {
-            model.selectWindow(window.id)
-        } label: {
-            VStack(alignment: .leading, spacing: 9) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.black.opacity(0.2))
-                    if let preview = model.previews[window.id] {
-                        Image(decorative: preview, scale: 1)
-                            .resizable()
-                            .scaledToFit()
-                    } else if model.loadingWindowIDs.contains(window.id) {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "macwindow")
-                            .font(.system(size: 28))
-                            .foregroundStyle(.tertiary)
+        ZStack(alignment: .topTrailing) {
+            Button {
+                model.selectWindow(window.id)
+            } label: {
+                VStack(alignment: .leading, spacing: 9) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black.opacity(0.2))
+                        if let preview = model.previews[window.id] {
+                            Image(decorative: preview, scale: 1)
+                                .resizable()
+                                .scaledToFit()
+                        } else if model.loadingWindowIDs.contains(window.id) {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "macwindow")
+                                .font(.system(size: 28))
+                                .foregroundStyle(.tertiary)
+                        }
                     }
-                }
-                .aspectRatio(16 / 10, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .aspectRatio(16 / 10, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                Text(window.title.flatMap { $0.isEmpty ? nil : $0 } ?? "未命名窗口")
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 2)
+                    Text(window.title.flatMap { $0.isEmpty ? nil : $0 } ?? "未命名窗口")
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(
+                    isSelected
+                        ? Color.primary.opacity(0.12)
+                        : hoveredWindowID == window.id ? Color.primary.opacity(0.05) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 14)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(
+                            isSelected ? NylaiPalette.accent
+                                : hoveredWindowID == window.id ? Color.primary.opacity(0.24) : Color.clear,
+                            lineWidth: isSelected ? 2.5 : 1
+                        )
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 14))
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
-            .background(
-                isSelected
-                    ? Color.primary.opacity(0.12)
-                    : hoveredWindowID == window.id ? Color.primary.opacity(0.05) : Color.clear,
-                in: RoundedRectangle(cornerRadius: 14)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(
-                        isSelected ? NylaiPalette.accent
-                            : hoveredWindowID == window.id ? Color.primary.opacity(0.24) : Color.clear,
-                        lineWidth: isSelected ? 2.5 : 1
-                    )
+            .buttonStyle(.plain)
+
+            if hoveredWindowID == window.id
+                || model.closingWindowIDs.contains(window.id) {
+                Button {
+                    model.closeWindow(window)
+                } label: {
+                    Group {
+                        if model.closingWindowIDs.contains(window.id) {
+                            ProgressView()
+                                .controlSize(.mini)
+                        } else {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 18, weight: .semibold))
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(.black.opacity(0.62), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(model.closingWindowIDs.contains(window.id))
+                .help(L10n.shared.string("关闭窗口"))
+                .accessibilityLabel(L10n.shared.string("关闭窗口"))
+                .accessibilityIdentifier("close-window-\(window.id)")
+                .padding(12)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 14))
         }
-        .buttonStyle(.plain)
+        .contextMenu {
+            Button(role: .destructive) {
+                model.closeWindow(window)
+            } label: {
+                Label(L10n.shared.string("关闭窗口"), systemImage: "xmark")
+            }
+            .disabled(model.closingWindowIDs.contains(window.id))
+        }
         .onHover { hovering in
             if hovering { hoveredWindowID = window.id }
             else if hoveredWindowID == window.id { hoveredWindowID = nil }

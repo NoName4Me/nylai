@@ -41,9 +41,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var clipboardMenuItem: NSMenuItem?
     private var scrollCaptureController: ScrollCaptureController?
     private var didStartWindowSwitcherAfterLaunch = false
+    private var screenshotReopenGuardTask: Task<Void, Never>?
+    private var suppressesNextReopen = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        FinderRightClickTarget.startObserving()
+        refreshFinderEnhancementRuntime()
         preferences.appearanceMode.apply()
         installMainMenu()
         NotificationCenter.default.addObserver(
@@ -92,6 +94,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipboardMonitor?.stop()
         screenshotTask?.cancel()
         screenshotTask = nil
+        screenshotReopenGuardTask?.cancel()
+        screenshotReopenGuardTask = nil
         closeScreenshotWorkflowWindows(releaseControllers: true)
         clipboardPanelController?.close()
         clipboardPanelController = nil
@@ -106,7 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        guard !isScreenshotInteractionActive else { return }
+        guard !isScreenshotInteractionActive,
+              moduleStateController.isEnabled(.finderEnhancements) else { return }
         for url in urls {
             if let request = FinderEnhancementRequest(url: url) {
                 FinderEnhancementAction.perform(request)
@@ -115,6 +120,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !isScreenshotInteractionActive else { return false }
+        if suppressesNextReopen {
+            suppressesNextReopen = false
+            return false
+        }
         showSettings()
         return true
     }
@@ -131,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        FinderRightClickTarget.startObserving()
+        refreshFinderEnhancementRuntime()
         guard !didStartWindowSwitcherAfterLaunch,
               moduleStateController.isEnabled(.windowSwitcher),
               windowSwitcherController != nil else {
@@ -261,7 +271,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var isScreenshotInteractionActive: Bool {
-        screenshotOverlayController?.session.isActive == true
+        screenshotOverlayController?.isCapturing == true
+            || screenshotOverlayController?.session.isActive == true
             || scrollCaptureController?.isActive == true
             || longScreenshotEditorController?.window?.isVisible == true
     }
@@ -284,6 +295,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             screenshotTask?.cancel()
             screenshotTask = nil
             closeScreenshotWorkflowWindows(releaseControllers: true)
+        case .finderEnhancements:
+            refreshFinderEnhancementRuntime()
         case .mouseGestures:
             if enabled {
                 ensureMouseGestureController().start(requestPermission: true)
@@ -323,6 +336,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func refreshFinderEnhancementRuntime() {
+        let enabled = moduleStateController.isEnabled(.finderEnhancements)
+        FinderEnhancementAvailability.setEnabled(enabled)
+        if enabled {
+            FinderRightClickTarget.startObserving()
+        } else {
+            FinderRightClickTarget.stopObserving()
+        }
+    }
+
     private func closeScreenshotWorkflowWindows(releaseControllers: Bool) {
         screenshotOverlayController?.close()
         scrollCaptureController?.close()
@@ -352,8 +375,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.ensureScrollCaptureController().begin(with: request)
             }
         )
+        controller.onOutputSucceeded = { [weak self] in
+            self?.guardAgainstReopenAfterScreenshot()
+        }
         screenshotOverlayController = controller
         return controller
+    }
+
+    private func guardAgainstReopenAfterScreenshot() {
+        suppressesNextReopen = true
+        screenshotReopenGuardTask?.cancel()
+        screenshotReopenGuardTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.suppressesNextReopen = false
+            self?.screenshotReopenGuardTask = nil
+        }
     }
 
     private func ensureScrollCaptureController() -> ScrollCaptureController {

@@ -23,6 +23,20 @@ final class ApplicationShortcutTests: XCTestCase {
     }
 
     @MainActor
+    func testActivationFailureReportsError() async throws {
+        let fixture = try ApplicationFixture(
+            isRunning: true,
+            isActive: false,
+            activationError: ApplicationActivationError.activationFailed
+        )
+        var errors: [Error] = []
+        let handler = ApplicationShortcutHandler(launcher: fixture.launcher) { errors.append($0) }
+        let result = await handler.trigger(fixture.target)
+        XCTAssertNil(result)
+        XCTAssertEqual(errors.first as? ApplicationActivationError, .activationFailed)
+    }
+
+    @MainActor
     func testActiveApplicationHidesWhenOptionEnabled() async throws {
         let fixture = try ApplicationFixture(isRunning: true, isActive: true, hidesOnRepeatTrigger: true)
         let handler = ApplicationShortcutHandler(launcher: fixture.launcher, presentError: { _ in })
@@ -39,6 +53,38 @@ final class ApplicationShortcutTests: XCTestCase {
         let result = await handler.trigger(fixture.target)
         XCTAssertEqual(result, .unchanged)
         XCTAssertEqual(fixture.launcher.hideCount, 0)
+        XCTAssertEqual(fixture.launcher.activateCount, 0)
+    }
+
+    @MainActor
+    func testActiveApplicationWithoutWindowsOpensWindowInsteadOfHiding() async throws {
+        let fixture = try ApplicationFixture(
+            isRunning: true,
+            isActive: true,
+            hasVisibleWindow: false,
+            hidesOnRepeatTrigger: true
+        )
+        let handler = ApplicationShortcutHandler(launcher: fixture.launcher, presentError: { _ in })
+        let result = await handler.trigger(fixture.target)
+
+        XCTAssertEqual(result, .activated)
+        XCTAssertEqual(fixture.launcher.activateCount, 1)
+        XCTAssertEqual(fixture.launcher.hideCount, 0)
+    }
+
+    @MainActor
+    func testActiveApplicationWithVisibleWindowStillHidesOnRepeatTrigger() async throws {
+        let fixture = try ApplicationFixture(
+            isRunning: true,
+            isActive: true,
+            hasVisibleWindow: true,
+            hidesOnRepeatTrigger: true
+        )
+        let handler = ApplicationShortcutHandler(launcher: fixture.launcher, presentError: { _ in })
+        let result = await handler.trigger(fixture.target)
+
+        XCTAssertEqual(result, .hidden)
+        XCTAssertEqual(fixture.launcher.hideCount, 1)
         XCTAssertEqual(fixture.launcher.activateCount, 0)
     }
 
@@ -74,6 +120,7 @@ private final class FakeApplicationLauncher: ApplicationLaunching {
     var hideCount = 0
     var activateCount = 0
     var launchDelay: Duration = .zero
+    var activationError: Error?
 
     func runningApplication(bundleIdentifier: String) -> RunningApplicationState? {
         running
@@ -100,10 +147,13 @@ private struct ApplicationFixture {
     init(
         isRunning: Bool = false,
         isActive: Bool = false,
+        hasVisibleWindow: Bool = true,
         hidesOnRepeatTrigger: Bool = true,
+        activationError: Error? = nil,
         path: String? = nil
     ) throws {
         launcher = FakeApplicationLauncher()
+        launcher.activationError = activationError
         let bundle = Bundle(for: ApplicationShortcutTests.self)
         let bundleIdentifier = bundle.bundleIdentifier ?? "com.noname4me.nylai.tests"
         let appPath = path ?? bundle.bundlePath
@@ -115,13 +165,16 @@ private struct ApplicationFixture {
         if isRunning {
             launcher.running = RunningApplicationState(
                 isActive: isActive,
+                hasVisibleWindow: { hasVisibleWindow },
                 hide: { [weak launcher] in
                     launcher?.hideCount += 1
                     return true
                 },
-                activate: { [weak launcher] in
+                activate: { [weak launcher] () async throws -> Void in
                     launcher?.activateCount += 1
-                    return true
+                    if let error = launcher?.activationError {
+                        throw error
+                    }
                 }
             )
         }

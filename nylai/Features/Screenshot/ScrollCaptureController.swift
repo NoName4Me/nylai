@@ -729,7 +729,11 @@ final class ScrollCaptureController {
               targetApplication.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
             return
         }
-        targetApplication.activate()
+        Task {
+            try? ApplicationActivationService().bringToFront(
+                ApplicationActivationTarget(targetApplication)
+            )
+        }
     }
 
     private func closeWindows() {
@@ -1199,7 +1203,7 @@ final class ScrollCaptureCompletionWindow: NSPanel {
                 ? NylaiIcon.edit.image(pointSize: 15)
                 : NSImage(systemSymbolName: entry.1, accessibilityDescription: L10n.shared.string(entry.0))
             button.imagePosition = .imageOnly
-            button.toolTip = L10n.shared.string(entry.0)
+            button.setHoverHint(L10n.shared.string(entry.0))
             button.setAccessibilityLabel(L10n.shared.string(entry.0))
             button.isBordered = false
             button.layer?.cornerRadius = 5

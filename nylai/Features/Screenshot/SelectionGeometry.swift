@@ -11,96 +11,81 @@ enum SelectionResizeHandle: CaseIterable, Equatable, Sendable {
     case bottom
     case bottomRight
 
-    var resizeCursorStyle: SelectionResizeCursorStyle {
-        switch self {
-        case .top, .bottom:
-            .vertical
-        case .left, .right:
-            .horizontal
-        case .topLeft, .bottomRight:
-            .diagonalTopLeftBottomRight
-        case .topRight, .bottomLeft:
-            .diagonalTopRightBottomLeft
-        }
-    }
-
     @MainActor
     var cursor: NSCursor {
-        switch resizeCursorStyle {
-        case .vertical:
-            .resizeUpDown
-        case .horizontal:
+        switch self {
+        case .topLeft, .bottomRight:
+            SelectionResizeCursor.downwardDiagonal
+        case .topRight, .bottomLeft:
+            SelectionResizeCursor.upwardDiagonal
+        case .top, .left, .right, .bottom:
             .resizeLeftRight
-        case .diagonalTopLeftBottomRight:
-            SelectionResizeCursorCache.diagonalTopLeftBottomRight
-        case .diagonalTopRightBottomLeft:
-            SelectionResizeCursorCache.diagonalTopRightBottomLeft
         }
     }
-}
-
-enum SelectionResizeCursorStyle: Equatable, Sendable {
-    case vertical
-    case horizontal
-    case diagonalTopLeftBottomRight
-    case diagonalTopRightBottomLeft
 }
 
 @MainActor
-private enum SelectionResizeCursorCache {
-    static let diagonalTopLeftBottomRight = makeCursor(
-        from: CGPoint(x: 6, y: 18),
-        to: CGPoint(x: 18, y: 6)
-    )
-    static let diagonalTopRightBottomLeft = makeCursor(
-        from: CGPoint(x: 18, y: 18),
-        to: CGPoint(x: 6, y: 6)
-    )
+private enum SelectionResizeCursor {
+    static let downwardDiagonal = makeDiagonalCursor(degrees: -45)
+    static let upwardDiagonal = makeDiagonalCursor(degrees: 45)
 
-    private static func makeCursor(from start: CGPoint, to end: CGPoint) -> NSCursor {
-        let image = NSImage(size: NSSize(width: 24, height: 24))
-        image.lockFocus()
-        NSColor.clear.setFill()
-        NSRect(x: 0, y: 0, width: 24, height: 24).fill()
+    private static func makeDiagonalCursor(degrees: CGFloat) -> NSCursor {
+        let canvasSize = NSSize(width: 30, height: 30)
+        let image = NSImage(size: canvasSize, flipped: false) { _ in
+            NSGraphicsContext.saveGraphicsState()
+            let transform = NSAffineTransform()
+            transform.translateX(
+                by: canvasSize.width / 2,
+                yBy: canvasSize.height / 2
+            )
+            transform.rotate(byDegrees: degrees)
+            transform.translateX(by: -canvasSize.width / 2, yBy: -canvasSize.height / 2)
+            transform.concat()
 
-        let path = NSBezierPath()
-        path.move(to: start)
-        path.line(to: end)
-        path.move(to: start)
-        path.line(to: CGPoint(
-            x: start.x + (end.x > start.x ? 5 : -5),
-            y: start.y
-        ))
-        path.move(to: start)
-        path.line(to: CGPoint(
-            x: start.x,
-            y: start.y + (end.y > start.y ? 5 : -5)
-        ))
-        path.move(to: end)
-        path.line(to: CGPoint(
-            x: end.x + (start.x > end.x ? 5 : -5),
-            y: end.y
-        ))
-        path.move(to: end)
-        path.line(to: CGPoint(
-            x: end.x,
-            y: end.y + (start.y > end.y ? 5 : -5)
-        ))
-        path.lineCapStyle = .round
-        path.lineJoinStyle = .round
-
-        NSColor.black.withAlphaComponent(0.9).setStroke()
-        path.lineWidth = 4
-        path.stroke()
-        NSColor.white.setStroke()
-        path.lineWidth = 2
-        path.stroke()
-        image.unlockFocus()
-
+            let arrow = doubleArrowPath(in: canvasSize)
+            arrow.lineJoinStyle = .miter
+            arrow.miterLimit = 4
+            NSColor.white.setStroke()
+            arrow.lineWidth = 2.6
+            arrow.stroke()
+            NSColor.black.setFill()
+            arrow.fill()
+            NSGraphicsContext.restoreGraphicsState()
+            return true
+        }
         return NSCursor(
             image: image,
-            hotSpot: NSPoint(x: 12, y: 12)
+            hotSpot: NSPoint(
+                x: canvasSize.width / 2,
+                y: canvasSize.height / 2
+            )
         )
+    }
+
+    private static func doubleArrowPath(in canvasSize: NSSize) -> NSBezierPath {
+        let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+        let axisHalfLength: CGFloat = 9.5
+        let headLength: CGFloat = 6.2
+        let headHalfWidth: CGFloat = 3.6
+        let shaftHalfWidth: CGFloat = 1.35
+        let tipLeft = CGPoint(x: center.x - axisHalfLength, y: center.y)
+        let tipRight = CGPoint(x: center.x + axisHalfLength, y: center.y)
+        let leftBase = tipLeft.x + headLength
+        let rightBase = tipRight.x - headLength
+
+        let path = NSBezierPath()
+        path.move(to: tipLeft)
+        path.line(to: CGPoint(x: leftBase, y: center.y - headHalfWidth))
+        path.line(to: CGPoint(x: leftBase, y: center.y - shaftHalfWidth))
+        path.line(to: CGPoint(x: rightBase, y: center.y - shaftHalfWidth))
+        path.line(to: CGPoint(x: rightBase, y: center.y - headHalfWidth))
+        path.line(to: tipRight)
+        path.line(to: CGPoint(x: rightBase, y: center.y + headHalfWidth))
+        path.line(to: CGPoint(x: rightBase, y: center.y + shaftHalfWidth))
+        path.line(to: CGPoint(x: leftBase, y: center.y + shaftHalfWidth))
+        path.line(to: CGPoint(x: leftBase, y: center.y + headHalfWidth))
+        path.close()
+        return path
     }
 }
 

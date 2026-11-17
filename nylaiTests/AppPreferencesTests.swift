@@ -53,6 +53,7 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertFalse(AppPreferences(defaults: defaults).screenshotHistoryEnabled)
 
         restored.screenshotEnabled = false
+        restored.finderEnhancementsEnabled = false
         restored.mouseGesturesEnabled = true
         restored.clipboardEnabled = true
         restored.windowSwitcherEnabled = true
@@ -63,9 +64,13 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(modules.language, .english)
         XCTAssertEqual(defaults.string(forKey: "appLanguage"), "en")
         XCTAssertFalse(modules.screenshotEnabled)
+        XCTAssertFalse(modules.finderEnhancementsEnabled)
         XCTAssertTrue(modules.mouseGesturesEnabled)
         XCTAssertTrue(modules.clipboardEnabled)
         XCTAssertTrue(modules.windowSwitcherEnabled)
+
+        modules.finderEnhancementsEnabled = true
+        XCTAssertTrue(AppPreferences(defaults: defaults).finderEnhancementsEnabled)
 
         modules.language = .simplifiedChinese
         XCTAssertEqual(AppPreferences(defaults: defaults).language, .simplifiedChinese)

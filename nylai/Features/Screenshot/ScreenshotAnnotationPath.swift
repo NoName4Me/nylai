@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 
 struct ScreenshotArrowAnchors: Equatable {
@@ -38,6 +39,35 @@ struct ScreenshotArrowAnchors: Equatable {
     }
 }
 
+enum ScreenshotAnnotationDirectionConstraint {
+    static func constrained(
+        from start: PixelPoint,
+        to end: PixelPoint,
+        modifiers: NSEvent.ModifierFlags
+    ) -> PixelPoint {
+        let control = modifiers.contains(.control)
+        let shift = modifiers.contains(.shift)
+        guard control || shift else { return end }
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        if control && shift {
+            let distance = max(abs(dx), abs(dy))
+            return PixelPoint(
+                x: start.x + (dx < 0 ? -distance : distance),
+                y: start.y + (dy < 0 ? -distance : distance)
+            )
+        }
+        if shift {
+            return abs(dx) >= abs(dy)
+                ? PixelPoint(x: end.x, y: start.y)
+                : PixelPoint(x: start.x, y: end.y)
+        }
+        return abs(dx) >= abs(dy)
+            ? PixelPoint(x: start.x, y: end.y)
+            : PixelPoint(x: end.x, y: start.y)
+    }
+}
+
 enum ScreenshotAnnotationPath {
     static func cgPath(
         for annotation: ScreenshotAnnotation,
@@ -48,12 +78,35 @@ enum ScreenshotAnnotationPath {
         let path = CGMutablePath()
         switch annotation.kind {
         case .rectangle:
-            path.addRect(boundingRect)
+            if annotation.style.resolvedCornerStyle == .sharp {
+                path.addRect(boundingRect)
+            } else {
+                let radius = rectangleCornerRadius(
+                    for: annotation,
+                    in: boundingRect,
+                    strokeScale: strokeScale
+                )
+                path.addPath(CGPath(
+                    roundedRect: boundingRect,
+                    cornerWidth: radius,
+                    cornerHeight: radius,
+                    transform: nil
+                ))
+            }
         case .ellipse:
             path.addEllipse(in: boundingRect)
         case .line:
-            path.move(to: endpoint(annotation.start, annotation: annotation, in: boundingRect))
-            path.addLine(to: endpoint(annotation.end, annotation: annotation, in: boundingRect))
+            if annotation.points.count >= 2 {
+                appendPolyline(
+                    annotation.points,
+                    to: path,
+                    annotation: annotation,
+                    in: boundingRect
+                )
+            } else {
+                path.move(to: endpoint(annotation.start, annotation: annotation, in: boundingRect))
+                path.addLine(to: endpoint(annotation.end, annotation: annotation, in: boundingRect))
+            }
         case .arrow:
             return arrowGeometry(
                 for: annotation,
@@ -62,26 +115,53 @@ enum ScreenshotAnnotationPath {
                 flipped: flipped,
                 strokeScale: strokeScale
             ).outline
-        case .brush:
-            let mapped = annotation.points.map {
-                endpoint($0, annotation: annotation, in: boundingRect)
-            }
-            guard let first = mapped.first else { break }
-            path.move(to: first)
-            for point in mapped.dropFirst() {
-                path.addLine(to: point)
-            }
-            if mapped.count == 1 {
-                path.addLine(to: CGPoint(x: first.x + 0.5, y: first.y))
-            }
+        case .brush, .marker, .mosaicStroke, .mosaicBlur:
+            appendPolyline(
+                annotation.points,
+                to: path,
+                annotation: annotation,
+                in: boundingRect
+            )
         case .text:
             break
         case .step:
             path.addEllipse(in: boundingRect)
-        case .mosaic:
+        case .mosaic, .blur:
             path.addRect(boundingRect)
         }
         return path
+    }
+
+    private static func appendPolyline(
+        _ points: [PixelPoint],
+        to path: CGMutablePath,
+        annotation: ScreenshotAnnotation,
+        in boundingRect: CGRect
+    ) {
+        let mapped = points.map {
+            endpoint($0, annotation: annotation, in: boundingRect)
+        }
+        guard let first = mapped.first else { return }
+        path.move(to: first)
+        for point in mapped.dropFirst() {
+            path.addLine(to: point)
+        }
+        if mapped.count == 1 {
+            path.addLine(to: CGPoint(x: first.x + 0.01, y: first.y))
+        }
+    }
+
+    private static func rectangleCornerRadius(
+        for annotation: ScreenshotAnnotation,
+        in rect: CGRect,
+        strokeScale: CGFloat
+    ) -> CGFloat {
+        let proportional = min(rect.width, rect.height) * 0.06
+        let strokeBased = CGFloat(annotation.style.lineWidth) * strokeScale * 1.2
+        return min(
+            min(proportional, rect.width / 2, rect.height / 2),
+            max(strokeBased, 6 * strokeScale)
+        )
     }
 
     static func fillPath(
@@ -212,17 +292,18 @@ enum ScreenshotAnnotationPath {
             )
         }
 
-        let headLength = min(distance * 0.45, max(6 * strokeScale, weight * 2.4))
-        let headHalfWidth = headLength * 0.56
-        let tipDirection = sample(1).direction
-        let headBase = offset(tip, tipDirection, along: -headLength)
-        let headLeft = offset(headBase, tipDirection, across: headHalfWidth)
-        let headRight = offset(headBase, tipDirection, across: -headHalfWidth)
+        let headLength = min(distance * 0.42, max(9 * strokeScale, weight * 2.8))
+        let headBaseProgress = max(0, 1 - headLength / distance)
+        let headAxis = sample(1).direction
+        let headBase = sample(headBaseProgress).point
+        let headHalfWidth = max(weight * 0.5, headLength * 0.68)
+        let headLeft = offset(headBase, headAxis, across: headHalfWidth)
+        let headRight = offset(headBase, headAxis, across: -headHalfWidth)
 
         if options.isTapered {
-            let bodyEnd = max(0.12, 1 - headLength / distance)
+            let bodyEnd = headBaseProgress
             let startHalfWidth = max(0.35 * strokeScale, 0.35)
-            let bodyHalfWidth = max(startHalfWidth, weight * 0.58)
+            let bodyHalfWidth = max(startHalfWidth, headHalfWidth * 0.46)
             let steps = 24
 
             func bodyEdge(_ index: Int, sign: CGFloat) -> CGPoint {
@@ -233,13 +314,49 @@ enum ScreenshotAnnotationPath {
                 return offset(sample.point, sample.direction, across: width * sign)
             }
 
-            var points = (0...steps).map { bodyEdge($0, sign: 1) }
-            points += [headLeft, tip, headRight]
-            points += (0...steps).reversed().map { bodyEdge($0, sign: -1) }
-            outline.addLines(between: points)
-            outline.closeSubpath()
-            fill.addLines(between: points)
-            fill.closeSubpath()
+            let positiveEdge = (0...steps).map { bodyEdge($0, sign: 1) }
+            let negativeEdge = (0...steps).reversed().map { bodyEdge($0, sign: -1) }
+            let connectedShape = CGMutablePath()
+            guard let tailLeft = positiveEdge.first,
+                  let shoulderLeft = positiveEdge.last,
+                  let shoulderRight = negativeEdge.first,
+                  let tailRight = negativeEdge.last else {
+                return (outline, nil)
+            }
+            connectedShape.move(to: tailLeft)
+            for point in positiveEdge.dropFirst() {
+                connectedShape.addLine(to: point)
+            }
+            connectedShape.addQuadCurve(
+                to: headLeft,
+                control: CGPoint(
+                    x: shoulderLeft.x + (headLeft.x - shoulderLeft.x) * 0.55,
+                    y: shoulderLeft.y + (headLeft.y - shoulderLeft.y) * 0.55
+                )
+            )
+            connectedShape.addLine(to: tip)
+            connectedShape.addQuadCurve(
+                to: headRight,
+                control: CGPoint(
+                    x: tip.x + (headRight.x - tip.x) * 0.72,
+                    y: tip.y + (headRight.y - tip.y) * 0.72
+                )
+            )
+            connectedShape.addQuadCurve(
+                to: shoulderRight,
+                control: CGPoint(
+                    x: headRight.x + (shoulderRight.x - headRight.x) * 0.45,
+                    y: headRight.y + (shoulderRight.y - headRight.y) * 0.45
+                )
+            )
+            for point in negativeEdge.dropFirst() {
+                connectedShape.addLine(to: point)
+            }
+            connectedShape.addLine(to: tailRight)
+            connectedShape.closeSubpath()
+
+            outline.addPath(connectedShape)
+            fill.addPath(connectedShape)
         } else {
             outline.move(to: start)
             if isCurved {
@@ -262,9 +379,10 @@ enum ScreenshotAnnotationPath {
         strokeScale: CGFloat = 1
     ) -> Bool {
         switch annotation.kind {
-        case .text, .step, .mosaic:
+        case .text, .step, .mosaic, .blur:
             return boundingRect.contains(point)
-        case .rectangle, .ellipse, .line, .arrow, .brush:
+        case .rectangle, .ellipse, .line, .arrow, .brush, .marker, .mosaicStroke,
+             .mosaicBlur:
             break
         }
         let path = cgPath(for: annotation, in: boundingRect, strokeScale: strokeScale)
@@ -273,10 +391,11 @@ enum ScreenshotAnnotationPath {
             return true
         }
         let strokeWidth = max(CGFloat(annotation.style.lineWidth) * strokeScale, minimumSlop * 2)
+        let rounded = annotation.style.resolvedCornerStyle == .rounded
         let hitArea = path.copy(
             strokingWithWidth: strokeWidth,
-            lineCap: .round,
-            lineJoin: .round,
+            lineCap: rounded ? .round : .square,
+            lineJoin: rounded ? .round : .miter,
             miterLimit: 10
         )
         return hitArea.contains(point)

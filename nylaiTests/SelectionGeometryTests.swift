@@ -50,25 +50,38 @@ final class SelectionGeometryTests: XCTestCase {
         XCTAssertEqual(SelectionGeometry.handle(at: points.left, in: bounds), .left)
     }
 
-    func testSelectionCornerHandlesUseDiagonalResizeCursors() {
-        XCTAssertEqual(
-            SelectionResizeHandle.topLeft.resizeCursorStyle,
-            .diagonalTopLeftBottomRight
+    @MainActor
+    func testEdgesUseHorizontalCursorAndCornersUseDiagonalCursors() throws {
+        for handle in [
+            SelectionResizeHandle.top,
+            .left,
+            .right,
+            .bottom,
+        ] {
+            XCTAssertTrue(handle.cursor === NSCursor.resizeLeftRight)
+        }
+        XCTAssertTrue(
+            SelectionResizeHandle.topLeft.cursor
+                === SelectionResizeHandle.bottomRight.cursor
         )
-        XCTAssertEqual(
-            SelectionResizeHandle.bottomRight.resizeCursorStyle,
-            .diagonalTopLeftBottomRight
+        XCTAssertTrue(
+            SelectionResizeHandle.topRight.cursor
+                === SelectionResizeHandle.bottomLeft.cursor
         )
-        XCTAssertEqual(
-            SelectionResizeHandle.topRight.resizeCursorStyle,
-            .diagonalTopRightBottomLeft
+        XCTAssertFalse(
+            SelectionResizeHandle.topLeft.cursor === NSCursor.resizeLeftRight
         )
-        XCTAssertEqual(
-            SelectionResizeHandle.bottomLeft.resizeCursorStyle,
-            .diagonalTopRightBottomLeft
+        XCTAssertFalse(
+            SelectionResizeHandle.topRight.cursor
+                === SelectionResizeHandle.topLeft.cursor
         )
-        XCTAssertEqual(SelectionResizeHandle.top.resizeCursorStyle, .vertical)
-        XCTAssertEqual(SelectionResizeHandle.left.resizeCursorStyle, .horizontal)
+        let horizontalAngle = try cursorMajorAxisAngle(SelectionResizeHandle.left.cursor)
+        let downwardAngle = try cursorMajorAxisAngle(SelectionResizeHandle.topLeft.cursor)
+        let upwardAngle = try cursorMajorAxisAngle(SelectionResizeHandle.topRight.cursor)
+        XCTAssertEqual(abs(horizontalAngle), 0, accuracy: 8)
+        XCTAssertEqual(abs(downwardAngle), 45, accuracy: 8)
+        XCTAssertEqual(abs(upwardAngle), 45, accuracy: 8)
+        XCTAssertNotEqual(downwardAngle.sign, upwardAngle.sign)
     }
 
     func testAnnotationSelectionUsesEightFreeHandlesAndOptionalProportionalResize() {
@@ -117,6 +130,43 @@ final class SelectionGeometryTests: XCTestCase {
             SelectionCornerRadiusGeometry.radius(startRadius: 12, dragDelta: CGPoint(x: 30, y: 30)),
             0
         )
+    }
+
+    private func cursorMajorAxisAngle(_ cursor: NSCursor) throws -> CGFloat {
+        let representation = try XCTUnwrap(NSBitmapImageRep(
+            data: try XCTUnwrap(cursor.image.tiffRepresentation)
+        ))
+        var count = 0.0
+        var sumX = 0.0
+        var sumY = 0.0
+        var sumXX = 0.0
+        var sumYY = 0.0
+        var sumXY = 0.0
+        for y in 0..<representation.pixelsHigh {
+            for x in 0..<representation.pixelsWide {
+                guard let color = representation.colorAt(x: x, y: y)?
+                    .usingColorSpace(.deviceRGB),
+                      color.alphaComponent > 0.5 else {
+                    continue
+                }
+                let px = Double(x)
+                let py = Double(y)
+                count += 1
+                sumX += px
+                sumY += py
+                sumXX += px * px
+                sumYY += py * py
+                sumXY += px * py
+            }
+        }
+        XCTAssertGreaterThan(count, 10)
+        let meanX = sumX / count
+        let meanY = sumY / count
+        let varianceX = sumXX / count - meanX * meanX
+        let varianceY = sumYY / count - meanY * meanY
+        let covariance = sumXY / count - meanX * meanY
+        let radians = 0.5 * atan2(2 * covariance, varianceX - varianceY)
+        return radians * 180 / .pi
     }
 
     func testSmallSelectionInteriorStaysAvailableForMoving() {

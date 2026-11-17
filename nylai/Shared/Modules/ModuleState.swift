@@ -3,6 +3,7 @@ import Observation
 
 enum NylaiModuleID: String, CaseIterable, Codable, Equatable, Sendable {
     case screenshot
+    case finderEnhancements
     case globalShortcuts
     case mouseGestures
     case clipboard
@@ -13,6 +14,8 @@ enum NylaiModuleID: String, CaseIterable, Codable, Equatable, Sendable {
         switch self {
         case .screenshot:
             L10n.shared.string("截图")
+        case .finderEnhancements:
+            L10n.shared.string("访达增强")
         case .globalShortcuts:
             L10n.shared.string("快捷键")
         case .mouseGestures:
@@ -30,6 +33,8 @@ enum NylaiModuleID: String, CaseIterable, Codable, Equatable, Sendable {
         switch self {
         case .screenshot:
             L10n.shared.string("截图、最近截图、滚动截图与自由拼图。")
+        case .finderEnhancements:
+            L10n.shared.string("在访达右键新建文件、复制路径或打开终端。")
         case .globalShortcuts:
             L10n.shared.string("在任意应用中响应已录入的组合键。")
         case .mouseGestures:
@@ -84,6 +89,8 @@ final class ModuleStateController {
         switch module {
         case .screenshot:
             preferences.screenshotEnabled
+        case .finderEnhancements:
+            preferences.finderEnhancementsEnabled
         case .globalShortcuts:
             shortcutRuntime.configuration?.isEnabled ?? true
         case .mouseGestures:
@@ -116,7 +123,8 @@ final class ModuleStateController {
                 }
             }
             return .available
-        case .screenshot, .mouseGestures, .clipboard, .windowSwitcher, .systemMonitor:
+        case .screenshot, .finderEnhancements, .mouseGestures, .clipboard,
+             .windowSwitcher, .systemMonitor:
             return .available
         }
     }
@@ -132,6 +140,8 @@ final class ModuleStateController {
             try shortcutRuntime.setGlobalEnabled(enabled)
         case .screenshot:
             preferences.screenshotEnabled = enabled
+        case .finderEnhancements:
+            preferences.finderEnhancementsEnabled = enabled
         case .mouseGestures:
             preferences.mouseGesturesEnabled = enabled
         case .clipboard:

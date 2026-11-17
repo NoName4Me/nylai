@@ -48,18 +48,64 @@ enum ScreenshotAnnotationRenderer {
                 width: rect.width,
                 height: rect.height
             )
-            if annotation.kind == .mosaic {
+            var renderAnnotation = annotation
+            renderAnnotation.start.y = sourceRect.minY + sourceRect.maxY - annotation.start.y
+            renderAnnotation.end.y = sourceRect.minY + sourceRect.maxY - annotation.end.y
+            if annotation.kind.usesPointPath {
+                renderAnnotation.points = annotation.points.map {
+                    PixelPoint(
+                        x: $0.x,
+                        y: sourceRect.minY + sourceRect.maxY - $0.y
+                    )
+                }
+            }
+            if annotation.kind.isMosaicEffect {
+                guard let processingRect = ScreenshotPixelProcessor.mosaicProcessingRect(
+                    for: annotation,
+                    in: source.geometry.pixelSize
+                ) else {
+                    throw ScreenshotOutputError.imageRenderingFailed
+                }
                 guard let processed = ScreenshotPixelProcessor.processedImage(
                     source: source.image,
-                    rect: sourceRect,
+                    rect: processingRect,
                     kind: annotation.kind,
                     intensity: annotation.style.lineWidth
                 ) else {
-                    continue
+                    throw ScreenshotOutputError.imageRenderingFailed
                 }
+                let processedRect = processingRect.cgRect.offsetBy(
+                    dx: -CGFloat(selection.minX),
+                    dy: -CGFloat(selection.minY)
+                )
+                let processedContextRect = CGRect(
+                    x: processedRect.minX,
+                    y: CGFloat(selection.height) - processedRect.maxY,
+                    width: processedRect.width,
+                    height: processedRect.height
+                )
                 context.saveGState()
-                context.interpolationQuality = .none
-                context.draw(processed, in: contextRect)
+                if annotation.kind.isFreehand {
+                    let strokePath = ScreenshotAnnotationPath.cgPath(
+                        for: renderAnnotation,
+                        in: contextRect,
+                        flipped: false
+                    ).copy(
+                        strokingWithWidth: CGFloat(annotation.style.lineWidth),
+                        lineCap: .round,
+                        lineJoin: .round,
+                        miterLimit: 10
+                    )
+                    context.addPath(strokePath)
+                    context.clip()
+                } else {
+                    context.addRect(contextRect)
+                    context.clip()
+                }
+                context.interpolationQuality = annotation.kind.redactionEffect == .blur
+                    ? .default
+                    : .none
+                context.draw(processed, in: processedContextRect)
                 context.restoreGState()
                 continue
             }
@@ -71,9 +117,6 @@ enum ScreenshotAnnotationRenderer {
                 drawStep(annotation, in: contextRect, context: context)
                 continue
             }
-            var renderAnnotation = annotation
-            renderAnnotation.start.y = sourceRect.minY + sourceRect.maxY - annotation.start.y
-            renderAnnotation.end.y = sourceRect.minY + sourceRect.maxY - annotation.end.y
             let path = ScreenshotAnnotationPath.cgPath(
                 for: renderAnnotation,
                 in: contextRect, flipped: false
@@ -85,10 +128,13 @@ enum ScreenshotAnnotationRenderer {
             }
             guard !renderAnnotation.isTaperedArrow else { continue }
             context.addPath(path)
-            context.setStrokeColor(annotation.style.color.cgColor)
+            context.setStrokeColor(annotation.style.color.nsColor.withAlphaComponent(
+                annotation.style.color.alpha * annotation.kind.strokeAlpha
+            ).cgColor)
             context.setLineWidth(CGFloat(annotation.style.lineWidth))
-            context.setLineCap(.round)
-            context.setLineJoin(.round)
+            let rounded = renderAnnotation.style.resolvedCornerStyle == .rounded
+            context.setLineCap(rounded ? .round : .square)
+            context.setLineJoin(rounded ? .round : .miter)
             if annotation.style.lineStyle == .dashed {
                 let width = CGFloat(annotation.style.lineWidth)
                 context.setLineDash(phase: 0, lengths: [width * 3, width * 2])
@@ -125,12 +171,23 @@ enum ScreenshotAnnotationRenderer {
         context: CGContext
     ) {
         guard let stepNumber = annotation.stepNumber else { return }
-        context.setFillColor(annotation.style.color.cgColor)
-        context.fillEllipse(in: rect)
+        let filled = annotation.style.fillsShape != false
+        if filled {
+            context.setFillColor(annotation.style.color.cgColor)
+            context.fillEllipse(in: rect)
+        } else {
+            context.setStrokeColor(annotation.style.color.cgColor)
+            let lineWidth = max(2, rect.height * 0.055)
+            context.setLineWidth(lineWidth)
+            context.strokeEllipse(in: rect.insetBy(
+                dx: lineWidth / 2,
+                dy: lineWidth / 2
+            ))
+        }
         let fontSize = rect.height * 0.56
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: fontSize, weight: .bold),
-            .foregroundColor: NSColor.white,
+            .foregroundColor: filled ? NSColor.white : annotation.style.color.nsColor,
         ]
         let line = CTLineCreateWithAttributedString(
             NSAttributedString(string: "\(stepNumber)", attributes: attributes)

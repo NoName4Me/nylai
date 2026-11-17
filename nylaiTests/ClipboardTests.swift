@@ -178,6 +178,35 @@ final class ClipboardTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(80))
         XCTAssertTrue(try XCTUnwrap(controller.window).isVisible)
     }
+
+    @MainActor
+    func testBeforePasteDefersKeyWithoutCreatingADismissalLoop() throws {
+        let fixture = try ClipboardFixture()
+        defer { fixture.remove() }
+        let controller = ClipboardPanelController(store: try XCTUnwrap(fixture.store))
+        defer { controller.close() }
+        controller.present()
+        let panel = try XCTUnwrap(controller.window as? NSPanel)
+        let model = try XCTUnwrap(controller.activeModel)
+        guard panel.isVisible, panel.isKeyWindow else {
+            throw XCTSkip("需要可获取窗口焦点的桌面。")
+        }
+
+        model.isPinned = true
+        model.onBeforePaste()
+
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertFalse(panel.isKeyWindow)
+
+        panel.makeKey()
+        guard panel.isKeyWindow else {
+            throw XCTSkip("当前桌面不允许重新取得窗口焦点。")
+        }
+        model.isPinned = false
+        model.onBeforePaste()
+        XCTAssertFalse(panel.isVisible)
+    }
+
     func testHistoryPanelReopensWithItsRecordsAndClosesAgain() async throws {
         let fixture = try ClipboardFixture()
         defer { fixture.remove() }
@@ -935,6 +964,140 @@ final class ClipboardTests: XCTestCase {
         XCTAssertTrue(didClose)
     }
 
+    func testMixedSelectionCopiesAsSingleRichTextItem() throws {
+        let fixture = try ClipboardFixture()
+        defer { fixture.remove() }
+        let store = try XCTUnwrap(fixture.store)
+        let text = try XCTUnwrap(addText("selected text", fixture: fixture, store: store))
+        let image = try makeImage(red: 0.2, green: 0.7, blue: 0.3)
+        let imageRecord = try XCTUnwrap(store.add(ClipboardCapture(
+            content: .image(image),
+            sourceBundleIdentifier: "com.example.Photos",
+            sourceName: "Photos",
+            contentHash: try XCTUnwrap(ClipboardContentIdentifier.image(image))
+        )))
+        let pasteboard = FakeClipboardPasteboard()
+        let model = ClipboardPanelModel(
+            store: store,
+            pasteboard: pasteboard,
+            targetApplication: nil
+        )
+        model.isSelecting = true
+
+        model.choose(text)
+        model.choose(imageRecord)
+
+        XCTAssertEqual(model.checkedIDs, [text.id, imageRecord.id])
+        XCTAssertEqual(model.checkedRecords.count, 2)
+        XCTAssertTrue(model.canCombineChecked)
+        model.copyChecked()
+        let richText = try XCTUnwrap(pasteboard.writtenRichText)
+        XCTAssertNil(pasteboard.writtenContents)
+        XCTAssertTrue(richText.plainText.contains("selected text"))
+        XCTAssertTrue(
+            richText.plainText.contains(L10n.shared.string("[图片]"))
+        )
+        XCTAssertGreaterThan(richText.attributedString.length, 0)
+        XCTAssertTrue(richText.attributedString.string.contains("\u{FFFC}"))
+        var hasAttachment = false
+        richText.attributedString.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: richText.attributedString.length)
+        ) { value, _, _ in
+            if value != nil { hasAttachment = true }
+        }
+        XCTAssertTrue(hasAttachment)
+        let html = try XCTUnwrap(String(data: richText.htmlData, encoding: .utf8))
+        XCTAssertTrue(html.contains("selected text"))
+        XCTAssertTrue(html.contains("data:image/png;base64,"))
+
+        model.checkedIDs = [text.id]
+        XCTAssertTrue(model.canCombineChecked)
+        model.copyChecked()
+        guard case .text(let singleText) = try XCTUnwrap(pasteboard.writtenContents?.first) else {
+            return XCTFail("纯文字选择应复制合并文本")
+        }
+        XCTAssertEqual(singleText, "selected text")
+    }
+
+    @MainActor
+    func testSystemPasteboardWritesMixedSelectionAsSingleRichTextItem() throws {
+        let pasteboard = NSPasteboard(
+            name: NSPasteboard.Name("nylai.tests.mixed.\(UUID().uuidString)")
+        )
+        defer { pasteboard.releaseGlobally() }
+        let writer = SystemClipboardPasteboard(pasteboard: pasteboard)
+        let image = try makeImage(red: 0.1, green: 0.4, blue: 0.8)
+        let richText = try ClipboardRichTextComposer.compose([
+            .text("first"),
+            .image(image),
+            .text("last"),
+        ])
+
+        try writer.writeRichText(
+            richText,
+            sourceBundleIdentifier: "com.example.Source"
+        )
+
+        let items = try XCTUnwrap(pasteboard.pasteboardItems)
+        XCTAssertEqual(items.count, 1)
+        XCTAssertNotNil(items[0].data(forType: .rtfd))
+        XCTAssertNotNil(items[0].data(forType: .html))
+        XCTAssertEqual(
+            items[0].string(forType: .string),
+            "first\n\(L10n.shared.string("[图片]"))\nlast"
+        )
+        let html = try XCTUnwrap(
+            items[0].string(forType: .html)
+                ?? items[0].data(forType: .html).flatMap {
+                    String(data: $0, encoding: .utf8)
+                }
+        )
+        XCTAssertTrue(html.contains("data:image/png;base64,"))
+        XCTAssertLessThan(
+            try XCTUnwrap(html.range(of: "first")?.lowerBound),
+            try XCTUnwrap(html.range(of: "data:image/png;base64,")?.lowerBound)
+        )
+        XCTAssertLessThan(
+            try XCTUnwrap(html.range(of: "data:image/png;base64,")?.lowerBound),
+            try XCTUnwrap(html.range(of: "last")?.lowerBound)
+        )
+    }
+
+    func testCheckedRecordsDeleteInOneBatch() throws {
+        let fixture = try ClipboardFixture()
+        defer { fixture.remove() }
+        let store = try XCTUnwrap(fixture.store)
+        let first = try XCTUnwrap(addText("delete-a", fixture: fixture, store: store))
+        let second = try XCTUnwrap(addText("delete-b", fixture: fixture, store: store))
+        let kept = try XCTUnwrap(addText("keep", fixture: fixture, store: store))
+        let model = ClipboardPanelModel(
+            store: store,
+            pasteboard: FakeClipboardPasteboard(),
+            targetApplication: nil
+        )
+        model.isSelecting = true
+        model.choose(first)
+        model.choose(second)
+
+        model.deleteChecked()
+
+        XCTAssertEqual(store.index.records.map(\.id), [kept.id])
+        XCTAssertTrue(model.checkedIDs.isEmpty)
+    }
+
+    func testClipboardPreviewLayoutKeepsTextReadableAndSelectableSize() {
+        let size = ClipboardPreviewLayout.size(
+            for: .text(String(repeating: "多行文字\n", count: 40)),
+            available: CGSize(width: 360, height: 320)
+        )
+
+        XCTAssertGreaterThanOrEqual(size.width, 240)
+        XCTAssertGreaterThanOrEqual(size.height, 180)
+        XCTAssertLessThanOrEqual(size.width, 360)
+        XCTAssertLessThanOrEqual(size.height, 320)
+    }
+
     func testPanelCopyFailureKeepsPanelOpenAndShowsError() throws {
         let fixture = try ClipboardFixture()
         defer { fixture.remove() }
@@ -982,6 +1145,55 @@ final class ClipboardTests: XCTestCase {
         await waitUntil { reportedError != nil }
 
         XCTAssertEqual(reportedError as? ClipboardDirectPasteError, .targetChanged)
+    }
+
+    func testPinnedPasteReleasesKeyboardFocusBeforeEveryPastePath() async throws {
+        let fixture = try ClipboardFixture()
+        defer { fixture.remove() }
+        let store = try XCTUnwrap(fixture.store)
+        let first = try XCTUnwrap(addText("first", fixture: fixture, store: store))
+        let second = try XCTUnwrap(addText("second", fixture: fixture, store: store))
+        let snippets = try SnippetStore(
+            fileURL: fixture.root.appending(path: "snippets.json")
+        )
+        let snippet = SavedSnippet(
+            name: "saved",
+            group: "",
+            text: "snippet"
+        )
+        try snippets.save(snippet)
+        let target = FakeRunningClipboardTarget()
+        let paster = RecordingClipboardPaster()
+        let focusSnapshot = ClipboardFocusSnapshot(
+            focusedElement: AXUIElementCreateSystemWide(),
+            owningWindow: AXUIElementCreateSystemWide()
+        )
+        let model = ClipboardPanelModel(
+            store: store,
+            pasteboard: FakeClipboardPasteboard(),
+            targetApplication: target.application,
+            focusSnapshot: focusSnapshot,
+            directPaster: paster,
+            snippets: snippets
+        )
+        model.isPinned = true
+        var releasedFocusCount = 0
+        var didClose = false
+        model.onBeforePaste = { releasedFocusCount += 1 }
+        model.onClose = { didClose = true }
+
+        model.directPaste(first)
+        model.directPaste(second)
+        model.copySnippet(snippet, paste: true)
+        model.isSelecting = true
+        model.choose(first)
+        model.choose(second)
+        model.copyChecked(paste: true)
+        await waitUntil { paster.callCount == 4 }
+
+        XCTAssertEqual(releasedFocusCount, 4)
+        XCTAssertFalse(didClose)
+        XCTAssertEqual(paster.focusSnapshotCount, 4)
     }
 
     func testImageSearchMatchesSourceButNotPreviewOrPixels() throws {
@@ -1102,6 +1314,8 @@ private final class FakeClipboardPasteboard: ClipboardPasteboardAccessing {
     private(set) var inspectCount = 0
     private(set) var changeCountReadCount = 0
     private(set) var written: ClipboardContent?
+    private(set) var writtenContents: [ClipboardContent]?
+    private(set) var writtenRichText: ClipboardRichTextPayload?
 
     var changeCount: Int {
         get {
@@ -1157,6 +1371,30 @@ private final class FakeClipboardPasteboard: ClipboardPasteboardAccessing {
             throw writeError
         }
         written = content
+        writtenContents = [content]
+        changeCount += 1
+    }
+
+    func write(
+        _ contents: [ClipboardContent],
+        sourceBundleIdentifier: String
+    ) throws {
+        if let writeError {
+            throw writeError
+        }
+        writtenContents = contents
+        written = contents.first
+        changeCount += 1
+    }
+
+    func writeRichText(
+        _ richText: ClipboardRichTextPayload,
+        sourceBundleIdentifier: String
+    ) throws {
+        if let writeError {
+            throw writeError
+        }
+        writtenRichText = richText
         changeCount += 1
     }
 }
@@ -1189,7 +1427,8 @@ private final class DeferredClipboardPaster: ClipboardDirectPasting {
         target: any ClipboardPasteTarget,
         expectedBundleIdentifier: String,
         expectedChangeCount: Int,
-        pasteboard: any ClipboardPasteboardAccessing
+        pasteboard: any ClipboardPasteboardAccessing,
+        focusSnapshot: ClipboardFocusSnapshot?
     ) async -> Result<Void, Error> {
         started = true
         startWaiters.forEach { $0.resume() }
@@ -1205,6 +1444,24 @@ private final class DeferredClipboardPaster: ClipboardDirectPasting {
     func finish(with result: Result<Void, Error>) {
         continuation?.resume(returning: result)
         continuation = nil
+    }
+}
+
+@MainActor
+private final class RecordingClipboardPaster: ClipboardDirectPasting {
+    private(set) var callCount = 0
+    private(set) var focusSnapshotCount = 0
+
+    func pasteAfterActivating(
+        target: any ClipboardPasteTarget,
+        expectedBundleIdentifier: String,
+        expectedChangeCount: Int,
+        pasteboard: any ClipboardPasteboardAccessing,
+        focusSnapshot: ClipboardFocusSnapshot?
+    ) async -> Result<Void, Error> {
+        callCount += 1
+        if focusSnapshot != nil { focusSnapshotCount += 1 }
+        return .success(())
     }
 }
 

@@ -26,6 +26,170 @@ protocol ClipboardPasteboardAccessing: AnyObject {
     func data(forItemAt index: Int, type: String) -> Data?
     func string(forItemAt index: Int, type: String) -> String?
     func write(_ content: ClipboardContent, sourceBundleIdentifier: String) throws
+    func write(_ contents: [ClipboardContent], sourceBundleIdentifier: String) throws
+    func writeRichText(
+        _ richText: ClipboardRichTextPayload,
+        sourceBundleIdentifier: String
+    ) throws
+}
+
+extension ClipboardPasteboardAccessing {
+    func write(
+        _ contents: [ClipboardContent],
+        sourceBundleIdentifier: String
+    ) throws {
+        guard contents.count == 1, let content = contents.first else {
+            throw ClipboardPasteboardError.writeFailed
+        }
+        try write(content, sourceBundleIdentifier: sourceBundleIdentifier)
+    }
+
+    func writeRichText(
+        _ richText: ClipboardRichTextPayload,
+        sourceBundleIdentifier: String
+    ) throws {
+        try write(
+            .text(richText.plainText),
+            sourceBundleIdentifier: sourceBundleIdentifier
+        )
+    }
+}
+
+struct ClipboardRichTextPayload {
+    let attributedString: NSAttributedString
+    let htmlData: Data
+    let plainText: String
+}
+
+@MainActor
+enum ClipboardRichTextComposer {
+    private static let maximumDisplayWidth: CGFloat = 520
+    private static let maximumDisplayHeight: CGFloat = 640
+    private static let maximumPayloadBytes = 64 * 1_024 * 1_024
+
+    static func compose(_ contents: [ClipboardContent]) throws -> ClipboardRichTextPayload {
+        guard !contents.isEmpty else {
+            throw ClipboardPasteboardError.writeFailed
+        }
+        let result = NSMutableAttributedString()
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 3
+        paragraph.paragraphSpacing = 8
+        let textAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13),
+            .foregroundColor: NSColor.textColor,
+            .paragraphStyle: paragraph,
+        ]
+        var htmlBlocks: [String] = []
+        var plainBlocks: [String] = []
+        var totalBytes = 0
+
+        for (index, content) in contents.enumerated() {
+            switch content {
+            case .text(let text):
+                guard let data = text.data(using: .utf8),
+                      data.count <= ClipboardLimits.maximumTextBytes else {
+                    throw ClipboardPasteboardError.writeFailed
+                }
+                totalBytes += data.count
+                result.append(NSAttributedString(
+                    string: text,
+                    attributes: textAttributes
+                ))
+                if index < contents.count - 1 {
+                    result.append(NSAttributedString(
+                        string: "\n",
+                        attributes: textAttributes
+                    ))
+                }
+                htmlBlocks.append(
+                    "<div style=\"white-space:pre-wrap\">\(htmlEscaped(text))</div>"
+                )
+                plainBlocks.append(text)
+            case .image(let image):
+                let bitmap = NSBitmapImageRep(cgImage: image)
+                guard let png = bitmap.representation(using: .png, properties: [:]),
+                      png.count <= ClipboardLimits.maximumImageBytes else {
+                    throw ClipboardPasteboardError.writeFailed
+                }
+                totalBytes += png.count
+                let size = displaySize(for: image)
+                let attachment = NSTextAttachment()
+                let wrapper = FileWrapper(regularFileWithContents: png)
+                wrapper.preferredFilename = "image-\(index + 1).png"
+                attachment.fileWrapper = wrapper
+                attachment.image = NSImage(cgImage: image, size: size)
+                attachment.bounds = CGRect(origin: .zero, size: size)
+                result.append(NSAttributedString(attachment: attachment))
+                if index < contents.count - 1 {
+                    result.append(NSAttributedString(
+                        string: "\n",
+                        attributes: textAttributes
+                    ))
+                }
+                htmlBlocks.append(
+                    """
+                    <div><img src="data:image/png;base64,\(png.base64EncodedString())" \
+                    style="max-width:\(Int(maximumDisplayWidth))px;\
+                    max-height:\(Int(maximumDisplayHeight))px;width:auto;height:auto;"></div>
+                    """
+                )
+                plainBlocks.append(L10n.shared.string("[图片]"))
+            }
+            guard totalBytes <= maximumPayloadBytes else {
+                throw ClipboardPasteboardError.writeFailed
+            }
+        }
+
+        let plainText = plainBlocks.joined(separator: "\n")
+        guard let plainData = plainText.data(using: .utf8),
+              plainData.count <= ClipboardLimits.maximumTextBytes else {
+            throw ClipboardPasteboardError.writeFailed
+        }
+        let html = """
+        <!doctype html>
+        <html><head><meta charset="utf-8"></head>
+        <body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;\
+        font-size:13px;line-height:1.45;color:#222;">
+        \(htmlBlocks.joined(separator: "\n"))
+        </body></html>
+        """
+        guard let htmlData = html.data(using: .utf8),
+              htmlData.count <= maximumPayloadBytes else {
+            throw ClipboardPasteboardError.writeFailed
+        }
+        return ClipboardRichTextPayload(
+            attributedString: result,
+            htmlData: htmlData,
+            plainText: plainText
+        )
+    }
+
+    private static func displaySize(for image: CGImage) -> NSSize {
+        let width = CGFloat(image.width)
+        let height = CGFloat(image.height)
+        guard width > 0, height > 0 else {
+            return NSSize(width: 1, height: 1)
+        }
+        let scale = min(
+            1,
+            maximumDisplayWidth / width,
+            maximumDisplayHeight / height
+        )
+        return NSSize(
+            width: max(1, (width * scale).rounded()),
+            height: max(1, (height * scale).rounded())
+        )
+    }
+
+    private static func htmlEscaped(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+    }
 }
 
 enum ClipboardPasteboardError: LocalizedError, Equatable {
@@ -122,43 +286,86 @@ final class SystemClipboardPasteboard: ClipboardPasteboardAccessing {
     }
 
     func write(_ content: ClipboardContent, sourceBundleIdentifier: String) throws {
-        pasteboard.clearContents()
-        let bodyType: NSPasteboard.PasteboardType
-        let bodyData: Data
-        switch content {
-        case .text(let text):
-            guard let data = text.data(using: .utf8),
-                  data.count <= ClipboardLimits.maximumTextBytes else {
-                throw ClipboardPasteboardError.writeFailed
-            }
-            bodyType = .string
-            bodyData = data
-        case .image(let image):
-            let bitmap = NSBitmapImageRep(cgImage: image)
-            guard let data = bitmap.representation(using: .png, properties: [:]),
-                  data.count <= ClipboardLimits.maximumImageBytes else {
-                throw ClipboardPasteboardError.writeFailed
-            }
-            bodyType = .png
-            bodyData = data
+        try write([content], sourceBundleIdentifier: sourceBundleIdentifier)
+    }
+
+    func write(_ contents: [ClipboardContent], sourceBundleIdentifier: String) throws {
+        guard !contents.isEmpty else {
+            throw ClipboardPasteboardError.writeFailed
         }
-        pasteboard.declareTypes(
-            [
-                bodyType,
-                NSPasteboard.PasteboardType(Self.selfWriteType),
-                NSPasteboard.PasteboardType(Self.sourceType),
-            ],
-            owner: nil
-        )
-        guard pasteboard.setData(bodyData, forType: bodyType),
-              pasteboard.setData(
+        let items = try contents.map { content -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            switch content {
+            case .text(let text):
+                guard let data = text.data(using: .utf8),
+                      data.count <= ClipboardLimits.maximumTextBytes,
+                      item.setData(data, forType: .string) else {
+                    throw ClipboardPasteboardError.writeFailed
+                }
+            case .image(let image):
+                let bitmap = NSBitmapImageRep(cgImage: image)
+                guard let data = bitmap.representation(using: .png, properties: [:]),
+                      data.count <= ClipboardLimits.maximumImageBytes,
+                      item.setData(data, forType: .png) else {
+                    throw ClipboardPasteboardError.writeFailed
+                }
+            }
+            guard item.setData(
                 Data(),
                 forType: NSPasteboard.PasteboardType(Self.selfWriteType)
-              ),
-              pasteboard.setString(
+            ),
+            item.setString(
                 sourceBundleIdentifier,
                 forType: NSPasteboard.PasteboardType(Self.sourceType)
+            ) else {
+                throw ClipboardPasteboardError.writeFailed
+            }
+            return item
+        }
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects(items) else {
+            throw ClipboardPasteboardError.writeFailed
+        }
+    }
+
+    func writeRichText(
+        _ richText: ClipboardRichTextPayload,
+        sourceBundleIdentifier: String
+    ) throws {
+        let range = NSRange(
+            location: 0,
+            length: richText.attributedString.length
+        )
+        let item = NSPasteboardItem()
+        var wroteRichRepresentation = false
+        if let wrapper = richText.attributedString.rtfdFileWrapper(
+            from: range,
+            documentAttributes: [
+                .documentType: NSAttributedString.DocumentType.rtfd,
+            ]
+        ),
+        let data = wrapper.serializedRepresentation,
+        item.setData(data, forType: .rtfd) {
+            wroteRichRepresentation = true
+        }
+        if !richText.htmlData.isEmpty,
+           item.setData(richText.htmlData, forType: .html) {
+            wroteRichRepresentation = true
+        }
+        guard wroteRichRepresentation,
+              item.setString(richText.plainText, forType: .string),
+              item.setData(
+                  Data(),
+                  forType: NSPasteboard.PasteboardType(Self.selfWriteType)
+              ),
+              item.setString(
+                  sourceBundleIdentifier,
+                  forType: NSPasteboard.PasteboardType(Self.sourceType)
               ) else {
+            throw ClipboardPasteboardError.writeFailed
+        }
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects([item]) else {
             throw ClipboardPasteboardError.writeFailed
         }
     }

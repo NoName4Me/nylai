@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		10000000000000000000000D /* nylaiFinderSync.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 100000000000000000000001 /* nylaiFinderSync.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		10000000000000000000000F /* nylai/Features/FinderEnhancements/FinderMenuActionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000000E /* nylai/Features/FinderEnhancements/FinderMenuActionStore.swift */; };
+		100000000000000000000011 /* nylai/Features/FinderEnhancements/FinderEnhancementAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000010 /* nylai/Features/FinderEnhancements/FinderEnhancementAvailability.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -47,6 +48,7 @@
 		000000000000000000000007 /* nylaiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = nylaiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000001 /* nylaiFinderSync.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = nylaiFinderSync.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		10000000000000000000000E /* nylai/Features/FinderEnhancements/FinderMenuActionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = nylai/Features/FinderEnhancements/FinderMenuActionStore.swift; sourceTree = SOURCE_ROOT; };
+		100000000000000000000010 /* nylai/Features/FinderEnhancements/FinderEnhancementAvailability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = nylai/Features/FinderEnhancements/FinderEnhancementAvailability.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -85,6 +87,7 @@
 			children = (
 				100000000000000000000002 /* nylaiFinderSync */,
 				10000000000000000000000E /* nylai/Features/FinderEnhancements/FinderMenuActionStore.swift */,
+				100000000000000000000010 /* nylai/Features/FinderEnhancements/FinderEnhancementAvailability.swift */,
 				000000000000000000000003 /* nylai */,
 				000000000000000000000004 /* nylaiTests */,
 				000000000000000000000005 /* Products */,
@@ -251,6 +254,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				10000000000000000000000F /* nylai/Features/FinderEnhancements/FinderMenuActionStore.swift in Sources */,
+				100000000000000000000011 /* nylai/Features/FinderEnhancements/FinderEnhancementAvailability.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

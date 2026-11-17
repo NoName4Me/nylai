@@ -3,6 +3,12 @@ import AppKit
 struct FinderEnhancementRequest {
     enum Action: String {
         case newFile = "new-file"
+        case newWord = "new-word"
+        case newExcel = "new-excel"
+        case newPowerPoint = "new-powerpoint"
+        case newWPSWriter = "new-wps-writer"
+        case newWPSSpreadsheet = "new-wps-spreadsheet"
+        case newWPSPresentation = "new-wps-presentation"
         case copyPath = "copy-path"
         case terminal
     }
@@ -77,17 +83,35 @@ struct FinderEnhancementRequest {
     }
 
     static func createUntitledFile(in directory: URL, name: String) throws -> URL {
+        try createUntitledFile(in: directory, name: name, contents: Data())
+    }
+
+    static func createUntitledFile(
+        in directory: URL,
+        name: String,
+        contents: Data
+    ) throws -> URL {
         let stem = (name as NSString).deletingPathExtension
         let suffix = (name as NSString).pathExtension
         for index in 1...1000 {
             let numbered = index == 1 ? name : "\(stem) \(index)" + (suffix.isEmpty ? "" : "." + suffix)
             do {
-                return try createFile(named: numbered, in: directory)
+                return try createFile(named: numbered, in: directory, contents: contents)
             } catch let error as CocoaError where error.code == .fileWriteFileExists {
                 continue
             }
         }
         throw CocoaError(.fileWriteFileExists)
+    }
+
+    static func createFile(named name: String, in directory: URL, contents: Data) throws -> URL {
+        guard !name.isEmpty, name != ".", name != "..",
+              !name.contains("/"), !name.contains(":"), !name.contains("\0") else {
+            throw CocoaError(.fileWriteInvalidFileName)
+        }
+        let destination = directory.appendingPathComponent(name, isDirectory: false)
+        try contents.write(to: destination, options: .withoutOverwriting)
+        return destination
     }
 }
 
@@ -122,6 +146,10 @@ enum FinderEnhancementAction {
                 )
                 NSWorkspace.shared.activateFileViewerSelecting([created])
                 Task { await FinderInlineRename.begin(for: created) }
+            case .newWord, .newExcel, .newPowerPoint,
+                 .newWPSWriter, .newWPSSpreadsheet, .newWPSPresentation:
+                let directory = try request.directory()
+                try FinderDocumentCreator.create(request.action, in: directory)
             case .terminal:
                 let directory = try request.directory()
                 guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {

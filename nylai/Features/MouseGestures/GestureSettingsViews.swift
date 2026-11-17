@@ -240,12 +240,13 @@ private enum GestureStroke {
     }
 }
 
-private enum GestureEditorActionKind: String, CaseIterable, Identifiable {
-    case nylai
+enum GestureEditorActionKind: String, CaseIterable, Identifiable {
     case application
     case shortcut
+    case nylai
 
     var id: String { rawValue }
+    static var editorTabOrder: [Self] { [.application, .shortcut, .nylai] }
 
     var title: String {
         switch self {
@@ -345,7 +346,7 @@ struct GestureRuleEditorView: View {
                 }
                 Spacer()
                 Picker("动作", selection: $actionKind) {
-                    ForEach(GestureEditorActionKind.allCases) {
+                    ForEach(GestureEditorActionKind.editorTabOrder) {
                         Text($0.title).tag($0)
                     }
                 }

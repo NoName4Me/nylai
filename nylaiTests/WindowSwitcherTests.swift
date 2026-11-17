@@ -363,6 +363,130 @@ final class WindowSwitcherTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testWindowCloserPressesResolvedWindowCloseAction() async throws {
+        let window = AXUIElementCreateSystemWide()
+        var resolvedID: CGWindowID?
+        var pressedWindow: AXUIElement?
+        let closer = WindowSwitcherWindowCloser(
+            isAccessibilityGranted: { true },
+            applicationIsAvailable: { _, _ in true },
+            resolveWindow: { _, windowID, _, _ in
+                resolvedID = windowID
+                return window
+            },
+            pressClose: {
+                pressedWindow = $0
+                return true
+            }
+        )
+
+        try await closer.close(
+            windowID: 42,
+            processIdentifier: 7,
+            bundleIdentifier: "com.example.Target",
+            title: "Document",
+            frame: CGRect(x: 10, y: 20, width: 800, height: 600)
+        )
+
+        XCTAssertEqual(resolvedID, 42)
+        XCTAssertTrue(try XCTUnwrap(pressedWindow) === window)
+    }
+
+    @MainActor
+    func testWindowCloserRequiresAccessibilityAndCloseCapability() async {
+        let closer = WindowSwitcherWindowCloser(
+            isAccessibilityGranted: { false },
+            applicationIsAvailable: { _, _ in true },
+            resolveWindow: { _, _, _, _ in AXUIElementCreateSystemWide() },
+            pressClose: { _ in true }
+        )
+        do {
+            try await closer.close(
+                windowID: 42,
+                processIdentifier: 7,
+                bundleIdentifier: "com.example.Target",
+                title: nil,
+                frame: .zero
+            )
+            XCTFail("缺少辅助功能权限时不得执行关闭")
+        } catch {
+            XCTAssertEqual(
+                error as? WindowSwitcherError,
+                .accessibilityUnavailable
+            )
+        }
+
+        let unsupported = WindowSwitcherWindowCloser(
+            isAccessibilityGranted: { true },
+            applicationIsAvailable: { _, _ in true },
+            resolveWindow: { _, _, _, _ in AXUIElementCreateSystemWide() },
+            pressClose: { _ in false }
+        )
+        do {
+            try await unsupported.close(
+                windowID: 42,
+                processIdentifier: 7,
+                bundleIdentifier: "com.example.Target",
+                title: nil,
+                frame: .zero
+            )
+            XCTFail("没有可关闭按钮时不得移除窗口")
+        } catch {
+            XCTAssertEqual(error as? WindowSwitcherError, .windowNotClosable)
+        }
+    }
+
+    @MainActor
+    func testWindowCloseActionIsForwardedAndDeduplicatedWhileClosing() throws {
+        let model = WindowSwitcherPanelModel()
+        let window = window(id: 11)
+        model.applications = [
+            application(id: 1, name: "Editor", windows: [window]),
+        ]
+        var closed: [CGWindowID] = []
+        model.onCloseWindow = { closed.append($0.id) }
+
+        model.closeWindow(window)
+        model.closingWindowIDs.insert(window.id)
+        model.closeWindow(window)
+
+        XCTAssertEqual(closed, [window.id])
+    }
+
+    @MainActor
+    func testRepeatedBeginDuringWindowCloseReleasesInputSession() async throws {
+        let window = window(id: 11)
+        let snapshot = WindowSwitcherSnapshot(
+            applications: [
+                application(id: 1, name: "Editor", windows: [window]),
+            ],
+            currentApplicationID: 1
+        )
+        let monitor = WindowSwitcherEventMonitor()
+        let controller = WindowSwitcherController(
+            monitor: monitor,
+            catalogProvider: StubWindowSwitcherCatalog(snapshot: snapshot),
+            activator: ImmediateWindowSwitcherActivator(),
+            windowCloser: SlowWindowSwitcherCloser(),
+            windowCapturer: UnavailableWindowCapturer(),
+            isInteractionSuppressed: { false }
+        )
+
+        controller.handle(.begin(.applications, reverse: false))
+        let didStartClosing = await waitUntil {
+            controller.closeWindow(window)
+            return !controller.isActive
+        }
+        XCTAssertTrue(didStartClosing)
+
+        monitor.setSessionActive(true)
+        controller.handle(.begin(.windows, reverse: false))
+
+        XCTAssertFalse(monitor.isSessionActive)
+        controller.cancel()
+    }
+
     private func application(
         id: pid_t,
         name: String,
@@ -398,5 +522,58 @@ final class WindowSwitcherTests: XCTestCase {
             applicationName: nil,
             bundleIdentifier: "com.example.\(pid)"
         )
+    }
+
+    @MainActor
+    private func waitUntil(
+        _ condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        for _ in 0..<100 {
+            if condition() { return true }
+            await Task.yield()
+        }
+        return condition()
+    }
+}
+
+@MainActor
+private final class StubWindowSwitcherCatalog: WindowSwitcherCatalogProviding {
+    let snapshot: WindowSwitcherSnapshot
+
+    init(snapshot: WindowSwitcherSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    func makeSnapshot() async throws -> WindowSwitcherSnapshot {
+        snapshot
+    }
+}
+
+@MainActor
+private final class ImmediateWindowSwitcherActivator: WindowSwitcherActivating {
+    func activate(_ target: WindowSwitcherTarget) async throws {}
+}
+
+@MainActor
+private final class SlowWindowSwitcherCloser: WindowSwitcherWindowClosing {
+    func close(
+        windowID: CGWindowID,
+        processIdentifier: pid_t,
+        bundleIdentifier: String?,
+        title: String?,
+        frame: CGRect
+    ) async throws {
+        try await Task.sleep(for: .seconds(10))
+    }
+}
+
+@MainActor
+private final class UnavailableWindowCapturer: WindowCapturing {
+    func windowCandidates() async throws -> [WindowCaptureCandidate] {
+        []
+    }
+
+    func captureWindow(_ windowID: CGWindowID) async throws -> CGImage {
+        throw WindowSwitcherError.windowUnavailable
     }
 }

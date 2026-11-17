@@ -32,14 +32,11 @@ protocol ApplicationLaunching: AnyObject {
     func openApplication(at url: URL, activates: Bool) async throws -> NSRunningApplication
 }
 
-struct RunningApplicationState: Equatable {
+struct RunningApplicationState {
     let isActive: Bool
+    let hasVisibleWindow: @MainActor () -> Bool
     let hide: () -> Bool
-    let activate: () -> Bool
-
-    static func == (lhs: RunningApplicationState, rhs: RunningApplicationState) -> Bool {
-        lhs.isActive == rhs.isActive
-    }
+    let activate: @MainActor () async throws -> Void
 }
 
 @MainActor
@@ -48,10 +45,20 @@ final class WorkspaceApplicationLauncher: ApplicationLaunching {
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first else {
             return nil
         }
+        let activationService = ApplicationActivationService()
         return RunningApplicationState(
             isActive: app.isActive,
+            hasVisibleWindow: {
+                activationService.hasVisibleWindow(
+                    processIdentifier: app.processIdentifier
+                )
+            },
             hide: { app.hide() },
-            activate: { app.activate(options: [.activateAllWindows]) }
+            activate: {
+                try await activationService.activate(
+                    ApplicationActivationTarget(app)
+                )
+            }
         )
     }
 
@@ -93,7 +100,7 @@ final class ApplicationShortcutHandler {
         defer { pendingBundleIdentifiers.remove(target.bundleIdentifier) }
 
         if let app = launcher.runningApplication(bundleIdentifier: target.bundleIdentifier) {
-            return handleRunning(app, target: target)
+            return await handleRunning(app, target: target)
         }
 
         let url = URL(fileURLWithPath: target.path)
@@ -123,16 +130,30 @@ final class ApplicationShortcutHandler {
     private func handleRunning(
         _ app: RunningApplicationState,
         target: ApplicationShortcutTarget
-    ) -> ApplicationLaunchResult {
+    ) async -> ApplicationLaunchResult? {
         if app.isActive {
+            guard app.hasVisibleWindow() else {
+                do {
+                    try await app.activate()
+                    return .activated
+                } catch {
+                    presentError(error)
+                    return nil
+                }
+            }
             if target.hidesOnRepeatTrigger {
                 _ = app.hide()
                 return .hidden
             }
             return .unchanged
         }
-        _ = app.activate()
-        return .activated
+        do {
+            try await app.activate()
+            return .activated
+        } catch {
+            presentError(error)
+            return nil
+        }
     }
 
     static func showError(_ error: Error) {

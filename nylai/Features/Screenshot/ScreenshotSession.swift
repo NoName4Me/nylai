@@ -38,12 +38,21 @@ struct ScreenshotAnnotation: Identifiable, Equatable {
         brushPoints: [PixelPoint],
         style: ScreenshotAnnotationStyle = .default
     ) {
-        let resolvedPoints = brushPoints.isEmpty
+        self.init(id: id, points: brushPoints, kind: .brush, style: style)
+    }
+
+    init(
+        id: UUID = UUID(),
+        points: [PixelPoint],
+        kind: ScreenshotAnnotationKind,
+        style: ScreenshotAnnotationStyle = .default
+    ) {
+        let resolvedPoints = points.isEmpty
             ? [PixelPoint(x: 0, y: 0)]
-            : brushPoints
+            : points
         self.init(
             id: id,
-            kind: .brush,
+            kind: kind,
             start: resolvedPoints[0],
             end: resolvedPoints[resolvedPoints.count - 1],
             style: style,
@@ -70,7 +79,7 @@ struct ScreenshotAnnotation: Identifiable, Equatable {
 
     var rect: PixelRect {
         get {
-            let samplePoints = kind == .brush && !points.isEmpty ? points : [start, end]
+            let samplePoints = kind.usesPointPath && !points.isEmpty ? points : [start, end]
             let minX = samplePoints.map(\.x).min() ?? start.x
             let minY = samplePoints.map(\.y).min() ?? start.y
             let maxX = samplePoints.map(\.x).max() ?? end.x
@@ -84,7 +93,7 @@ struct ScreenshotAnnotation: Identifiable, Equatable {
         }
         set {
             let oldRect = rect
-            if kind == .brush, !points.isEmpty {
+            if kind.usesPointPath, !points.isEmpty {
                 self.points = points.map { transformed($0, from: oldRect, to: newValue) }
                 start = points[0]
                 end = points[points.count - 1]

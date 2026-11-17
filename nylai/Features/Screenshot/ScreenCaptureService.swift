@@ -89,8 +89,9 @@ final class ScreenCaptureService: ScreenCapturing, WindowCapturing {
             let windowsByID = Dictionary(
                 uniqueKeysWithValues: content.windows.map { ($0.windowID, $0) }
             )
+            let ownProcessIdentifier = ProcessInfo.processInfo.processIdentifier
             let frontToBackIDs = Self.frontToBackWindowIDs(
-                excludingProcessID: nil,
+                excludingProcessID: ownProcessIdentifier,
                 includeOffscreenWindows: includeOffscreenWindows
             )
             let displaySpaces = Self.displayCoordinateSpaces()
@@ -112,6 +113,7 @@ final class ScreenCaptureService: ScreenCapturing, WindowCapturing {
             )
             return frontToBackIDs.compactMap { windowID in
                 guard let window = windowsByID[windowID],
+                      window.owningApplication?.processID != ownProcessIdentifier,
                       (!includeOffscreenWindows
                         || Self.isSwitchableApplicationWindow(
                             window,

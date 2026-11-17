@@ -579,7 +579,7 @@ final class LongScreenshotEditorWindowController: NSWindowController {
         overlayView.canUndo = model.session.canUndo
         overlayView.canRedo = model.session.canRedo
         overlayView.canDelete = model.session.canDeleteSelectedAnnotation
-        if let activeKind = overlayView.activeTool.annotationKind {
+        if let activeKind = overlayView.activeAnnotationKind {
             model.activeStyleKind = activeKind
         } else {
             model.activeStyleKind = nil

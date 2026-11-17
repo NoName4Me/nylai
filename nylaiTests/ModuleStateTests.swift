@@ -26,6 +26,7 @@ final class ModuleStateTests: XCTestCase {
         controller.onLifecycleChange = { changes.append(($0, $1)) }
 
         XCTAssertTrue(controller.isEnabled(.screenshot))
+        XCTAssertTrue(controller.isEnabled(.finderEnhancements))
         XCTAssertTrue(controller.isEnabled(.globalShortcuts))
         XCTAssertFalse(controller.isEnabled(.mouseGestures))
         XCTAssertFalse(controller.isEnabled(.clipboard))
@@ -37,14 +38,16 @@ final class ModuleStateTests: XCTestCase {
         try controller.setEnabled(true, for: .globalShortcuts)
         XCTAssertEqual(runtime.configuration?.isEnabled, true)
         XCTAssertEqual(controller.status(for: .globalShortcuts), .available)
+        try controller.setEnabled(false, for: .finderEnhancements)
         try controller.setEnabled(false, for: .screenshot)
         try controller.setEnabled(true, for: .clipboard)
 
         XCTAssertEqual(
             changes.map(\.0),
-            [.globalShortcuts, .globalShortcuts, .screenshot, .clipboard]
+            [.globalShortcuts, .globalShortcuts, .finderEnhancements, .screenshot, .clipboard]
         )
-        XCTAssertEqual(changes.map(\.1), [false, true, false, true])
+        XCTAssertEqual(changes.map(\.1), [false, true, false, false, true])
+        XCTAssertFalse(AppPreferences(defaults: defaults).finderEnhancementsEnabled)
         XCTAssertTrue(AppPreferences(defaults: defaults).clipboardEnabled)
     }
 

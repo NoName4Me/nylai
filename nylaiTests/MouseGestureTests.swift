@@ -4,6 +4,13 @@ import XCTest
 
 @MainActor
 final class MouseGestureTests: XCTestCase {
+    func testActionEditorTabsPutNylaiActionsLast() {
+        XCTAssertEqual(
+            GestureEditorActionKind.editorTabOrder.map(\.rawValue),
+            ["application", "shortcut", "nylai"]
+        )
+    }
+
     func testNoisyDiagonalAndOppositeOrderOfLStrokes() {
         func recognize(_ points: [CGPoint]) -> GesturePath? {
             var recognizer = GesturePathRecognizer()

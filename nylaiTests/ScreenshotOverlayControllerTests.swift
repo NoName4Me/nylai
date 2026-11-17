@@ -306,12 +306,13 @@ final class ScreenshotOverlayControllerTests: XCTestCase {
     }
 
     @MainActor
-    func testBlurToolIsNotPresentAndCornerHandleUpdatesAppearance() throws {
+    func testBlurIsNestedInRedactionToolAndCornerHandleUpdatesAppearance() throws {
         let view = ScreenshotOverlayView(frame: CGRect(x: 0, y: 0, width: 900, height: 700))
         _ = attachToWindow(view)
         let selection = CGRect(x: 80, y: 80, width: 400, height: 300)
         view.outputAppearance = ScreenshotOutputAppearance(roundedCornersEnabled: false, cornerRadius: 0)
         view.setSelection(selection, notify: false)
+        XCTAssertNotNil(findButton(titled: "打码", in: view))
         XCTAssertNil(findButton(titled: "模糊", in: view))
         var appearance: ScreenshotOutputAppearance?
         view.onOutputAppearanceChanged = { appearance = $0 }
@@ -340,6 +341,85 @@ final class ScreenshotOverlayControllerTests: XCTestCase {
         while output?.superview !== view { output = output?.superview }
         XCTAssertFalse(try XCTUnwrap(editing).frame.intersects(try XCTUnwrap(output).frame))
 
+    }
+
+    @MainActor
+    func testToolbarButtonHoverShowsDelayedHint() async throws {
+        let view = ScreenshotOverlayView(frame: CGRect(x: 0, y: 0, width: 1000, height: 700))
+        let window = attachToWindow(view)
+        ScreenshotHoverHintPresenter.shared.dismissAll()
+        defer {
+            ScreenshotHoverHintPresenter.shared.dismissAll()
+            window.orderOut(nil)
+        }
+        view.sourcePixelSize = try PixelSize(width: 1000, height: 700)
+        view.setSelection(CGRect(x: 180, y: 140, width: 500, height: 300), notify: false)
+        let button = try XCTUnwrap(findButton(titled: "复制", in: view) as? ToolbarIconButton)
+        button.showHoverHint()
+
+        try await waitUntil { ScreenshotHoverHintPresenter.shared.visibleText == "复制" }
+        let hint = try XCTUnwrap(
+            NSApp.windows
+                .compactMap(\.contentView)
+                .compactMap { findTextField(labeled: "复制", in: $0) }
+                .first
+        )
+        XCTAssertNotNil(hint.superview)
+        withExtendedLifetime(window) {}
+    }
+
+    @MainActor
+    func testCornerRadiusHoverHintStaysStableAcrossPointerUpdates() async throws {
+        let view = ScreenshotOverlayView(frame: CGRect(x: 0, y: 0, width: 1000, height: 700))
+        let window = attachToWindow(view)
+        ScreenshotHoverHintPresenter.shared.dismissAll()
+        defer {
+            ScreenshotHoverHintPresenter.shared.dismissAll()
+            window.orderOut(nil)
+        }
+        view.sourcePixelSize = try PixelSize(width: 1000, height: 700)
+        let selection = CGRect(x: 180, y: 140, width: 500, height: 300)
+        view.setSelection(selection, notify: false)
+        let handle = SelectionCornerRadiusGeometry.handleCenter(
+            in: selection,
+            radius: view.outputAppearance.cornerRadius
+        )
+
+        for offset in stride(from: CGFloat(-2), through: 2, by: 1) {
+            view.updateHoverHint(at: CGPoint(x: handle.x + offset, y: handle.y))
+        }
+        try await waitUntil {
+            ScreenshotHoverHintPresenter.shared.visibleText == L10n.shared.string("拖动调整圆角")
+        }
+
+        view.updateHoverHint(at: CGPoint(x: handle.x + 1, y: handle.y + 1))
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(
+            ScreenshotHoverHintPresenter.shared.visibleText,
+            L10n.shared.string("拖动调整圆角")
+        )
+
+        view.dismissHoverHint()
+        XCTAssertNil(ScreenshotHoverHintPresenter.shared.visibleText)
+        withExtendedLifetime(window) {}
+    }
+
+    func testHoverHintLayoutFlipsBelowWhenThereIsNoRoomAbove() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let size = CGSize(width: 100, height: 24)
+        let above = ScreenshotHoverHintLayout.frame(
+            anchor: CGRect(x: 400, y: 300, width: 20, height: 20),
+            size: size,
+            visibleFrame: visibleFrame
+        )
+        XCTAssertEqual(above.minY, 326)
+
+        let below = ScreenshotHoverHintLayout.frame(
+            anchor: CGRect(x: 400, y: 880, width: 20, height: 20),
+            size: size,
+            visibleFrame: visibleFrame
+        )
+        XCTAssertEqual(below.maxY, 874)
     }
 
     @MainActor
@@ -400,6 +480,7 @@ final class ScreenshotOverlayControllerTests: XCTestCase {
         }
         let continuation = try XCTUnwrap(capturer.continuation)
         XCTAssertTrue(controller.isCapturing)
+        XCTAssertEqual(capturer.excludingOwnApplicationCalls, 1)
 
         await controller.begin()
         XCTAssertEqual(capturer.calls, 1)
@@ -432,16 +513,22 @@ final class ScreenshotOverlayControllerTests: XCTestCase {
 
     @MainActor
     func testSuccessfulOutputRecordsExactlyOneHistoryItem() async throws {
-        let fixture = try await beginOverlayWithHistory()
+        var restoredApplications: [NSRunningApplication] = []
+        let fixture = try await beginOverlayWithHistory(
+            restoreApplication: { restoredApplications.append($0) },
+            foregroundApplication: { Self.externalApplication() }
+        )
         defer { fixture.cleanup() }
 
         try selectEntireOverlay(for: fixture.controller)
         try clickOverlayAction("复制", for: fixture.controller)
         try await waitUntil { fixture.history.records.count == 1 }
+        try await waitUntil { !restoredApplications.isEmpty }
 
         XCTAssertEqual(fixture.history.records.count, 1)
         XCTAssertEqual(fixture.copyCount(), 1)
         XCTAssertEqual(fixture.controller.session.phase, .ended)
+        XCTAssertEqual(restoredApplications.count, 1)
 
         try await Task.sleep(for: .milliseconds(40))
         XCTAssertEqual(fixture.history.records.count, 1)
@@ -449,15 +536,82 @@ final class ScreenshotOverlayControllerTests: XCTestCase {
 
     @MainActor
     func testDisabledHistoryDoesNotRecordSuccessfulOutput() async throws {
-        let fixture = try await beginOverlayWithHistory(historyEnabled: false)
+        var restoredApplications: [NSRunningApplication] = []
+        let fixture = try await beginOverlayWithHistory(
+            historyEnabled: false,
+            restoreApplication: { restoredApplications.append($0) },
+            foregroundApplication: { Self.externalApplication() }
+        )
         defer { fixture.cleanup() }
 
         try selectEntireOverlay(for: fixture.controller)
         try clickOverlayAction("复制", for: fixture.controller)
-        try await waitUntil { fixture.controller.session.phase == .ended }
+        try await waitUntil {
+            fixture.controller.session.phase == .ended && !restoredApplications.isEmpty
+        }
 
         XCTAssertEqual(fixture.copyCount(), 1)
         XCTAssertTrue(fixture.history.records.isEmpty)
+        XCTAssertEqual(restoredApplications.count, 1)
+    }
+
+    @MainActor
+    func testOutputSucceededNotificationFiresOnceAfterSuccessfulCopy() async throws {
+        var endCount = 0
+        let fixture = try await beginOverlayWithHistory(
+            restoreApplication: { _ in },
+            foregroundApplication: { Self.externalApplication() }
+        )
+        fixture.controller.onOutputSucceeded = { endCount += 1 }
+        defer { fixture.cleanup() }
+
+        try selectEntireOverlay(for: fixture.controller)
+        try clickOverlayAction("复制", for: fixture.controller)
+        try await waitUntil { endCount == 1 }
+        try await Task.sleep(for: .milliseconds(40))
+
+        XCTAssertEqual(endCount, 1)
+        XCTAssertEqual(fixture.controller.session.phase, .ended)
+    }
+
+    @MainActor
+    func testResignActiveDuringOutputDoesNotDuplicateOutputNotification() async throws {
+        var endCount = 0
+        let fixture = try await beginOverlayWithHistory(
+            restoreApplication: { _ in
+                NotificationCenter.default.post(
+                    name: NSApplication.didResignActiveNotification,
+                    object: NSApp
+                )
+            },
+            foregroundApplication: { Self.externalApplication() }
+        )
+        fixture.controller.onOutputSucceeded = { endCount += 1 }
+        defer { fixture.cleanup() }
+
+        try selectEntireOverlay(for: fixture.controller)
+        try clickOverlayAction("复制", for: fixture.controller)
+        try await waitUntil { endCount == 1 }
+        try await Task.sleep(for: .milliseconds(40))
+
+        XCTAssertEqual(endCount, 1)
+        XCTAssertEqual(fixture.controller.session.phase, .ended)
+    }
+
+    @MainActor
+    func testCancelDoesNotFireOutputSucceeded() async throws {
+        var endCount = 0
+        let fixture = try await beginOverlayWithHistory(
+            restoreApplication: { _ in },
+            foregroundApplication: { Self.externalApplication() }
+        )
+        fixture.controller.onOutputSucceeded = { endCount += 1 }
+        defer { fixture.cleanup() }
+
+        fixture.controller.close()
+
+        XCTAssertEqual(endCount, 0)
+        XCTAssertEqual(fixture.controller.session.phase, .ended)
     }
 
     @MainActor
@@ -478,7 +632,12 @@ final class ScreenshotOverlayControllerTests: XCTestCase {
     @MainActor
     func testFailedOutputDoesNotRecordHistory() async throws {
         let paster = FailingOverlayPaster()
-        let fixture = try await beginOverlayWithHistory(paster: paster)
+        var restoredApplications: [NSRunningApplication] = []
+        let fixture = try await beginOverlayWithHistory(
+            paster: paster,
+            restoreApplication: { restoredApplications.append($0) },
+            foregroundApplication: { Self.externalApplication() }
+        )
         defer { fixture.cleanup() }
 
         try selectEntireOverlay(for: fixture.controller)
@@ -488,6 +647,7 @@ final class ScreenshotOverlayControllerTests: XCTestCase {
 
         XCTAssertTrue(fixture.history.records.isEmpty)
         XCTAssertEqual(fixture.controller.session.phase, .editing)
+        XCTAssertTrue(restoredApplications.isEmpty)
     }
 
     private func makeScreenImage(size: CGSize) throws -> CGImage {
@@ -512,7 +672,11 @@ final class ScreenshotOverlayControllerTests: XCTestCase {
     private func beginOverlayWithHistory(
         historyEnabled: Bool = true,
         paster: any ScreenshotPasting = RecordingOverlayPaster(),
-        saver: any ScreenshotSaving = CancelledOverlaySaver()
+        saver: any ScreenshotSaving = CancelledOverlaySaver(),
+        restoreApplication: @escaping @MainActor (NSRunningApplication) -> Void = { _ in },
+        foregroundApplication: @escaping @MainActor () -> NSRunningApplication? = {
+            NSWorkspace.shared.frontmostApplication
+        }
     ) async throws -> OverlayHistoryFixture {
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) })
                 ?? NSScreen.screens.first else {
@@ -532,7 +696,9 @@ final class ScreenshotOverlayControllerTests: XCTestCase {
             outputAppearanceStore: Self.isolatedAppearanceStore(),
             historyStore: history,
             isHistoryEnabled: { historyEnabled },
-            presentError: { _ in }
+            presentError: { _ in },
+            restoreApplication: restoreApplication,
+            foregroundApplication: foregroundApplication
         )
         await controller.begin()
         return OverlayHistoryFixture(
@@ -584,6 +750,19 @@ final class ScreenshotOverlayControllerTests: XCTestCase {
         for subview in view.subviews {
             if let overlay = findOverlayView(in: subview) {
                 return overlay
+            }
+        }
+        return nil
+    }
+
+    @MainActor
+    private func findTextField(labeled text: String, in view: NSView) -> NSTextField? {
+        if let field = view as? NSTextField, field.stringValue == text {
+            return field
+        }
+        for subview in view.subviews {
+            if let field = findTextField(labeled: text, in: subview) {
+                return field
             }
         }
         return nil
@@ -679,16 +858,33 @@ final class ScreenshotOverlayControllerTests: XCTestCase {
         }
         return nil
     }
+
+    @MainActor
+    private static func externalApplication() -> NSRunningApplication? {
+        NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first
+            ?? NSWorkspace.shared.runningApplications.first {
+                $0.activationPolicy == .regular
+                    && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
+            }
+    }
 }
 
 @MainActor
 private final class SuspendedOverlayCapturer: ScreenCapturing {
     var calls = 0
+    var excludingOwnApplicationCalls = 0
     var continuation: CheckedContinuation<CGImage, Error>?
 
     func captureDisplay(_ displayID: CGDirectDisplayID) async throws -> CGImage {
         calls += 1
         return try await withCheckedThrowingContinuation { continuation = $0 }
+    }
+
+    func captureDisplayExcludingOwnApplication(
+        _ displayID: CGDirectDisplayID
+    ) async throws -> CGImage {
+        excludingOwnApplicationCalls += 1
+        return try await captureDisplay(displayID)
     }
 }
 

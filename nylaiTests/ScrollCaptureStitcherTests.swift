@@ -790,7 +790,10 @@ final class ScrollCaptureControllerTests: XCTestCase {
             $0.identifier?.rawValue == "nylai.scroll-capture-completion"
         })
         let buttons = try XCTUnwrap(completion.contentView?.subviews.compactMap { $0 as? NSButton })
-        XCTAssertEqual(buttons.map(\.toolTip), ["编辑", "复制", "保存", "取消"])
+        XCTAssertEqual(
+            buttons.compactMap { ($0 as? ToolbarIconButton)?.hoverHintText },
+            ["编辑", "复制", "保存", "取消"]
+        )
         XCTAssertTrue(buttons.allSatisfy { $0.imagePosition == .imageOnly })
         XCTAssertTrue(completion.styleMask.contains(.nonactivatingPanel))
         let button = try XCTUnwrap(buttons.first)

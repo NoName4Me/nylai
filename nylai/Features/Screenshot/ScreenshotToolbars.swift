@@ -34,8 +34,9 @@ class FloatingToolbarSurfaceView: NSView {
 }
 
 @MainActor
-final class ToolbarIconButton: NSButton, NSViewToolTipOwner {
+final class ToolbarIconButton: NSButton {
     private var trackingArea: NSTrackingArea?
+    private(set) var hoverHintText: String?
     private var isHovered = false {
         didSet { updateSurface() }
     }
@@ -69,50 +70,46 @@ final class ToolbarIconButton: NSButton, NSViewToolTipOwner {
         )
         addTrackingArea(area)
         trackingArea = area
-        removeAllToolTips()
-        addToolTip(bounds, owner: self, userData: nil)
     }
 
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
-        updateOverlayHint(with: event)
+        showHoverHint()
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovered = false
-        updateOverlayHint(with: event)
+        ScreenshotHoverHintPresenter.shared.dismiss(owner: self)
     }
 
     override func mouseDown(with event: NSEvent) {
-        overlayView?.dismissHoverHint()
+        ScreenshotHoverHintPresenter.shared.dismiss(owner: self)
         super.mouseDown(with: event)
     }
 
-    private var overlayView: ScreenshotOverlayView? {
-        var ancestor = superview
-        while let view = ancestor {
-            if let overlay = view as? ScreenshotOverlayView { return overlay }
-            ancestor = view.superview
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil {
+            ScreenshotHoverHintPresenter.shared.dismiss(owner: self)
         }
-        return nil
+        super.viewWillMove(toWindow: newWindow)
     }
 
-    private func updateOverlayHint(with event: NSEvent) {
-        guard let overlay = overlayView else { return }
-        overlay.updateHoverHint(at: overlay.convert(event.locationInWindow, from: nil))
+    func setHoverHint(_ text: String?) {
+        hoverHintText = text
+    }
+
+    func showHoverHint() {
+        guard let window, let hoverHintText, !hoverHintText.isEmpty else { return }
+        ScreenshotHoverHintPresenter.shared.show(
+            hoverHintText,
+            anchor: window.convertToScreen(convert(bounds, to: nil)),
+            in: window,
+            owner: self
+        )
     }
 
     func refreshSurface() {
         updateSurface()
-    }
-
-    func view(
-        _ view: NSView,
-        stringForToolTip tag: NSView.ToolTipTag,
-        point: NSPoint,
-        userData data: UnsafeMutableRawPointer?
-    ) -> String {
-        toolTip ?? ""
     }
 
     private func updateSurface() {
@@ -133,7 +130,12 @@ final class ToolbarIconButton: NSButton, NSViewToolTipOwner {
 
 @MainActor
 final class SelectionToolbarView: FloatingToolbarSurfaceView {
+    static let toolbarButtonSize: CGFloat = 34
+    static let toolbarIconPointSize: CGFloat = 20
+
     var onToolChanged: ((ScreenshotEditorTool) -> Void)?
+    var onRedactionEffectChanged: ((ScreenshotRedactionEffect) -> Void)?
+    var onMosaicModeChanged: ((ScreenshotMosaicMode) -> Void)?
     var onStyleChanged: ((ScreenshotAnnotationStyle) -> Void)?
     var onAppearanceChanged: ((ScreenshotOutputAppearance) -> Void)?
 
@@ -141,6 +143,7 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
     var styleControlsEnabled = false {
         didSet {
             styleRow.isHidden = !styleControlsEnabled
+            styleSeparator.isHidden = !styleControlsEnabled
             updateEnabledState()
         }
     }
@@ -161,12 +164,23 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
             updateEnabledState()
         }
     }
+    var mosaicMode = ScreenshotMosaicMode.box {
+        didSet { updateMosaicModeControl() }
+    }
+    var redactionEffect = ScreenshotRedactionEffect.mosaic {
+        didSet { updateRedactionEffectControl() }
+    }
     var outputAppearance = ScreenshotOutputAppearance.default {
         didSet { updateShadowButton() }
     }
 
     var preferredContentSize: CGSize {
-        CGSize(width: 330, height: styleControlsEnabled ? (styleKind == .arrow ? 104 : 78) : 44)
+        CGSize(
+            width: 366,
+            height: styleControlsEnabled
+                ? (styleKind == .arrow ? 136 : 92)
+                : 48
+        )
     }
 
     private let tools: [ScreenshotEditorTool] = [
@@ -176,11 +190,23 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
     private let colorButton = ScreenshotColorSwatchButton()
     private let widthLabel = NSTextField(labelWithString: "3")
     private let widthStepper = NSStepper()
+    private let colorWidthLabel = NSTextField(
+        labelWithString: L10n.shared.string("颜色 / 粗细")
+    )
+    private let redactionEffectControl = NSSegmentedControl(frame: .zero)
+    private let mosaicModeControl = NSSegmentedControl(frame: .zero)
+    private let cornerStyleControl = NSSegmentedControl(frame: .zero)
+    private let stepStyleControl = NSSegmentedControl(frame: .zero)
     private var arrowOptionsHost: NSHostingView<AnyView>?
     private let textStyleControl = NSSegmentedControl(labels: ["A", "A"],
                                                        trackingMode: .selectOne, target: nil, action: nil)
-    private let solidButton = ToolbarIconButton()
-    private let dashedButton = ToolbarIconButton()
+    private let lineStyleLabel = NSTextField(
+        labelWithString: L10n.shared.string("线型")
+    )
+    private let lineStyleControl = NSSegmentedControl(frame: .zero)
+    private let arrowLineGroupSeparator = SelectionToolbarView.separator(
+        orientation: .vertical
+    )
     private let fillButton = NSButton(
         checkboxWithTitle: L10n.shared.string("填充"),
         target: nil,
@@ -188,6 +214,7 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
     )
     private let shadowButton = ToolbarIconButton()
     private lazy var styleRow = NSStackView()
+    private let styleSeparator = SelectionToolbarView.separator(orientation: .horizontal)
     private var colorPopover: NSPopover?
     private var shadowPopover: NSPopover?
     private var isUpdatingStyleControls = false
@@ -202,7 +229,7 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         toolRow.spacing = 4
         for tool in tools {
             let icon = Self.icon(for: tool)
-            let button = Self.iconButton(icon: icon, label: icon.accessibilityLabel)
+            let button = Self.iconButton(icon: icon, label: Self.label(for: tool))
             button.target = self
             button.action = #selector(toolChanged(_:))
             toolButtons.append((tool, button))
@@ -213,6 +240,9 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         toolRow.addArrangedSubview(shadowButton)
 
         configureStyleControls()
+        styleSeparator.identifier = NSUserInterfaceItemIdentifier(
+            "annotationStyleSeparator"
+        )
         styleRow.orientation = .horizontal
         styleRow.alignment = .centerY
         styleRow.spacing = 5
@@ -222,11 +252,11 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         let arrowOptionsHost = NSHostingView(
             rootView: AnyView(makeArrowOptionsView().nylaiLocalized())
         )
-        arrowOptionsHost.widthAnchor.constraint(equalToConstant: 310).isActive = true
-        arrowOptionsHost.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        arrowOptionsHost.widthAnchor.constraint(equalToConstant: 326).isActive = true
+        arrowOptionsHost.heightAnchor.constraint(equalToConstant: 44).isActive = true
         arrowOptionsHost.isHidden = true
         self.arrowOptionsHost = arrowOptionsHost
-        let stack = NSStackView(views: [toolRow, styleRow, arrowOptionsHost])
+        let stack = NSStackView(views: [toolRow, styleSeparator, styleRow, arrowOptionsHost])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 5
@@ -240,9 +270,13 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.topAnchor.constraint(equalTo: topAnchor),
             bottom,
+            styleSeparator.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -20),
         ])
+        styleSeparator.isHidden = true
         updateStyleControls()
         updateStyleControlRanges()
+        updateRedactionEffectControl()
+        updateMosaicModeControl()
         updateToolSelection()
         updateShadowButton()
         updateEnabledState()
@@ -279,6 +313,12 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         widthLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         widthLabel.alignment = .right
         widthLabel.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        colorWidthLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        colorWidthLabel.textColor = .secondaryLabelColor
+        colorWidthLabel.setContentCompressionResistancePriority(
+            .required,
+            for: .horizontal
+        )
 
         widthStepper.increment = 1
         widthStepper.valueWraps = false
@@ -286,20 +326,106 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         widthStepper.target = self
         widthStepper.action = #selector(styleControlChanged)
         widthStepper.setAccessibilityLabel(L10n.shared.string("标注参数"))
+        configureSegmentedControl(redactionEffectControl)
+        redactionEffectControl.segmentCount = ScreenshotRedactionEffect.allCases.count
+        for (index, effect) in ScreenshotRedactionEffect.allCases.enumerated() {
+            redactionEffectControl.setImage(
+                effect == .mosaic
+                    ? NylaiIcon.mosaic.image(pointSize: Self.toolbarIconPointSize)
+                    : NylaiIcon.blur.image(pointSize: Self.toolbarIconPointSize),
+                forSegment: index
+            )
+            redactionEffectControl.setLabel("", forSegment: index)
+            redactionEffectControl.setToolTip(effect.title, forSegment: index)
+        }
+        redactionEffectControl.target = self
+        redactionEffectControl.action = #selector(redactionEffectChanged)
+        redactionEffectControl.setAccessibilityLabel(L10n.shared.string("打码方式"))
+        redactionEffectControl.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        configureSegmentedControl(mosaicModeControl)
+        mosaicModeControl.segmentCount = ScreenshotMosaicMode.allCases.count
+        for (index, mode) in ScreenshotMosaicMode.allCases.enumerated() {
+            mosaicModeControl.setImage(
+                mode == .box
+                    ? NylaiIcon.rectangle.image(pointSize: Self.toolbarIconPointSize)
+                    : NSImage(
+                        systemSymbolName: "circle.fill",
+                        accessibilityDescription: mode.title
+                    ),
+                forSegment: index
+            )
+            mosaicModeControl.setLabel("", forSegment: index)
+            mosaicModeControl.setToolTip(mode.title, forSegment: index)
+        }
+        mosaicModeControl.target = self
+        mosaicModeControl.action = #selector(mosaicModeChanged)
+        mosaicModeControl.setAccessibilityLabel(L10n.shared.string("打码形状"))
+        mosaicModeControl.widthAnchor.constraint(equalToConstant: 80).isActive = true
 
-        Self.configure(
-            iconButton: solidButton,
-            icon: .solidLine,
-            action: #selector(lineStyleChanged(_:)),
-            target: self
+        configureSegmentedControl(cornerStyleControl)
+        cornerStyleControl.segmentCount = ScreenshotAnnotationCornerStyle.allCases.count
+        for (index, style) in ScreenshotAnnotationCornerStyle.allCases.enumerated() {
+            let icon = style == .rounded ? NylaiIcon.cornerRounded : NylaiIcon.cornerSharp
+            cornerStyleControl.setImage(
+                icon.image(pointSize: Self.toolbarIconPointSize),
+                forSegment: index
+            )
+            cornerStyleControl.setLabel("", forSegment: index)
+            cornerStyleControl.setToolTip(style.title, forSegment: index)
+        }
+        cornerStyleControl.target = self
+        cornerStyleControl.action = #selector(cornerStyleChanged)
+        cornerStyleControl.setAccessibilityLabel(L10n.shared.string("边角样式"))
+        cornerStyleControl.widthAnchor.constraint(equalToConstant: 92).isActive = true
+
+        configureSegmentedControl(stepStyleControl)
+        stepStyleControl.segmentCount = 2
+        stepStyleControl.setImage(
+            NylaiIcon.step.image(pointSize: Self.toolbarIconPointSize),
+            forSegment: 0
         )
-        Self.configure(
-            iconButton: dashedButton,
-            icon: .dashedLine,
-            action: #selector(lineStyleChanged(_:)),
-            target: self
+        stepStyleControl.setImage(
+            NylaiIcon.stepFilled.image(pointSize: Self.toolbarIconPointSize),
+            forSegment: 1
         )
-        textStyleControl.controlSize = .small
+        stepStyleControl.setLabel("", forSegment: 0)
+        stepStyleControl.setLabel("", forSegment: 1)
+        stepStyleControl.setToolTip(
+            L10n.shared.string("线圈数字"),
+            forSegment: 0
+        )
+        stepStyleControl.setToolTip(
+            L10n.shared.string("填充圆数字"),
+            forSegment: 1
+        )
+        stepStyleControl.target = self
+        stepStyleControl.action = #selector(annotationVariantChanged(_:))
+        stepStyleControl.setAccessibilityLabel(L10n.shared.string("步骤样式"))
+        stepStyleControl.widthAnchor.constraint(equalToConstant: 72).isActive = true
+
+        configureSegmentedControl(lineStyleControl)
+        lineStyleLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        lineStyleLabel.textColor = .secondaryLabelColor
+        lineStyleLabel.setContentCompressionResistancePriority(
+            .required,
+            for: .horizontal
+        )
+        lineStyleControl.segmentCount = 2
+        lineStyleControl.setImage(NylaiIcon.solidLine.image(
+            pointSize: Self.toolbarIconPointSize
+        ), forSegment: 0)
+        lineStyleControl.setImage(NylaiIcon.dashedLine.image(
+            pointSize: Self.toolbarIconPointSize
+        ), forSegment: 1)
+        lineStyleControl.setLabel("", forSegment: 0)
+        lineStyleControl.setLabel("", forSegment: 1)
+        lineStyleControl.setToolTip(L10n.shared.string("实线"), forSegment: 0)
+        lineStyleControl.setToolTip(L10n.shared.string("虚线"), forSegment: 1)
+        lineStyleControl.setAccessibilityLabel(L10n.shared.string("线型"))
+        lineStyleControl.widthAnchor.constraint(equalToConstant: 64).isActive = true
+        lineStyleControl.target = self
+        lineStyleControl.action = #selector(lineStyleChanged)
+        configureSegmentedControl(textStyleControl)
         textStyleControl.target = self
         textStyleControl.action = #selector(annotationVariantChanged)
         textStyleControl.toolTip = L10n.shared.string("文字样式")
@@ -324,14 +450,20 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         }
         fillButton.toolTip = L10n.shared.string("使用描边颜色填充")
         styleRow = NSStackView(views: [
-            colorButton, widthLabel, widthStepper, solidButton, dashedButton, fillButton,
-            textStyleControl,
+            redactionEffectControl, mosaicModeControl, cornerStyleControl,
+            colorWidthLabel, colorButton, widthLabel, widthStepper,
+            arrowLineGroupSeparator, lineStyleLabel, lineStyleControl, stepStyleControl,
+            fillButton, textStyleControl,
         ])
     }
 
     private func updateToolSelection() {
         for (tool, button) in toolButtons {
-            Self.setSelected(button, selected: tool.annotationKind == styleKind || (styleKind == nil && tool == selectedTool))
+            Self.setSelected(
+                button,
+                selected: styleKind.map(tool.owns) == true
+                    || (styleKind == nil && tool == selectedTool)
+            )
         }
     }
 
@@ -343,22 +475,38 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         let supportsColor = styleKind?.supportsColorControl ?? false
         colorButton.isHidden = !supportsColor
         colorButton.isEnabled = stylesEnabled && supportsColor
-        widthStepper.isEnabled = stylesEnabled && styleKind != .step
-        widthStepper.isHidden = styleKind == .step
-        widthLabel.isHidden = styleKind == .step
+        let showsLineWidth = styleKind?.showsLineWidthControl == true
+        colorWidthLabel.isHidden = styleKind != .arrow || !showsLineWidth
+        widthStepper.isEnabled = stylesEnabled && showsLineWidth
+        widthStepper.isHidden = !showsLineWidth
+        widthLabel.isHidden = !showsLineWidth
         widthLabel.textColor = widthStepper.isEnabled ? .labelColor : .tertiaryLabelColor
         let supportsLine = (styleKind?.supportsLineStyleControl ?? false)
             && (styleKind != .arrow || style.arrowOptions?.widthStyle != .tapered)
-        solidButton.isHidden = !supportsLine
-        dashedButton.isHidden = !supportsLine
-        solidButton.isEnabled = stylesEnabled && supportsLine
-        dashedButton.isEnabled = stylesEnabled && supportsLine
-        fillButton.isHidden = styleKind?.supportsFill != true
-        fillButton.isEnabled = stylesEnabled
+        lineStyleControl.isHidden = !supportsLine
+        lineStyleControl.isEnabled = stylesEnabled && supportsLine
+        lineStyleLabel.isHidden = !supportsLine || styleKind != .arrow
+        arrowLineGroupSeparator.isHidden = !supportsLine || styleKind != .arrow
+        let showsStepStyle = styleKind == .step
+        stepStyleControl.isHidden = !showsStepStyle
+        stepStyleControl.isEnabled = stylesEnabled && showsStepStyle
+        let showsFill = styleKind?.supportsFill == true && !showsStepStyle
+        fillButton.isHidden = !showsFill
+        fillButton.isEnabled = stylesEnabled && showsFill
         arrowOptionsHost?.isHidden = !styleControlsEnabled || styleKind != .arrow
-        arrowOptionsHost?.rootView = AnyView(makeArrowOptionsView().nylaiLocalized())
+        if styleKind == .arrow {
+            arrowOptionsHost?.rootView = AnyView(makeArrowOptionsView().nylaiLocalized())
+        }
         textStyleControl.isHidden = styleKind != .text
         textStyleControl.isEnabled = stylesEnabled
+        let showsMosaicMode = styleKind?.isMosaicEffect == true
+        redactionEffectControl.isHidden = !showsMosaicMode
+        redactionEffectControl.isEnabled = stylesEnabled && showsMosaicMode
+        mosaicModeControl.isHidden = !showsMosaicMode
+        mosaicModeControl.isEnabled = stylesEnabled && showsMosaicMode
+        let showsCornerStyle = styleKind?.supportsCornerStyleControl == true
+        cornerStyleControl.isHidden = !showsCornerStyle
+        cornerStyleControl.isEnabled = stylesEnabled && showsCornerStyle
         shadowButton.isEnabled = !isOutputting
     }
 
@@ -371,24 +519,63 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         widthStepper.minValue = Double(range.lowerBound)
         widthStepper.maxValue = Double(range.upperBound)
         widthStepper.toolTip = "\(styleKind.lineWidthControlTitle) \(range.lowerBound)–\(range.upperBound)"
+        if let mode = styleKind.mosaicMode {
+            mosaicMode = mode
+        }
+        if let effect = styleKind.redactionEffect {
+            redactionEffect = effect
+        }
+    }
+
+    private func updateRedactionEffectControl() {
+        guard let index = ScreenshotRedactionEffect.allCases.firstIndex(of: redactionEffect) else {
+            return
+        }
+        let wasUpdating = isUpdatingStyleControls
+        isUpdatingStyleControls = true
+        redactionEffectControl.selectedSegment = index
+        isUpdatingStyleControls = wasUpdating
+    }
+
+    private func updateMosaicModeControl() {
+        guard let index = ScreenshotMosaicMode.allCases.firstIndex(of: mosaicMode) else {
+            return
+        }
+        let wasUpdating = isUpdatingStyleControls
+        isUpdatingStyleControls = true
+        mosaicModeControl.selectedSegment = index
+        isUpdatingStyleControls = wasUpdating
     }
 
     private func updateStyleControls() {
         isUpdatingStyleControls = true
         fillButton.state = style.fillsShape == true ? .on : .off
+        stepStyleControl.selectedSegment = style.fillsShape == false ? 0 : 1
         textStyleControl.selectedSegment = style.fillsTextBackground == true ? 1 : 0
+        cornerStyleControl.selectedSegment = style.resolvedCornerStyle == .rounded ? 0 : 1
+        redactionEffectControl.selectedSegment = ScreenshotRedactionEffect.allCases.firstIndex(
+            of: redactionEffect
+        ) ?? 0
         colorButton.color = style.color
         widthStepper.integerValue = style.lineWidth
         widthLabel.stringValue = "\(style.lineWidth)"
         let solid = style.lineStyle == .solid
-        Self.setSelected(solidButton, selected: solid)
-        Self.setSelected(dashedButton, selected: !solid)
-        arrowOptionsHost?.rootView = AnyView(makeArrowOptionsView().nylaiLocalized())
+        lineStyleControl.selectedSegment = solid ? 0 : 1
+        if styleKind == .arrow {
+            arrowOptionsHost?.rootView = AnyView(makeArrowOptionsView().nylaiLocalized())
+        }
         isUpdatingStyleControls = false
     }
 
     private func updateShadowButton() {
         Self.setSelected(shadowButton, selected: outputAppearance.shadowEnabled)
+    }
+
+    func previewLineWidth(_ lineWidth: Int) {
+        isUpdatingStyleControls = true
+        widthStepper.integerValue = lineWidth
+        widthLabel.stringValue = "\(lineWidth)"
+        isUpdatingStyleControls = false
     }
 
     private func showPopover(_ popover: NSPopover, relativeTo button: NSButton) {
@@ -411,10 +598,10 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         onToolChanged?(tool)
     }
 
-    @objc private func lineStyleChanged(_ sender: NSButton) {
+    @objc private func lineStyleChanged() {
         guard !isUpdatingStyleControls else { return }
         var updated = style
-        updated.lineStyle = sender === solidButton ? .solid : .dashed
+        updated.lineStyle = lineStyleControl.selectedSegment == 0 ? .solid : .dashed
         style = updated
         onStyleChanged?(updated)
     }
@@ -423,6 +610,48 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         guard !isUpdatingStyleControls else { return }
         var updated = style
         updated.lineWidth = widthStepper.integerValue
+        let validated = styleKind.map { updated.validated(for: $0) } ?? updated.validated()
+        style = validated
+        onStyleChanged?(validated)
+    }
+
+    @objc private func mosaicModeChanged() {
+        guard !isUpdatingStyleControls,
+              ScreenshotMosaicMode.allCases.indices.contains(
+                  mosaicModeControl.selectedSegment
+              ) else {
+            return
+        }
+        let mode = ScreenshotMosaicMode.allCases[mosaicModeControl.selectedSegment]
+        mosaicMode = mode
+        onMosaicModeChanged?(mode)
+    }
+
+    @objc private func redactionEffectChanged() {
+        guard !isUpdatingStyleControls,
+              ScreenshotRedactionEffect.allCases.indices.contains(
+                  redactionEffectControl.selectedSegment
+              ) else {
+            return
+        }
+        let effect = ScreenshotRedactionEffect.allCases[
+            redactionEffectControl.selectedSegment
+        ]
+        redactionEffect = effect
+        onRedactionEffectChanged?(effect)
+    }
+
+    @objc private func cornerStyleChanged() {
+        guard !isUpdatingStyleControls,
+              ScreenshotAnnotationCornerStyle.allCases.indices.contains(
+                  cornerStyleControl.selectedSegment
+              ) else {
+            return
+        }
+        var updated = style
+        updated.cornerStyle = ScreenshotAnnotationCornerStyle.allCases[
+            cornerStyleControl.selectedSegment
+        ]
         let validated = styleKind.map { updated.validated(for: $0) } ?? updated.validated()
         style = validated
         onStyleChanged?(validated)
@@ -446,6 +675,8 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         var updated = style
         if sender === textStyleControl {
             updated.fillsTextBackground = sender.selectedSegment == 1 ? true : nil
+        } else if sender === stepStyleControl {
+            updated.fillsShape = sender.selectedSegment == 1
         }
         style = updated
         onStyleChanged?(updated)
@@ -506,6 +737,12 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         }
     }
 
+    private static func label(for tool: ScreenshotEditorTool) -> String {
+        tool == .mosaic
+            ? L10n.shared.string("打码")
+            : icon(for: tool).accessibilityLabel
+    }
+
     private static func configure(
         iconButton button: NSButton,
         icon: NylaiIcon,
@@ -513,36 +750,42 @@ final class SelectionToolbarView: FloatingToolbarSurfaceView {
         target: AnyObject
     ) {
         button.title = icon.accessibilityLabel
-        button.image = icon.image(pointSize: 15)
+        button.image = icon.image(pointSize: toolbarIconPointSize)
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleProportionallyDown
         button.isBordered = false
         button.controlSize = .small
         button.wantsLayer = true
         button.layer?.cornerRadius = 6
-        button.toolTip = icon.accessibilityLabel
+        (button as? ToolbarIconButton)?.setHoverHint(icon.accessibilityLabel)
         button.setAccessibilityLabel(icon.accessibilityLabel)
         button.target = target
         button.action = action
-        button.widthAnchor.constraint(equalToConstant: 29).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 29).isActive = true
+        button.widthAnchor.constraint(equalToConstant: toolbarButtonSize).isActive = true
+        button.heightAnchor.constraint(equalToConstant: toolbarButtonSize).isActive = true
     }
 
     static func iconButton(icon: NylaiIcon, label: String) -> NSButton {
         let button = ToolbarIconButton()
         button.title = label
-        button.image = icon.image(pointSize: 15)
+        button.image = icon.image(pointSize: toolbarIconPointSize)
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleProportionallyDown
         button.isBordered = false
         button.controlSize = .small
         button.wantsLayer = true
         button.layer?.cornerRadius = 6
-        button.toolTip = label
+        button.setHoverHint(label)
         button.setAccessibilityLabel(label)
-        button.widthAnchor.constraint(equalToConstant: 29).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 29).isActive = true
+        button.widthAnchor.constraint(equalToConstant: toolbarButtonSize).isActive = true
+        button.heightAnchor.constraint(equalToConstant: toolbarButtonSize).isActive = true
         return button
+    }
+
+    private func configureSegmentedControl(_ control: NSSegmentedControl) {
+        control.controlSize = .regular
+        control.segmentStyle = .rounded
+        control.heightAnchor.constraint(equalToConstant: 28).isActive = true
     }
 
     static func setSelected(_ button: NSButton, selected: Bool) {
@@ -570,26 +813,63 @@ private struct ArrowOptionsView: View {
     let onChange: (ScreenshotArrowOptions) -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            choices(
-                "粗细方式",
-                ScreenshotArrowWidthStyle.allCases,
-                \.widthStyle,
-                title: { $0.title }
-            )
-            choices(
-                "路径",
-                ScreenshotArrowPathStyle.allCases,
-                \.pathStyle,
-                title: { $0.title }
-            )
+        HStack(spacing: 10) {
+            group("轮廓") {
+                widthChoices
+            }
+            Divider()
+                .frame(height: 30)
+            group("路径") {
+                choices(
+                    "路径",
+                    ScreenshotArrowPathStyle.allCases,
+                    \.pathStyle,
+                    title: { $0.title }
+                )
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .labelsHidden()
-        .controlSize(.mini)
-        .font(.system(size: 10))
+        .controlSize(.regular)
+        .font(.system(size: 12))
         .disabled(!enabled)
         .tint(NylaiPalette.accent)
+    }
+
+    private func group<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(title))
+    }
+
+    private var widthChoices: some View {
+        Picker("粗细方式", selection: Binding(
+            get: { options.widthStyle },
+            set: { value in
+                var updated = options
+                updated.widthStyle = value
+                onChange(updated)
+            }
+        )) {
+            ForEach(ScreenshotArrowWidthStyle.allCases, id: \.self) { value in
+                Image(nsImage: ScreenshotArrowWidthIcon.image(for: value))
+                    .tag(value)
+                    .accessibilityLabel(Text(value.title))
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .help("粗细方式")
+        .frame(maxWidth: .infinity)
     }
 
     private func choices<Value: Hashable>(_ label: String, _ values: [Value],
@@ -608,6 +888,46 @@ private struct ArrowOptionsView: View {
         .pickerStyle(.segmented)
         .help(label)
         .frame(maxWidth: .infinity)
+    }
+}
+
+private enum ScreenshotArrowWidthIcon {
+    static func image(for style: ScreenshotArrowWidthStyle) -> NSImage {
+        switch style {
+        case .uniform:
+            return NSImage(
+                systemSymbolName: "arrow.right",
+                accessibilityDescription: style.title
+            ) ?? NSImage()
+        case .tapered:
+            let image = NSImage(size: NSSize(width: 24, height: 14))
+            image.lockFocus()
+            NSColor.clear.setFill()
+            NSRect(x: 0, y: 0, width: 24, height: 14).fill()
+            var style = ScreenshotAnnotationStyle.default
+            style.lineWidth = 3
+            style.arrowOptions = ScreenshotArrowOptions(
+                widthStyle: .tapered,
+                pathStyle: .straight
+            )
+            let annotation = ScreenshotAnnotation(
+                kind: .arrow,
+                start: PixelPoint(x: 0, y: 0),
+                end: PixelPoint(x: 20, y: 0),
+                style: style
+            )
+            if let path = ScreenshotAnnotationPath.fillPath(
+                for: annotation,
+                in: CGRect(x: 2, y: 0, width: 20, height: 14),
+                flipped: false
+            ) {
+                NSColor.black.setFill()
+                NSBezierPath(cgPath: path).fill()
+            }
+            image.unlockFocus()
+            image.isTemplate = true
+            return image
+        }
     }
 }
 
@@ -646,8 +966,11 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
         let groups = activeGroups
         let buttons = groups.reduce(0) { $0 + $1.count }
         let separators = max(0, groups.count - 1)
-        let height = 14 + buttons * 26 + (buttons + separators - 1) * 3 + separators
-        return CGSize(width: 40, height: height)
+        let height = 10
+            + CGFloat(buttons) * SelectionToolbarView.toolbarButtonSize
+            + CGFloat(buttons + separators - 1) * 2
+            + CGFloat(separators)
+        return CGSize(width: 46, height: height)
     }
 
     private let cropButton = ToolbarIconButton()
@@ -671,16 +994,22 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
         configure(scrollButton, icon: .scroll, action: #selector(scrollCaptureClicked))
         configure(reselectButton, icon: .reselect, action: #selector(reselectClicked))
         configure(copyButton, icon: .copy, action: #selector(copyClicked))
-        recognizeButton.image = NylaiIcon.recognize.image(pointSize: 15)
+        recognizeButton.image = NylaiIcon.recognize.image(
+            pointSize: SelectionToolbarView.toolbarIconPointSize
+        )
         recognizeButton.imagePosition = .imageOnly
         recognizeButton.imageScaling = .scaleProportionallyDown
-        recognizeButton.toolTip = L10n.shared.string("提取文字")
+        recognizeButton.setHoverHint(L10n.shared.string("提取文字"))
         recognizeButton.setAccessibilityLabel(L10n.shared.string("提取文字"))
         recognizeButton.isBordered = false
         recognizeButton.target = self
         recognizeButton.action = #selector(recognizeClicked)
-        recognizeButton.widthAnchor.constraint(equalToConstant: 26).isActive = true
-        recognizeButton.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        recognizeButton.widthAnchor.constraint(
+            equalToConstant: SelectionToolbarView.toolbarButtonSize
+        ).isActive = true
+        recognizeButton.heightAnchor.constraint(
+            equalToConstant: SelectionToolbarView.toolbarButtonSize
+        ).isActive = true
         recognitionMenu.onSelect = { [weak self] in self?.onRecognizeText($0) }
         recognizeButton.menu = recognitionMenu.makeMenu()
         configure(saveButton, icon: .save, action: #selector(saveClicked))
@@ -734,8 +1063,8 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
         let container = NSStackView()
         container.orientation = .vertical
         container.alignment = .leading
-        container.spacing = 3
-        container.edgeInsets = NSEdgeInsets(top: 7, left: 7, bottom: 7, right: 7)
+        container.spacing = 2
+        container.edgeInsets = NSEdgeInsets(top: 5, left: 7, bottom: 5, right: 7)
         for (index, group) in activeGroups.enumerated() {
             if index > 0 {
                 let separator = SelectionToolbarView.separator(orientation: .horizontal)
@@ -759,19 +1088,23 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
 
     private func configure(_ button: NSButton, icon: NylaiIcon, action: Selector) {
         button.title = icon.accessibilityLabel
-        button.image = icon.image(pointSize: 15)
+        button.image = icon.image(pointSize: SelectionToolbarView.toolbarIconPointSize)
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleProportionallyDown
         button.isBordered = false
         button.controlSize = .small
         button.wantsLayer = true
         button.layer?.cornerRadius = 6
-        button.toolTip = icon.accessibilityLabel
+        (button as? ToolbarIconButton)?.setHoverHint(icon.accessibilityLabel)
         button.setAccessibilityLabel(icon.accessibilityLabel)
         button.target = self
         button.action = action
-        button.widthAnchor.constraint(equalToConstant: 26).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        button.widthAnchor.constraint(
+            equalToConstant: SelectionToolbarView.toolbarButtonSize
+        ).isActive = true
+        button.heightAnchor.constraint(
+            equalToConstant: SelectionToolbarView.toolbarButtonSize
+        ).isActive = true
     }
 
     private func updateToolSelection() {

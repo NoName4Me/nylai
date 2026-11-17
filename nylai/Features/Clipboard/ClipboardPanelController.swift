@@ -20,6 +20,7 @@ final class ClipboardPanelModel {
     let store: ClipboardHistoryStore
     let pasteboard: any ClipboardPasteboardAccessing
     let targetApplication: NSRunningApplication?
+    let focusSnapshot: ClipboardFocusSnapshot?
     var searchText = ""
     var selectedID: UUID?
     var errorMessage: String?
@@ -42,6 +43,7 @@ final class ClipboardPanelModel {
     }
     var onPreview: (ClipboardRecord?) -> Void = { _ in }
     var onError: @MainActor (Error) -> Void = { _ in }
+    var onBeforePaste: () -> Void = {}
     private let directPaster: any ClipboardDirectPasting
     private var textCache: [UUID: String] = [:]
 
@@ -49,6 +51,7 @@ final class ClipboardPanelModel {
         store: ClipboardHistoryStore,
         pasteboard: any ClipboardPasteboardAccessing,
         targetApplication: NSRunningApplication?,
+        focusSnapshot: ClipboardFocusSnapshot? = nil,
         directPaster: any ClipboardDirectPasting = SystemClipboardDirectPaster(),
         snippets: SnippetStore? = nil,
         groups: ClipboardGroupsStore? = nil
@@ -56,6 +59,7 @@ final class ClipboardPanelModel {
         self.store = store
         self.pasteboard = pasteboard
         self.targetApplication = targetApplication
+        self.focusSnapshot = focusSnapshot
         self.directPaster = directPaster
         self.snippets = snippets
         self.groups = groups
@@ -80,16 +84,31 @@ final class ClipboardPanelModel {
         return records.filter { (selectedGroupID == nil || members?.contains($0.id) == true) && matches($0) }
     }
 
-    var checkedRecords: [ClipboardRecord] { visibleRecords.filter { checkedIDs.contains($0.id) && $0.kind == .text } }
+    var checkedRecords: [ClipboardRecord] {
+        visibleRecords.filter { checkedIDs.contains($0.id) }
+    }
+
+    var checkedTextRecords: [ClipboardRecord] {
+        checkedRecords.filter { $0.kind == .text }
+    }
+
+    var checkedImageRecords: [ClipboardRecord] {
+        checkedRecords.filter { $0.kind == .image }
+    }
+
+    var canCombineChecked: Bool {
+        !checkedRecords.isEmpty
+    }
 
     func choose(_ record: ClipboardRecord, modifiers: NSEvent.ModifierFlags = []) {
         if isSelecting || modifiers.contains(.command) || modifiers.contains(.shift) {
             isSelecting = true
-            guard record.kind == .text else { return }
             if modifiers.contains(.shift), let anchor = selectedID,
                let first = visibleRecords.firstIndex(where: { $0.id == anchor }),
                let last = visibleRecords.firstIndex(where: { $0.id == record.id }) {
-                checkedIDs.formUnion(visibleRecords[min(first, last)...max(first, last)].filter { $0.kind == .text }.map(\.id))
+                checkedIDs.formUnion(
+                    visibleRecords[min(first, last)...max(first, last)].map(\.id)
+                )
             } else if !checkedIDs.insert(record.id).inserted { checkedIDs.remove(record.id) }
             selectedID = record.id
         } else { copy(record) }
@@ -103,27 +122,76 @@ final class ClipboardPanelModel {
     func copyChecked(paste: Bool = false) {
         let records = checkedRecords
         guard !records.isEmpty else { return }
-        let bodies = records.compactMap { store.text(for: $0) }
-        guard bodies.count == records.count else { errorMessage = ClipboardStoreError.recordNotFound.localizedDescription; return }
-        let text = bodies.joined(separator: joinWithSpace ? " " : "\n")
-        copyContent(.text(text), id: records[0].id, paste: paste)
+        if checkedImageRecords.isEmpty {
+            let bodies = records.compactMap { store.text(for: $0) }
+            guard bodies.count == records.count else {
+                errorMessage = ClipboardStoreError.recordNotFound.localizedDescription
+                return
+            }
+            let text = bodies.joined(separator: joinWithSpace ? " " : "\n")
+            copyContents([.text(text)], id: records[0].id, paste: paste)
+        } else {
+            let contents = records.compactMap { store.content(for: $0) }
+            guard contents.count == records.count else {
+                errorMessage = ClipboardStoreError.recordNotFound.localizedDescription
+                return
+            }
+            copyRichText(contents, id: records[0].id, paste: paste)
+        }
+    }
+
+    func deleteChecked() {
+        let ids = Set(checkedRecords.map(\.id))
+        guard !ids.isEmpty else { return }
+        do {
+            try store.delete(ids: ids)
+            checkedIDs.subtract(ids)
+            if selectedID.map(ids.contains) == true {
+                selectedID = nil
+            }
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func copyContent(_ content: ClipboardContent, id: UUID, paste: Bool) {
+        copyContents([content], id: id, paste: paste)
+    }
+
+    private func copyContents(_ contents: [ClipboardContent], id: UUID, paste: Bool) {
         do {
             if paste, !canDirectPaste { throw ClipboardDirectPasteError.targetUnavailable }
-            try pasteboard.write(content, sourceBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.noname4me.nylai")
-            errorMessage = nil
-            if paste, let targetApplication, let bundleIdentifier = targetApplication.bundleIdentifier {
-                let count = pasteboard.changeCount
-                if !isPinned { onClose() }
-                Task { [self] in
-                    let result = await directPaster.pasteAfterActivating(target: targetApplication, expectedBundleIdentifier: bundleIdentifier,
-                                                                        expectedChangeCount: count, pasteboard: pasteboard)
-                    if case .failure(let error) = result { onError(error) }
-                }
-            } else if let onCopied { onCopied(id) } else if !isPinned { onClose() }
+            try pasteboard.write(
+                contents,
+                sourceBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.noname4me.nylai"
+            )
+            finishCopy(id: id, paste: paste)
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func copyRichText(_ contents: [ClipboardContent], id: UUID, paste: Bool) {
+        do {
+            if paste, !canDirectPaste { throw ClipboardDirectPasteError.targetUnavailable }
+            let richText = try ClipboardRichTextComposer.compose(contents)
+            try pasteboard.writeRichText(
+                richText,
+                sourceBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.noname4me.nylai"
+            )
+            finishCopy(id: id, paste: paste)
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func finishCopy(id: UUID, paste: Bool) {
+        errorMessage = nil
+        if paste, let targetApplication, let bundleIdentifier = targetApplication.bundleIdentifier {
+            let count = pasteboard.changeCount
+            beginDirectPaste(
+                target: targetApplication,
+                bundleIdentifier: bundleIdentifier,
+                changeCount: count
+            )
+        } else if let onCopied { onCopied(id) } else if !isPinned { onClose() }
     }
 
     func selectNext(_ offset: Int) {
@@ -210,12 +278,11 @@ final class ClipboardPanelModel {
                     throw ClipboardDirectPasteError.targetUnavailable
                 }
                 let changeCount = pasteboard.changeCount
-                onClose()
-                Task { [self] in
-                    let result = await directPaster.pasteAfterActivating(target: targetApplication, expectedBundleIdentifier: bundle,
-                                                                        expectedChangeCount: changeCount, pasteboard: pasteboard)
-                    if case .failure(let error) = result { onError(error) }
-                }
+                beginDirectPaste(
+                    target: targetApplication,
+                    bundleIdentifier: bundle,
+                    changeCount: changeCount
+                )
             } else if let onCopied { onCopied(snippet.id) } else { onClose() }
         } catch { errorMessage = error.localizedDescription }
     }
@@ -235,20 +302,34 @@ final class ClipboardPanelModel {
                 sourceBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.noname4me.nylai"
             )
             let expectedChangeCount = pasteboard.changeCount
-            if !isPinned { onClose() }
-            Task { [self] in
-                let result = await directPaster.pasteAfterActivating(
-                    target: targetApplication,
-                    expectedBundleIdentifier: bundleIdentifier,
-                    expectedChangeCount: expectedChangeCount,
-                    pasteboard: pasteboard
-                )
-                if case .failure(let error) = result {
-                    onError(error)
-                }
-            }
+            beginDirectPaste(
+                target: targetApplication,
+                bundleIdentifier: bundleIdentifier,
+                changeCount: expectedChangeCount
+            )
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func beginDirectPaste(
+        target: NSRunningApplication,
+        bundleIdentifier: String,
+        changeCount: Int
+    ) {
+        onBeforePaste()
+        if !isPinned { onClose() }
+        Task { [self] in
+            let result = await directPaster.pasteAfterActivating(
+                target: target,
+                expectedBundleIdentifier: bundleIdentifier,
+                expectedChangeCount: changeCount,
+                pasteboard: pasteboard,
+                focusSnapshot: focusSnapshot
+            )
+            if case .failure(let error) = result {
+                onError(error)
+            }
         }
     }
 
@@ -354,9 +435,12 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
     private var lastExternalApplication: NSRunningApplication?
     nonisolated(unsafe) private var activationObserver: NSObjectProtocol?
     private var previewPanel: NSPanel?
+    private var previewShowTask: Task<Void, Never>?
+    private var previewDismissTask: Task<Void, Never>?
     private var copyFeedback: Task<Void, Never>?
     private var transitionTask: Task<Void, Never>?
     private var toastPanel: NSPanel?
+    private var isReleasingKeyboardFocus = false
     private(set) var activeModel: ClipboardPanelModel?
 
     init(
@@ -421,6 +505,10 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
         removeOutsideMonitors()
         transitionTask?.cancel()
         transitionTask = nil
+        previewShowTask?.cancel()
+        previewShowTask = nil
+        previewDismissTask?.cancel()
+        previewDismissTask = nil
         dismissPreview()
         window?.orderOut(nil)
         window?.ignoresMouseEvents = false
@@ -451,10 +539,14 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
         let target = NSWorkspace.shared.frontmostApplication.flatMap {
             $0.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : $0
         } ?? lastExternalApplication
+        let focusSnapshot = ClipboardFocusedElementCapture.capture(
+            processIdentifier: target?.processIdentifier
+        )
         let model = ClipboardPanelModel(
             store: store,
             pasteboard: pasteboard,
             targetApplication: target,
+            focusSnapshot: focusSnapshot,
             directPaster: directPaster,
             snippets: snippets,
             groups: groups
@@ -493,7 +585,12 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
         model.onPreview = { [weak self, weak panel, weak model] record in
             guard let self, let panel, let model else { return }
             let anchor = record.flatMap { model.rowFrames[$0.id] }.map { self.screenRect($0, in: panel) }
-            self.showPreview(record, anchor: anchor, alongside: panel, visible: panel.screen?.visibleFrame ?? visible)
+            self.handlePreviewRequest(
+                record,
+                anchor: anchor,
+                alongside: panel,
+                visible: panel.screen?.visibleFrame ?? visible
+            )
         }
         model.onClose = { [weak self, weak panel, weak model] in
             guard let self, let panel, let model else { return }
@@ -508,6 +605,9 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
         }
         model.onError = { error in
             ClipboardDirectPasteErrorPresenter.show(error)
+        }
+        model.onBeforePaste = { [weak self, weak model] in
+            self?.releaseKeyboardFocus(keepingVisible: model?.isPinned == true)
         }
         window = panel
         panel.ignoresMouseEvents = false
@@ -535,6 +635,10 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
     private func dismissIfOutside(_ clickedWindow: NSWindow?) {
         guard let panel = window, panel.isVisible, let model = activeModel, !model.isPinned,
               model.groupDraft == nil, panel.attachedSheet == nil else { return }
+        if let previewPanel, previewPanel.isVisible,
+           previewPanel.frame.insetBy(dx: -4, dy: -4).contains(NSEvent.mouseLocation) {
+            return
+        }
         var candidate = clickedWindow
         while let current = candidate {
             if current === panel { return }
@@ -557,6 +661,7 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidResignKey(_ notification: Notification) {
+        guard !isReleasingKeyboardFocus else { return }
         dismissIfOutside(NSApp.keyWindow)
     }
 
@@ -569,6 +674,7 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
         guard !panel.ignoresMouseEvents else { return }
         transitionTask?.cancel()
         dismissPreview()
+        releaseKeyboardFocus(keepingVisible: true)
         if model.reveal == 0 || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             close()
             return
@@ -581,6 +687,17 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
             self.transitionTask = nil
             self.close()
         }
+    }
+
+    private func releaseKeyboardFocus(keepingVisible: Bool) {
+        guard let panel = window else { return }
+        isReleasingKeyboardFocus = true
+        panel.makeFirstResponder(nil)
+        panel.orderOut(nil)
+        if keepingVisible {
+            panel.orderFrontRegardless()
+        }
+        isReleasingKeyboardFocus = false
     }
 
     private func showCopiedToast(at anchor: CGRect, visible: CGRect) {
@@ -619,14 +736,75 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
     }
 
     private func dismissPreview() {
+        previewShowTask?.cancel()
+        previewShowTask = nil
+        previewDismissTask?.cancel()
+        previewDismissTask = nil
         guard let previewPanel else { return }
         previewPanel.parent?.removeChildWindow(previewPanel)
         previewPanel.orderOut(nil)
         self.previewPanel = nil
     }
 
+    private func handlePreviewRequest(
+        _ record: ClipboardRecord?,
+        anchor: CGRect?,
+        alongside panel: NSPanel,
+        visible: CGRect
+    ) {
+        previewDismissTask?.cancel()
+        previewDismissTask = nil
+        previewShowTask?.cancel()
+        previewShowTask = nil
+        guard let record else {
+            schedulePreviewDismiss()
+            return
+        }
+        if previewPanel != nil {
+            showPreview(record, anchor: anchor, alongside: panel, visible: visible)
+            return
+        }
+        previewShowTask = Task { @MainActor [weak self, weak panel] in
+            try? await Task.sleep(for: .milliseconds(220))
+            guard !Task.isCancelled, let self, let panel, panel.isVisible else { return }
+            self.previewShowTask = nil
+            self.showPreview(record, anchor: anchor, alongside: panel, visible: visible)
+        }
+    }
+
+    private func schedulePreviewDismiss() {
+        previewDismissTask?.cancel()
+        previewDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(220))
+            guard !Task.isCancelled, let self else { return }
+            if let preview = self.previewPanel,
+               preview.frame.insetBy(dx: -4, dy: -4).contains(NSEvent.mouseLocation) {
+                self.previewDismissTask = nil
+                return
+            }
+            self.dismissPreview()
+        }
+    }
+
+    private func previewHoverChanged(_ hovering: Bool) {
+        if hovering {
+            previewDismissTask?.cancel()
+            previewDismissTask = nil
+        } else {
+            schedulePreviewDismiss()
+        }
+    }
+
     private func showPreview(_ record: ClipboardRecord?, anchor: CGRect?, alongside panel: NSPanel, visible: CGRect) {
-        dismissPreview()
+        previewShowTask?.cancel()
+        previewShowTask = nil
+        previewDismissTask?.cancel()
+        previewDismissTask = nil
+        if let previewPanel {
+            previewPanel.parent?.removeChildWindow(previewPanel)
+            previewPanel.orderOut(nil)
+            self.previewPanel = nil
+        }
         guard let record, panel.isVisible else { return }
         let frame = panel.frame
         let row = anchor ?? frame
@@ -657,14 +835,19 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false
         )
         preview.isReleasedWhenClosed = false
-        preview.ignoresMouseEvents = true
+        preview.ignoresMouseEvents = false
         preview.isOpaque = false
         preview.backgroundColor = .clear
         preview.hasShadow = true
+        preview.hidesOnDeactivate = false
+        preview.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         let host = NSHostingController(
             rootView: ClipboardRecordPreview(
                 content: store.content(for: record),
-                size: CGSize(width: width, height: height)
+                size: CGSize(width: width, height: height),
+                onHover: { [weak self] hovering in
+                    self?.previewHoverChanged(hovering)
+                }
             ).nylaiLocalized()
         )
         preview.contentViewController = host
@@ -706,6 +889,7 @@ private final class ClipboardKeyPanel: NSPanel {
 private struct ClipboardRecordPreview: View {
     let content: ClipboardContent?
     let size: CGSize
+    let onHover: (Bool) -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -713,13 +897,7 @@ private struct ClipboardRecordPreview: View {
         Group {
             switch content {
             case .text(let text):
-                GeometryReader { geometry in
-                    Text(String(text.prefix(1800)))
-                        .font(.system(size: 12))
-                        .lineSpacing(3)
-                        .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
-                        .clipped()
-                }
+                ClipboardSelectableTextView(text: String(text.prefix(20_000)))
             case .image(let image):
                 Image(decorative: image, scale: 1)
                     .resizable()
@@ -732,6 +910,35 @@ private struct ClipboardRecordPreview: View {
         .frame(width: size.width, height: size.height)
         .background(theme.card, in: RoundedRectangle(cornerRadius: 11))
         .overlay { RoundedRectangle(cornerRadius: 11).strokeBorder(theme.border, lineWidth: 1) }
+        .onHover(perform: onHover)
+    }
+}
+
+private struct ClipboardSelectableTextView: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .noBorder
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = .systemFont(ofSize: 12)
+        textView.textContainerInset = NSSize(width: 0, height: 0)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.string = text
+        scroll.documentView = textView
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let textView = scroll.documentView as? NSTextView,
+              textView.string != text else { return }
+        textView.string = text
     }
 }
 

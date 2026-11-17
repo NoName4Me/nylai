@@ -179,6 +179,7 @@ enum WindowSwitcherError: LocalizedError, Equatable {
     case screenRecordingPermissionRequired
     case targetUnavailable
     case windowUnavailable
+    case windowNotClosable
 
     var errorDescription: String? {
         switch self {
@@ -211,6 +212,8 @@ enum WindowSwitcherError: LocalizedError, Equatable {
             L10n.shared.string("目标应用已关闭，未执行切换。")
         case .windowUnavailable:
             L10n.shared.string("目标窗口已关闭或无法激活。")
+        case .windowNotClosable:
+            L10n.shared.string("目标窗口当前不可关闭，可能正在显示保存或其他确认对话框。")
         }
     }
 }

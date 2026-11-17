@@ -371,22 +371,6 @@ struct SettingsView: View {
                     moduleRow(module, isLast: index == NylaiModuleID.allCases.count - 1)
                 }
             }
-            SettingsCard {
-                HStack(spacing: 12) {
-                    ActionIcon(symbol: "folder", isEnabled: finderExtensionEnabled)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("访达增强").font(.system(size: 13, weight: .medium))
-                        Text("新建文件、复制路径、在此打开终端。")
-                            .font(.system(size: 11.5)).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button(finderExtensionEnabled ? "管理扩展" : "启用扩展") {
-                        FIFinderSyncController.showExtensionManagementInterface()
-                    }
-                    .controlSize(.small)
-                }
-                .padding(14)
-            }
         }
     }
 
@@ -419,8 +403,21 @@ struct SettingsView: View {
                             .foregroundStyle(theme.danger)
                             .lineLimit(2)
                     }
+                    if module == .finderEnhancements,
+                       status != .off,
+                       !finderExtensionEnabled {
+                        Text("系统扩展尚未启用，访达右键菜单暂不显示。")
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.warning)
+                    }
                 }
                 Spacer(minLength: 12)
+                if module == .finderEnhancements, status != .off {
+                    Button(finderExtensionEnabled ? "管理扩展" : "启用扩展") {
+                        FIFinderSyncController.showExtensionManagementInterface()
+                    }
+                    .controlSize(.small)
+                }
                 Toggle("", isOn: moduleEnabledBinding(module))
                     .labelsHidden()
                     .compactSettingsSwitch()
@@ -1789,7 +1786,7 @@ private enum SettingsSection: Hashable {
             self = .clipboard
         case .systemMonitor:
             self = .systemMonitor
-        case .windowSwitcher:
+        case .finderEnhancements, .windowSwitcher:
             return nil
         }
     }
@@ -1800,6 +1797,8 @@ private extension NylaiModuleID {
         switch self {
         case .screenshot:
             "viewfinder"
+        case .finderEnhancements:
+            "folder"
         case .globalShortcuts:
             "keyboard"
         case .mouseGestures:

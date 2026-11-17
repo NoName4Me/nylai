@@ -98,6 +98,122 @@ final class FinderEnhancementTests: XCTestCase {
         XCTAssertNil(FinderEnhancementRequest(url: try XCTUnwrap(components.url)))
     }
 
+    func testOfficeAndWPSDocumentActionsAreRecognized() throws {
+        for (action, expected) in [
+            ("new-word", FinderEnhancementRequest.Action.newWord),
+            ("new-excel", .newExcel),
+            ("new-powerpoint", .newPowerPoint),
+            ("new-wps-writer", .newWPSWriter),
+            ("new-wps-spreadsheet", .newWPSSpreadsheet),
+            ("new-wps-presentation", .newWPSPresentation),
+        ] {
+            let request = try XCTUnwrap(FinderEnhancementRequest(
+                url: makeURL(
+                    action: action,
+                    target: URL(fileURLWithPath: "/tmp")
+                )
+            ))
+            XCTAssertEqual(request.action, expected)
+        }
+    }
+
+    func testOfficeTemplatePackagesContainRequiredDocumentParts() throws {
+        let expectations: [(OfficeOpenXMLTemplate.Kind, [String])] = [
+            (.word, ["word/document.xml"]),
+            (.excel, ["xl/workbook.xml", "xl/worksheets/sheet1.xml"]),
+            (
+                .powerpoint,
+                ["ppt/presentation.xml", "ppt/slides/slide1.xml"]
+            ),
+        ]
+        for (kind, requiredEntries) in expectations {
+            let data = try OfficeOpenXMLTemplate.data(for: kind)
+            XCTAssertEqual(Array(data.prefix(2)), [0x50, 0x4B])
+            let contents = String(decoding: data, as: UTF8.self)
+            XCTAssertTrue(contents.contains("[Content_Types].xml"))
+            for entry in requiredEntries {
+                XCTAssertTrue(contents.contains(entry))
+            }
+        }
+    }
+
+    func testOfficeTemplatePackagesPassZIPValidation() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString
+        )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for (index, kind) in [
+            OfficeOpenXMLTemplate.Kind.word,
+            .excel,
+            .powerpoint,
+        ].enumerated() {
+            let file = root.appendingPathComponent("\(index).zip")
+            try OfficeOpenXMLTemplate.data(for: kind).write(to: file)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+            process.arguments = ["-t", file.path]
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+            try process.run()
+            process.waitUntilExit()
+            XCTAssertEqual(
+                process.terminationStatus,
+                0,
+                "\(kind) package should be a valid ZIP"
+            )
+        }
+    }
+
+    func testNewDocumentFileReceivesTemplateContents() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString
+        )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let contents = Data("template".utf8)
+
+        let created = try FinderEnhancementRequest.createUntitledFile(
+            in: root,
+            name: "未命名文档.docx",
+            contents: contents
+        )
+
+        XCTAssertEqual(try Data(contentsOf: created), contents)
+    }
+
+    func testFinderEnhancementFlagDefaultsOnAndPersistsToggle() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let flagURL = root.appending(path: "nylai/finder-enhancements.enabled")
+
+        XCTAssertTrue(FinderEnhancementAvailability.isEnabled(at: flagURL))
+        XCTAssertTrue(FinderEnhancementAvailability.setEnabled(false, at: flagURL))
+        XCTAssertFalse(FinderEnhancementAvailability.isEnabled(at: flagURL))
+        XCTAssertTrue(FinderEnhancementAvailability.setEnabled(true, at: flagURL))
+        XCTAssertTrue(FinderEnhancementAvailability.isEnabled(at: flagURL))
+    }
+
+    func testFinderEnhancementFlagTreatsUnknownContentAsEnabled() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let flagURL = root.appending(path: "nylai/finder-enhancements.enabled")
+        try FileManager.default.createDirectory(
+            at: flagURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("unexpected".utf8).write(to: flagURL)
+
+        XCTAssertTrue(FinderEnhancementAvailability.isEnabled(at: flagURL))
+    }
+
     private func makeURL(action: String, target: URL) -> URL {
         var components = URLComponents()
         components.scheme = "nylai"

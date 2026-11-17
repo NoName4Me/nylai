@@ -76,6 +76,7 @@ final class AppPreferences {
     private static let showSettingsOnLaunchKey = "showSettingsOnLaunch"
     private static let screenshotHistoryEnabledKey = "screenshotHistoryEnabled"
     private static let screenshotEnabledKey = "module.screenshot.enabled"
+    private static let finderEnhancementsEnabledKey = "module.finder-enhancements.enabled"
     private static let mouseGesturesEnabledKey = "module.mouse-gestures.enabled"
     private static let clipboardEnabledKey = "module.clipboard.enabled"
     private static let windowSwitcherEnabledKey = "module.window-switcher.enabled"
@@ -111,6 +112,15 @@ final class AppPreferences {
     var screenshotEnabled: Bool {
         didSet {
             defaults.set(screenshotEnabled, forKey: Self.screenshotEnabledKey)
+        }
+    }
+
+    var finderEnhancementsEnabled: Bool {
+        didSet {
+            defaults.set(
+                finderEnhancementsEnabled,
+                forKey: Self.finderEnhancementsEnabledKey
+            )
         }
     }
 
@@ -167,6 +177,9 @@ final class AppPreferences {
         ) as? Bool ?? false
         screenshotEnabled = defaults.object(
             forKey: Self.screenshotEnabledKey
+        ) as? Bool ?? true
+        finderEnhancementsEnabled = defaults.object(
+            forKey: Self.finderEnhancementsEnabledKey
         ) as? Bool ?? true
         mouseGesturesEnabled = defaults.object(
             forKey: Self.mouseGesturesEnabledKey

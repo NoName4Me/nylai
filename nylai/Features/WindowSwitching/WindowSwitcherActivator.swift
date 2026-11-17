@@ -7,9 +7,135 @@ protocol WindowSwitcherActivating {
 }
 
 @MainActor
+protocol WindowSwitcherWindowClosing {
+    func close(
+        windowID: CGWindowID,
+        processIdentifier: pid_t,
+        bundleIdentifier: String?,
+        title: String?,
+        frame: CGRect
+    ) async throws
+}
+
+@MainActor
+final class WindowSwitcherWindowCloser: WindowSwitcherWindowClosing {
+    private let isAccessibilityGranted: @MainActor () -> Bool
+    private let applicationIsAvailable: @MainActor (
+        pid_t,
+        String?
+    ) -> Bool
+    private let resolveWindow: @MainActor (
+        pid_t,
+        CGWindowID,
+        String?,
+        CGRect?
+    ) -> AXUIElement?
+    private let pressClose: @MainActor (AXUIElement) -> Bool
+
+    init(
+        isAccessibilityGranted: @escaping @MainActor () -> Bool = {
+            AccessibilityPermission.isGranted
+        },
+        applicationIsAvailable: @escaping @MainActor (
+            pid_t,
+            String?
+        ) -> Bool = { processIdentifier, bundleIdentifier in
+            guard let application = NSRunningApplication(
+                processIdentifier: processIdentifier
+            ) else {
+                return false
+            }
+            return !application.isTerminated
+                && application.bundleIdentifier == bundleIdentifier
+        },
+        resolveWindow: @escaping @MainActor (
+            pid_t,
+            CGWindowID,
+            String?,
+            CGRect?
+        ) -> AXUIElement? = { processIdentifier, windowID, title, frame in
+            WindowSwitcherActivator.windowElement(
+                processIdentifier: processIdentifier,
+                windowID: windowID,
+                title: title,
+                frame: frame
+            )
+        },
+        pressClose: @escaping @MainActor (AXUIElement) -> Bool = {
+            WindowSwitcherWindowCloser.pressCloseButton(of: $0)
+        }
+    ) {
+        self.isAccessibilityGranted = isAccessibilityGranted
+        self.applicationIsAvailable = applicationIsAvailable
+        self.resolveWindow = resolveWindow
+        self.pressClose = pressClose
+    }
+
+    func close(
+        windowID: CGWindowID,
+        processIdentifier: pid_t,
+        bundleIdentifier: String?,
+        title: String?,
+        frame: CGRect
+    ) async throws {
+        guard isAccessibilityGranted() else {
+            throw WindowSwitcherError.accessibilityUnavailable
+        }
+        guard processIdentifier > 0,
+              applicationIsAvailable(processIdentifier, bundleIdentifier),
+              let window = resolveWindow(
+                  processIdentifier,
+                  windowID,
+                  title,
+                  frame
+              ) else {
+            throw WindowSwitcherError.windowUnavailable
+        }
+        guard pressClose(window) else {
+            throw WindowSwitcherError.windowNotClosable
+        }
+    }
+
+    static func pressCloseButton(of window: AXUIElement) -> Bool {
+        guard let closeButton = closeButton(of: window) else {
+            return false
+        }
+        return AXUIElementPerformAction(
+            closeButton,
+            kAXPressAction as CFString
+        ) == .success
+    }
+
+    private static func closeButton(of window: AXUIElement) -> AXUIElement? {
+        var rawCloseButton: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            window,
+            kAXCloseButtonAttribute as CFString,
+            &rawCloseButton
+        ) == .success,
+        let rawCloseButton,
+        CFGetTypeID(rawCloseButton) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        let closeButton = rawCloseButton as! AXUIElement
+        var rawEnabled: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            closeButton,
+            kAXEnabledAttribute as CFString,
+            &rawEnabled
+        ) == .success,
+        (rawEnabled as? Bool) != false else {
+            return nil
+        }
+        return closeButton
+    }
+}
+
+@MainActor
 final class WindowSwitcherActivator: WindowSwitcherActivating {
     private let isAccessibilityGranted: @MainActor () -> Bool
     private let openApplication: @MainActor (URL) async throws -> Void
+    private let activationService: ApplicationActivationService
 
     init(
         isAccessibilityGranted: @escaping @MainActor () -> Bool = {
@@ -21,6 +147,9 @@ final class WindowSwitcherActivator: WindowSwitcherActivating {
     ) {
         self.isAccessibilityGranted = isAccessibilityGranted
         self.openApplication = openApplication
+        activationService = ApplicationActivationService(
+            openApplication: openApplication
+        )
     }
 
     func activate(_ target: WindowSwitcherTarget) async throws {
@@ -37,11 +166,9 @@ final class WindowSwitcherActivator: WindowSwitcherActivating {
             return
         }
         guard let windowID = target.windowID else {
-            if let url = application.bundleURL {
-                try await openApplication(url)
-                return
-            }
-            guard application.activate(options: [.activateAllWindows]) else {
+            do {
+                try await activationService.activate(ApplicationActivationTarget(application))
+            } catch {
                 throw WindowSwitcherError.targetUnavailable
             }
             return
@@ -57,26 +184,13 @@ final class WindowSwitcherActivator: WindowSwitcherActivating {
         ) else {
             throw WindowSwitcherError.windowUnavailable
         }
-        AXUIElementSetAttributeValue(
-            window,
-            kAXMinimizedAttribute as CFString,
-            kCFBooleanFalse
-        )
-        guard application.activate(options: [.activateAllWindows]) else {
-            throw WindowSwitcherError.targetUnavailable
-        }
-        AXUIElementSetAttributeValue(
-            window,
-            kAXFocusedAttribute as CFString,
-            kCFBooleanTrue
-        )
-        AXUIElementSetAttributeValue(
-            window,
-            kAXMainAttribute as CFString,
-            kCFBooleanTrue
-        )
-        let result = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-        guard result == .success else {
+        do {
+            try activationService.activate(
+                window: window,
+                target: ApplicationActivationTarget(application),
+                restoresMinimizedWindow: true
+            )
+        } catch {
             throw WindowSwitcherError.windowUnavailable
         }
     }

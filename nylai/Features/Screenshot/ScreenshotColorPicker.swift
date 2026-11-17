@@ -67,7 +67,7 @@ private extension NSColor {
             red: Double(color.redComponent),
             green: Double(color.greenComponent),
             blue: Double(color.blueComponent),
-            alpha: 1
+            alpha: Double(color.alphaComponent)
         )
     }
 }
@@ -86,6 +86,8 @@ final class ScreenshotColorPopoverViewController: NSViewController {
     private let hexField = NSTextField()
     private let fieldView = ColorSaturationBrightnessView()
     private let hueView = ColorHueSliderView()
+    private let alphaSlider = NSSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
+    private let alphaValue = NSTextField(labelWithString: "100%")
 
     init(color: ScreenshotAnnotationColor) {
         self.color = color
@@ -226,7 +228,23 @@ final class ScreenshotColorPopoverViewController: NSViewController {
             self.applyCurrentHSB(notify: true)
         }
 
-        let stack = NSStackView(views: [previewRow, fieldView, hueView])
+        alphaSlider.target = self
+        alphaSlider.action = #selector(alphaChanged)
+        alphaSlider.isContinuous = true
+        alphaSlider.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        alphaValue.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
+        alphaValue.alignment = .right
+        alphaValue.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        let alphaLabel = NSTextField(labelWithString: L10n.shared.string("透明度"))
+        alphaLabel.font = .systemFont(ofSize: 10.5)
+        alphaLabel.textColor = .secondaryLabelColor
+        alphaLabel.widthAnchor.constraint(equalToConstant: 32).isActive = true
+        let alphaRow = NSStackView(views: [alphaLabel, alphaSlider, alphaValue])
+        alphaRow.orientation = .horizontal
+        alphaRow.alignment = .centerY
+        alphaRow.spacing = 6
+
+        let stack = NSStackView(views: [previewRow, fieldView, hueView, alphaRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 9
@@ -238,12 +256,14 @@ final class ScreenshotColorPopoverViewController: NSViewController {
             hue: hue,
             saturation: saturation,
             brightness: brightness,
-            alpha: 1
+            alpha: CGFloat(color.alpha)
         ).screenshotColor
-        color = next
+        var updated = next
+        updated.alpha = color.alpha
+        color = updated
         updateInterface()
         if notify {
-            onColorChanged?(next)
+            onColorChanged?(updated)
         }
     }
 
@@ -256,15 +276,21 @@ final class ScreenshotColorPopoverViewController: NSViewController {
         fieldView.saturation = saturation
         fieldView.brightness = brightness
         hueView.hue = hue
+        alphaSlider.integerValue = Int((color.alpha * 100).rounded())
+        alphaValue.stringValue = "\(alphaSlider.integerValue)%"
         for swatch in swatches {
-            swatch.isSelected = swatch.color == color
+            swatch.isSelected = swatch.color.red == color.red
+                && swatch.color.green == color.green
+                && swatch.color.blue == color.blue
         }
         isUpdating = false
     }
 
     @objc private func paletteColorChanged(_ sender: ScreenshotColorSwatchButton) {
         guard !isUpdating else { return }
-        setColor(sender.color, notify: true)
+        var next = sender.color
+        next.alpha = color.alpha
+        setColor(next, notify: true)
     }
 
     @objc private func hexChanged() {
@@ -273,7 +299,17 @@ final class ScreenshotColorPopoverViewController: NSViewController {
             hexField.stringValue = color.hexText
             return
         }
-        setColor(parsed, notify: true)
+        var next = parsed
+        next.alpha = color.alpha
+        setColor(next, notify: true)
+    }
+
+    @objc private func alphaChanged() {
+        guard !isUpdating else { return }
+        color.alpha = min(max(Double(alphaSlider.integerValue) / 100, 0), 1)
+        alphaValue.stringValue = "\(alphaSlider.integerValue)%"
+        preview.color = color
+        onColorChanged?(color)
     }
 }
 

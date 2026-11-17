@@ -7,7 +7,6 @@ enum NylaiPalette {
     static let paper = NSColor(srgbRed: 247.0 / 255.0, green: 247.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
     static let charcoal = NSColor(srgbRed: 28.0 / 255.0, green: 32.0 / 255.0, blue: 30.0 / 255.0, alpha: 1)
     static let ink = NSColor(srgbRed: 41.0 / 255.0, green: 45.0 / 255.0, blue: 43.0 / 255.0, alpha: 1)
-    static let terracotta = NSColor(srgbRed: 204.0 / 255.0, green: 134.0 / 255.0, blue: 104.0 / 255.0, alpha: 1)
 
     static let accentNSColor = NSColor(name: nil) { appearance in
         let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua

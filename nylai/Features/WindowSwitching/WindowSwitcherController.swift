@@ -2,9 +2,10 @@ import AppKit
 
 @MainActor
 final class WindowSwitcherController {
-    private let monitor = WindowSwitcherEventMonitor()
+    private let monitor: WindowSwitcherEventMonitor
     private let catalogProvider: any WindowSwitcherCatalogProviding
     private let activator: any WindowSwitcherActivating
+    private let windowCloser: any WindowSwitcherWindowClosing
     private let windowCapturer: any WindowCapturing
     private let panelController = WindowSwitcherPanelController()
     private let isInteractionSuppressed: @MainActor () -> Bool
@@ -13,6 +14,7 @@ final class WindowSwitcherController {
     private var isMenuTracking = false
     private var snapshotTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
+    private var windowCloseTask: Task<Void, Never>?
     private var session: WindowSwitcherSession?
     private var pendingCommands: [WindowSwitcherSessionCommand] = []
     private var confirmWhenReady = false
@@ -23,15 +25,19 @@ final class WindowSwitcherController {
     var onError: @MainActor (Error) -> Void = { _ in }
 
     init(
+        monitor: WindowSwitcherEventMonitor = WindowSwitcherEventMonitor(),
         catalogProvider: (any WindowSwitcherCatalogProviding)? = nil,
         activator: any WindowSwitcherActivating = WindowSwitcherActivator(),
+        windowCloser: any WindowSwitcherWindowClosing = WindowSwitcherWindowCloser(),
         windowCapturer: any WindowCapturing = ScreenCaptureService(),
         pinnedApplications: WindowSwitcherPinnedApplications = WindowSwitcherPinnedApplications(),
         isInteractionSuppressed: @escaping @MainActor () -> Bool
     ) {
         self.catalogProvider = catalogProvider ?? WindowSwitcherCatalogProvider(pinnedApplications: pinnedApplications)
+        self.monitor = monitor
         self.pinnedApplications = pinnedApplications
         self.activator = activator
+        self.windowCloser = windowCloser
         self.windowCapturer = windowCapturer
         self.isInteractionSuppressed = isInteractionSuppressed
         monitor.onEvent = { [weak self] event in
@@ -54,6 +60,9 @@ final class WindowSwitcherController {
         panelController.model.onConfirmApplication = { [weak self] in
             guard let self, let session = self.session else { return }
             self.finish(with: session)
+        }
+        panelController.model.onCloseWindow = { [weak self] window in
+            self?.closeWindow(window)
         }
     }
 
@@ -117,9 +126,13 @@ final class WindowSwitcherController {
         cancelSession()
     }
 
-    private func handle(_ event: WindowSwitcherEvent) {
+    func handle(_ event: WindowSwitcherEvent) {
         switch event {
         case .begin(let mode, let reverse):
+            guard windowCloseTask == nil else {
+                monitor.setSessionActive(false)
+                return
+            }
             guard !isInteractionSuppressed() else {
                 monitor.setSessionActive(false)
                 return
@@ -180,6 +193,7 @@ final class WindowSwitcherController {
 
     private func handleCommand(_ command: WindowSwitcherSessionCommand) {
         if command == .confirm, isMenuTracking { return }
+        if windowCloseTask != nil { return }
         if command == .cancel {
             cancelSession()
             return
@@ -257,7 +271,10 @@ final class WindowSwitcherController {
             MainActor.assumeIsolated {
                 guard let self, self.isMenuTracking else { return }
                 self.isMenuTracking = false
-                if !NSEvent.modifierFlags.contains(.command) { self.cancelSession() }
+                if !NSEvent.modifierFlags.contains(.command),
+                   self.windowCloseTask == nil {
+                    self.cancelSession()
+                }
             }
         })
     }
@@ -268,6 +285,60 @@ final class WindowSwitcherController {
         guard let session, session.selectedWindow?.id == windowID else { return }
         panelController.model.update(with: session)
         finish(with: session)
+    }
+
+    func closeWindow(_ window: WindowSwitcherWindow) {
+        guard windowCloseTask == nil,
+              let session,
+              session.selectedApplication.windows.contains(where: {
+                  $0.id == window.id
+              }) else {
+            return
+        }
+        let application = session.selectedApplication
+        let target = WindowSwitcherTarget(
+            processIdentifier: application.id,
+            bundleIdentifier: application.bundleIdentifier,
+            applicationName: application.name,
+            windowID: window.id,
+            windowTitle: window.title,
+            windowFrame: window.frame,
+            applicationURL: application.applicationURL,
+            launchIfNeeded: false
+        )
+        panelController.model.closingWindowIDs.insert(window.id)
+        monitor.setSessionActive(false)
+        snapshotTask?.cancel()
+        snapshotTask = nil
+        previewTask?.cancel()
+        previewTask = nil
+        self.session = nil
+        pendingCommands = []
+        confirmWhenReady = false
+        isMenuTracking = false
+        closePanel()
+
+        windowCloseTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try Task.checkCancellation()
+                try await activator.activate(target)
+                try Task.checkCancellation()
+                try await windowCloser.close(
+                    windowID: window.id,
+                    processIdentifier: application.id,
+                    bundleIdentifier: application.bundleIdentifier,
+                    title: window.title,
+                    frame: window.frame
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                onError(error)
+            }
+            windowCloseTask = nil
+            panelController.model.closingWindowIDs.remove(window.id)
+        }
     }
 
     private func loadPreviews(
@@ -333,9 +404,12 @@ final class WindowSwitcherController {
         snapshotTask = nil
         previewTask?.cancel()
         previewTask = nil
+        windowCloseTask?.cancel()
+        windowCloseTask = nil
         pendingCommands = []
         confirmWhenReady = false
         session = nil
+        panelController.model.closingWindowIDs = []
         closePanel()
     }
 

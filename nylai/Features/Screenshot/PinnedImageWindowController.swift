@@ -223,7 +223,12 @@ final class PinnedImageWindowController: NSWindowController {
     private func requestClose() {
         close()
         onClose()
-        restoreApplication?.activate(options: [.activateAllWindows])
+        guard let restoreApplication else { return }
+        Task {
+            try? ApplicationActivationService().bringToFront(
+                ApplicationActivationTarget(restoreApplication)
+            )
+        }
     }
 
     private func save() {

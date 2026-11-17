@@ -251,8 +251,8 @@ struct ClipboardPanelView: View {
             if model.isSelecting {
                 Button { model.choose(record) } label: {
                     Image(systemName: model.checkedIDs.contains(record.id) ? "checkmark.square.fill" : "square")
-                        .font(.system(size: 17)).foregroundStyle(record.kind == .text ? NylaiPalette.accent : .secondary)
-                }.buttonStyle(.plain).disabled(record.kind != .text).accessibilityLabel("选择记录")
+                        .font(.system(size: 17)).foregroundStyle(NylaiPalette.accent)
+                }.buttonStyle(.plain).accessibilityLabel("选择记录")
             }
             Button { model.choose(record, modifiers: NSApp.currentEvent?.modifierFlags ?? []) } label: {
                 HStack(spacing: 10) {
@@ -288,19 +288,21 @@ struct ClipboardPanelView: View {
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
-            Button("粘贴") { model.directPaste(record) }.buttonStyle(.borderless)
-                .disabled(!model.canDirectPaste)
-                .help(model.canDirectPaste ? L10n.shared.string("粘贴到 %@", model.targetApplication?.localizedName ?? "") : L10n.shared.string("先切换到目标应用，再打开剪贴板。"))
-            Menu { recordActions(record) } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 13, weight: .medium))
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
+            if !model.isSelecting {
+                Button("粘贴") { model.directPaste(record) }.buttonStyle(.borderless)
+                    .disabled(!model.canDirectPaste)
+                    .help(model.canDirectPaste ? L10n.shared.string("粘贴到 %@", model.targetApplication?.localizedName ?? "") : L10n.shared.string("先切换到目标应用，再打开剪贴板。"))
+                Menu { recordActions(record) } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 13, weight: .medium))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("记录操作")
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .accessibilityLabel("记录操作")
         }
         .padding(.horizontal, 14).padding(.vertical, 9)
         .background((hoveredID == record.id || model.selectedID == record.id) ? NylaiPalette.accent.opacity(0.10) : .clear)
@@ -343,6 +345,7 @@ struct ClipboardPanelView: View {
                     Text("换行").tag(false)
                     Text("空格").tag(true)
                 }.labelsHidden().frame(width: 75)
+                    .disabled(!model.canCombineChecked || !model.checkedImageRecords.isEmpty)
                 Menu("分组") {
                     ForEach(model.groups?.groups ?? []) { group in
                         let ids = Set(model.checkedRecords.map(\.id))
@@ -362,8 +365,12 @@ struct ClipboardPanelView: View {
                     }
                 }.fixedSize().disabled(model.checkedRecords.isEmpty)
                 Spacer(minLength: 0)
-                Button("复制合并") { model.copyChecked() }.disabled(model.checkedRecords.isEmpty)
-                Button("粘贴合并") { model.copyChecked(paste: true) }.disabled(model.checkedRecords.isEmpty || !model.canDirectPaste)
+                Button("删除", role: .destructive) { model.deleteChecked() }
+                    .disabled(model.checkedRecords.isEmpty)
+                Button("复制选中") { model.copyChecked() }
+                    .disabled(!model.canCombineChecked)
+                Button("粘贴选中") { model.copyChecked(paste: true) }
+                    .disabled(!model.canCombineChecked || !model.canDirectPaste)
             }.padding(.horizontal, 12).padding(.bottom, 10)
         }
     }
