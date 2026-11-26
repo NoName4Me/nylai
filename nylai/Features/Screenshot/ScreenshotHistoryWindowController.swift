@@ -10,6 +10,7 @@ final class ScreenshotHistoryViewModel {
     private let saver: any ScreenshotSaving
     private let pinnedImageManager: PinnedImageManager
     private let onAddToCollage: @MainActor (CGImage) -> Void
+    private let onAddToBoard: @MainActor (CGImage) -> Void
     private(set) var errorMessage: String?
     private(set) var recognizingID: UUID?
 
@@ -18,13 +19,15 @@ final class ScreenshotHistoryViewModel {
         paster: any ScreenshotPasting = PasteboardScreenshotPaster(),
         saver: any ScreenshotSaving = PNGScreenshotSaver(),
         pinnedImageManager: PinnedImageManager,
-        onAddToCollage: @escaping @MainActor (CGImage) -> Void = { _ in }
+        onAddToCollage: @escaping @MainActor (CGImage) -> Void = { _ in },
+        onAddToBoard: @escaping @MainActor (CGImage) -> Void = { _ in }
     ) {
         self.store = store
         self.paster = paster
         self.saver = saver
         self.pinnedImageManager = pinnedImageManager
         self.onAddToCollage = onAddToCollage
+        self.onAddToBoard = onAddToBoard
     }
 
     func reload() {
@@ -82,6 +85,11 @@ final class ScreenshotHistoryViewModel {
         }
     }
 
+    func addToBoard(_ record: ScreenshotHistoryRecord) {
+        do { onAddToBoard(try loadImage(for: record)) }
+        catch { show(error) }
+    }
+
     func delete(_ record: ScreenshotHistoryRecord) {
         do {
             try store.delete(record)
@@ -129,14 +137,16 @@ final class ScreenshotHistoryWindowController: NSWindowController {
         paster: any ScreenshotPasting = PasteboardScreenshotPaster(),
         saver: any ScreenshotSaving = PNGScreenshotSaver(),
         pinnedImageManager: PinnedImageManager,
-        onAddToCollage: @escaping @MainActor (CGImage) -> Void = { _ in }
+        onAddToCollage: @escaping @MainActor (CGImage) -> Void = { _ in },
+        onAddToBoard: @escaping @MainActor (CGImage) -> Void = { _ in }
     ) {
         viewModel = ScreenshotHistoryViewModel(
             store: store,
             paster: paster,
             saver: saver,
             pinnedImageManager: pinnedImageManager,
-            onAddToCollage: onAddToCollage
+            onAddToCollage: onAddToCollage,
+            onAddToBoard: onAddToBoard
         )
         let view = ScreenshotHistoryView(
             preferences: preferences,
@@ -204,6 +214,7 @@ private struct ScreenshotHistoryView: View {
                                 onSave: { model.save(record) },
                                 onPin: { model.pin(record) },
                                 onAddToCollage: preferences.screenshotCollageEnabled ? { model.addToCollage(record) } : nil,
+                                onAddToBoard: preferences.boardEnabled ? { model.addToBoard(record) } : nil,
                                 onDelete: { model.delete(record) }
                             )
                         }
@@ -312,6 +323,7 @@ private struct ScreenshotHistoryCard: View {
     let onSave: () -> Void
     let onPin: () -> Void
     let onAddToCollage: (() -> Void)?
+    let onAddToBoard: (() -> Void)?
     let onDelete: () -> Void
     @State private var isHovering = false
 
@@ -374,6 +386,7 @@ private struct ScreenshotHistoryCard: View {
                 if let onAddToCollage {
                     actionButton("加入拼图", symbol: "rectangle.3.group", action: onAddToCollage)
                 }
+                if let onAddToBoard { actionButton("发送到画布", symbol: "note.text", action: onAddToBoard) }
                 Spacer(minLength: 0)
                 Button(action: onDelete) {
                     Image(nsImage: NylaiIcon.trash.image(pointSize: 14))

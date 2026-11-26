@@ -57,6 +57,8 @@ final class ScreenshotOverlayController {
     private(set) var session = ScreenshotSession()
     private(set) var isCapturing = false
     var onOutputSucceeded: @MainActor () -> Void = {}
+    var canSendToBoard: @MainActor () -> Bool = { false }
+    var sendToBoard: @MainActor (CGImage) -> Bool = { _ in false }
 
     init(
         displayCapturer: any ScreenCapturing = ScreenCaptureService(),
@@ -305,6 +307,11 @@ final class ScreenshotOverlayController {
         }
         view.onSave = { [weak self] in self?.saveSelection() }
         view.onPin = { [weak self] in self?.pinSelection() }
+        if canSendToBoard() {
+            view.onBoard = { [weak self] in
+                self?.runOutput(restoresApplicationOnSuccess: true) { [weak self] image in self?.sendToBoard(image) ?? false }
+            }
+        }
         view.onUndo = { [weak self] in
             self?.session.undo()
             self?.refreshOverlayState()

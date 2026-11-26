@@ -326,6 +326,7 @@ struct ClipboardPanelView: View {
 
     @ViewBuilder private func recordActions(_ record: ClipboardRecord) -> some View {
         Button("复制") { model.copy(record) }
+        if model.onSendToBoard != nil { Button("发送到画布") { model.sendToBoard([record]) } }
         Button(record.isPinned ? L10n.shared.string("取消置顶") : L10n.shared.string("置顶")) {
             model.togglePinned(record)
         }
@@ -380,6 +381,7 @@ struct ClipboardPanelView: View {
                 Spacer(minLength: 0)
                 Button("删除", role: .destructive) { model.deleteChecked() }
                     .disabled(model.checkedRecords.isEmpty)
+                if model.onSendToBoard != nil { Button("发送到画布") { model.sendToBoard(model.checkedRecords) }.disabled(model.checkedRecords.isEmpty) }
                 Button("复制选中") { model.copyChecked() }
                     .disabled(!model.canCombineChecked)
                 Button("粘贴选中") { model.copyChecked(paste: true) }

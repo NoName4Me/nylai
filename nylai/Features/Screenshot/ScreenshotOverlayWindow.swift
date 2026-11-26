@@ -219,6 +219,9 @@ final class ScreenshotOverlayView: NSView {
     var onRecognizeText: ((RecognizedTextLayout) -> Void)?
     var onSave: (() -> Void)?
     var onPin: (() -> Void)?
+    var onBoard: (() -> Void)? {
+        didSet { outputToolbar.showsBoardButton = onBoard != nil }
+    }
     var onZoomIn: (() -> Void)?
     var onZoomOut: (() -> Void)?
     var onFitWidth: (() -> Void)?
@@ -393,6 +396,7 @@ final class ScreenshotOverlayView: NSView {
         toolbar.onRecognizeText = { [weak self] in self?.onRecognizeText?($0) }
         toolbar.onSave = { [weak self] in self?.onSave?() }
         toolbar.onPin = { [weak self] in self?.onPin?() }
+        toolbar.onBoard = { [weak self] in self?.onBoard?() }
         toolbar.onZoomIn = { [weak self] in self?.onZoomIn?() }
         toolbar.onZoomOut = { [weak self] in self?.onZoomOut?() }
         toolbar.onFitWidth = { [weak self] in self?.onFitWidth?() }

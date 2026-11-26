@@ -30,13 +30,16 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func add(_ content: ClipboardContent, boardID: UUID? = nil) {
+    @discardableResult
+    func add(_ content: ClipboardContent, boardID: UUID? = nil) -> Bool {
         let id = boardID ?? store.library.defaultID
         let point = store.nextCapturePoint(in: id)
         switch content {
-        case .text(let text): _ = store.addText(text, boardID: id, at: point)
+        case .text(let text):
+            let item = store.addText(text, boardID: id, at: point)
+            return store.document(id)?.items.contains { $0.id == item } == true
         case .image(let image):
-            store.addImage(NSImage(cgImage: image, size: .zero), boardID: id, at: point)
+            return store.addImage(NSImage(cgImage: image, size: .zero), boardID: id, at: point)
         }
     }
 
@@ -51,19 +54,43 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.center()
         panel.contentView = NSHostingView(rootView: BoardQuickCapture(store: store,
-            save: { [weak self] text, id in self?.add(.text(text), boardID: id); self?.captureWindow?.orderOut(nil) },
+            save: { [weak self] text, id in if self?.add(.text(text), boardID: id) == true { self?.captureWindow?.orderOut(nil) } },
             paste: { [weak self] id in
                 guard let self else { return }
                 if let images = NSPasteboard.general.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage], !images.isEmpty {
                     for image in images { self.store.addImage(image, boardID: id, at: self.store.nextCapturePoint(in: id)) }
                     self.captureWindow?.orderOut(nil)
                 } else if let text = NSPasteboard.general.string(forType: .string), !text.isEmpty {
-                    self.add(.text(text), boardID: id); self.captureWindow?.orderOut(nil)
+                    if self.add(.text(text), boardID: id) { self.captureWindow?.orderOut(nil) }
                 }
             }).nylaiLocalized())
         captureWindow = panel
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func chooseDestination(for contents: [ClipboardContent]) {
+        guard !contents.isEmpty, store.loadError == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.shared.string("发送到画布")
+        alert.addButton(withTitle: L10n.shared.string("添加"))
+        alert.addButton(withTitle: L10n.shared.string("取消"))
+        let picker = NSPopUpButton(frame: CGRect(x: 0, y: 0, width: 280, height: 26))
+        let boards = store.library.boards
+        picker.addItems(withTitles: boards.map(\.title))
+        picker.selectItem(at: boards.firstIndex(where: { $0.id == store.library.defaultID }) ?? 0)
+        alert.accessoryView = picker
+        guard alert.runModal() == .alertFirstButtonReturn,
+              boards.indices.contains(picker.indexOfSelectedItem) else { return }
+        let id = boards[picker.indexOfSelectedItem].id
+        for content in contents {
+            if !add(content, boardID: id) {
+                let failure = NSAlert()
+                failure.messageText = store.error ?? L10n.shared.string("画布数据无效，原文件已保留。")
+                failure.runModal()
+                break
+            }
+        }
     }
 
     private func toggleFloating() {

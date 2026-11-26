@@ -379,6 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         case .board:
             if !enabled { boardController?.close(); boardController = nil }
+            configureClipboardBoardAction()
         case .systemMonitor:
             statusBarController?.closeMonitor()
         case .screenshot, .globalShortcuts:
@@ -429,6 +430,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.ensureScrollCaptureController().begin(with: request)
             }
         )
+        controller.canSendToBoard = { [weak self] in self?.preferences.boardEnabled == true }
+        controller.sendToBoard = { [weak self] image in
+            guard let self, self.preferences.boardEnabled else { return false }
+            return self.ensureBoardController().add(.image(image))
+        }
         controller.onOutputSucceeded = { [weak self] in
             self?.guardAgainstReopenAfterScreenshot()
         }
@@ -470,6 +476,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pinnedImageManager: pinnedImageManager,
             onAddToCollage: { [weak self] image in
                 self?.showCollage(adding: image)
+            },
+            onAddToBoard: { [weak self] image in
+                guard let self, self.preferences.boardEnabled else { return }
+                self.ensureBoardController().chooseDestination(for: [.image(image)])
             }
         )
         screenshotHistoryWindowController = controller
@@ -570,7 +580,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let store = ensureClipboardHistoryStore() else { return nil }
         let controller = ClipboardPanelController(store: store)
         clipboardPanelController = controller
+        configureClipboardBoardAction()
         return controller
+    }
+
+    private func configureClipboardBoardAction() {
+        clipboardPanelController?.boardAction = preferences.boardEnabled ? { [weak self] contents in
+            guard let self, self.preferences.boardEnabled else { return }
+            self.clipboardPanelController?.close()
+            self.ensureBoardController().chooseDestination(for: contents)
+        } : nil
     }
 
     private func ensureSettingsWindowController() -> SettingsWindowController {

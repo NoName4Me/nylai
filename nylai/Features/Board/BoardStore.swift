@@ -259,14 +259,15 @@ final class BoardStore {
         return image
     }
 
-    func addImage(_ image: NSImage, boardID: UUID, at origin: CGPoint) {
-        guard loadError == nil, document(boardID) != nil else { return }
+    @discardableResult
+    func addImage(_ image: NSImage, boardID: UUID, at origin: CGPoint) -> Bool {
+        guard loadError == nil, document(boardID) != nil else { error = loadError ?? BoardStoreError.invalidDocument.localizedDescription; return false }
         var rect = CGRect(origin: .zero, size: image.size)
         guard let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil),
               cg.width > 0, cg.height > 0, cg.width <= 40_000_000 / cg.height,
               let data = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else {
             error = BoardStoreError.invalidImage.localizedDescription
-            return
+            return false
         }
         let asset = UUID()
         let url = assetURL(asset)
@@ -280,7 +281,7 @@ final class BoardStore {
                 guard let i = value.boards.firstIndex(where: { $0.id == boardID }) else { return }
                 value.boards[i].items.append(item)
             }
-            if !saved { try? FileManager.default.removeItem(at: url); return }
+            if !saved { try? FileManager.default.removeItem(at: url); return false }
             let input = ClipboardContent.image(cg)
             Task { [weak self] in
                 guard case .image(let cg) = input else { return }
@@ -292,7 +293,8 @@ final class BoardStore {
                     value.boards[b].items[i].recognizedText = text
                 }
             }
-        } catch { self.error = error.localizedDescription }
+            return true
+        } catch { self.error = error.localizedDescription; return false }
     }
 
     func addText(_ text: String, boardID: UUID, at point: CGPoint, color: BoardColor = .yellow) -> UUID {
@@ -300,6 +302,17 @@ final class BoardStore {
                              text: text, color: color)
         editBoard(boardID) { $0.items.append(item) }
         return item.id
+    }
+
+    func toggleTodo(boardID: UUID, itemID: UUID, line: Int) {
+        guard let item = document(boardID)?.items.first(where: { $0.id == itemID }), !item.locked else { return }
+        var lines = item.text.components(separatedBy: "\n")
+        guard lines.indices.contains(line) else { return }
+        let value = lines[line]
+        if value.hasPrefix("- [ ] ") { lines[line] = "- [x] " + value.dropFirst(6) }
+        else if value.lowercased().hasPrefix("- [x] ") { lines[line] = "- [ ] " + value.dropFirst(6) }
+        else { return }
+        updateText(lines.joined(separator: "\n"), boardID: boardID, itemID: itemID)
     }
 
     func updateText(_ text: String, boardID: UUID, itemID: UUID) {

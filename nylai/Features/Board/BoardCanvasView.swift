@@ -141,6 +141,10 @@ final class BoardCanvasView: NSView {
             return
         }
         if let item = hit(p) {
+            if event.clickCount == 1, !event.modifierFlags.contains(.shift), let line = BoardRenderer.todoLine(in: item, at: p) {
+                session.store.toggleTodo(boardID: session.board.id, itemID: item.id, line: line)
+                return
+            }
             session.select(item, extending: event.modifierFlags.contains(.shift))
             if event.clickCount == 2, !item.locked {
                 if item.kind == .note { session.editingID = item.id; return }

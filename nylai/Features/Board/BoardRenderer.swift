@@ -117,6 +117,24 @@ enum BoardRenderer {
         return result
     }
 
+    static func todoLine(in item: BoardItem, at point: CGPoint) -> Int? {
+        guard item.kind == .note, !item.locked else { return nil }
+        let area = item.frame.insetBy(dx: 12, dy: 10)
+        guard area.contains(point), point.x <= area.minX + 20 else { return nil }
+        let lines = item.text.components(separatedBy: "\n")
+        var y = area.minY
+        var code = false
+        for (index, line) in lines.enumerated() {
+            if line.hasPrefix("```") { code.toggle(); continue }
+            let text = noteText(line.isEmpty ? " " : line, scale: 1, darkInk: true)
+            let height = max(17, ceil(text.boundingRect(with: CGSize(width: area.width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading]).height)) + 3
+            if !code, point.y >= y, point.y < y + height,
+               line.hasPrefix("- [ ] ") || line.lowercased().hasPrefix("- [x] ") { return index }
+            y += height
+        }
+        return nil
+    }
+
     static func export(_ items: [BoardItem], store: BoardStore) -> NSImage? {
         let bounds = items.map(\.frame).reduce(CGRect.null) { $0.union($1) }.insetBy(dx: -20, dy: -20)
         guard !bounds.isNull, bounds.width.isFinite, bounds.height.isFinite,

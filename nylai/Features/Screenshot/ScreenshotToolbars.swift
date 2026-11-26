@@ -919,6 +919,8 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
     var onCopy: () -> Void = {}
     var onSave: () -> Void = {}
     var onPin: () -> Void = {}
+    var onBoard: () -> Void = {}
+    var showsBoardButton = false { didSet { rebuildContent() } }
     var onZoomIn: () -> Void = {}
     var onZoomOut: () -> Void = {}
     var onFitWidth: () -> Void = {}
@@ -951,6 +953,7 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
     private let copyButton = ToolbarIconButton()
     private let saveButton = ToolbarIconButton()
     private let pinButton = ToolbarIconButton()
+    private let boardButton = ToolbarIconButton()
     private let cancelButton = ToolbarIconButton()
     private let zoomOutButton = ToolbarIconButton()
     private let zoomInButton = ToolbarIconButton()
@@ -985,6 +988,10 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
         recognizeButton.menu = recognitionMenu.makeMenu()
         configure(saveButton, icon: .save, action: #selector(saveClicked))
         configure(pinButton, icon: .pin, action: #selector(pinClicked))
+        configure(boardButton, icon: .pin, action: #selector(boardClicked))
+        boardButton.image = NSImage(systemSymbolName: "note.text", accessibilityDescription: L10n.shared.string("发送到画布"))
+        boardButton.setHoverHint(L10n.shared.string("发送到画布"))
+        boardButton.setAccessibilityLabel(L10n.shared.string("发送到画布"))
         configure(cancelButton, icon: .close, action: #selector(cancelClicked))
         configure(zoomOutButton, icon: .zoomOut, action: #selector(zoomOutClicked))
         configure(zoomInButton, icon: .zoomIn, action: #selector(zoomInClicked))
@@ -1022,7 +1029,7 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
         if showsZoomControls {
             groups.append([zoomOutButton, zoomInButton, fitButton])
         }
-        groups.append([saveButton, pinButton, copyButton, cancelButton])
+        groups.append(showsBoardButton ? [saveButton, pinButton, boardButton, copyButton, cancelButton] : [saveButton, pinButton, copyButton, cancelButton])
         return groups
     }
 
@@ -1137,12 +1144,14 @@ final class ScreenshotOutputToolbarView: FloatingToolbarSurfaceView {
     private func updateEnabledState() {
         for button in [
             cropButton, cursorButton, scrollButton, reselectButton,
-            recognizeButton, copyButton, saveButton, pinButton, cancelButton,
+            recognizeButton, copyButton, saveButton, pinButton, boardButton, cancelButton,
             zoomOutButton, zoomInButton, fitButton,
         ] {
             button.isEnabled = !isOutputting
         }
     }
+
+    @objc private func boardClicked() { onBoard() }
 
     @objc private func cropClicked() {
         selectedTool = .selection

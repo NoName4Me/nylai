@@ -26,6 +26,12 @@ final class ClipboardPanelModel {
     var errorMessage: String?
     var confirmsClearHistory = false
     var onClose: () -> Void = {}
+    var onSendToBoard: (([ClipboardContent]) -> Void)?
+    func sendToBoard(_ records: [ClipboardRecord]) {
+        let contents = records.compactMap { store.content(for: $0) }
+        guard contents.count == records.count else { errorMessage = ClipboardStoreError.recordNotFound.localizedDescription; return }
+        onSendToBoard?(contents)
+    }
     var onCopied: ((UUID) -> Void)?
     var rowFrames: [UUID: CGRect] = [:]
     let openedAt = Date()
@@ -440,6 +446,9 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
     private var toastPanel: NSPanel?
     private var isReleasingKeyboardFocus = false
     private(set) var activeModel: ClipboardPanelModel?
+    var boardAction: (([ClipboardContent]) -> Void)? {
+        didSet { activeModel?.onSendToBoard = boardAction }
+    }
 
     init(
         store: ClipboardHistoryStore,
@@ -547,6 +556,7 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
             groups: groups
         )
         activeModel = model
+        model.onSendToBoard = boardAction
         model.errorMessage = snippetLoadError
         let visible = (NSApp.keyWindow?.screen ?? NSScreen.main)?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 900, height: 700)
