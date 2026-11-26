@@ -326,14 +326,19 @@ struct BoardWorkspace: View {
             }
             Divider().frame(height: 20)
             Button { session.dashed.toggle() } label: {
-                Image(systemName: session.dashed ? "line.horizontal.3" : "minus")
-                    .frame(width: 26, height: 26)
+                HStack(spacing: 2) {
+                    if session.dashed {
+                        ForEach(0..<3) { _ in Capsule().fill(Color.primary).frame(width: 5, height: 2) }
+                    } else {
+                        Capsule().fill(Color.primary).frame(width: 19, height: 2)
+                    }
+                }.frame(width: 26, height: 26)
                     .background(session.dashed ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
-            }.buttonStyle(.plain).help(session.dashed ? "虚线" : "实线")
+            }.buttonStyle(.plain).help(session.dashed ? "切换为实线" : "切换为虚线")
             Button { session.translucent.toggle() } label: {
                 Image(systemName: "circle.lefthalf.filled").frame(width: 26, height: 26)
                     .background(session.translucent ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
-            }.buttonStyle(.plain).help("半透明")
+            }.buttonStyle(.plain).help(session.translucent ? "关闭半透明" : "开启半透明")
         }
         .padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
         .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.12)) }

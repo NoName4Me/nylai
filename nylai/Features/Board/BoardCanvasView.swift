@@ -62,7 +62,7 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
         noteEditor?.onFinish = nil
         noteEditor?.onResign = nil
         noteEditor?.delegate = nil
-        if window?.firstResponder === noteEditor { window?.makeFirstResponder(self) }
+        if let noteEditor, window?.firstResponder === noteEditor { window?.makeFirstResponder(self) }
         noteScroll?.removeFromSuperview()
         noteScroll = nil; noteEditor = nil; editorID = nil
         guard let id, session.board.items.contains(where: { $0.id == id }) else { return }
@@ -112,12 +112,12 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
         editor.minSize = CGSize(width: 0, height: scroll.contentSize.height)
         editor.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         if abs((editor.font?.pointSize ?? 0) - 14 * scale) > 0.1 { editor.font = .systemFont(ofSize: 14 * scale) }
-        editor.frame.size.width = scroll.contentSize.width
+        editor.frame.size = CGSize(width: scroll.contentSize.width, height: max(editor.frame.height, scroll.contentSize.height))
         editor.textContainer?.containerSize = CGSize(width: scroll.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
     }
 
     func textDidChange(_ notification: Notification) {
-        if let editor = noteEditor, notification.object as? NSTextView === editor { session.noteDraft = editor.string }
+        if let editor = noteEditor, (notification.object as? NSTextView) === editor { session.noteDraft = editor.string }
     }
 
     private func finishInlineEdit() {

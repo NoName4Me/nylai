@@ -741,3 +741,12 @@
 "双击" = "Double-click";
 "新建 / 编辑便签或预览图片" = "Create / Edit Note or Preview Image";
 "授权 / 重试" = "Grant Access / Retry";
+
+"默认墨色" = "Default Ink";
+"半透明" = "Translucent";
+"切换为实线" = "Switch to Solid";
+"切换为虚线" = "Switch to Dashed";
+"开启半透明" = "Enable Translucency";
+"关闭半透明" = "Disable Translucency";
+"取消选择 / 完成便签编辑" = "Deselect / Finish Editing Note";
+"完成便签编辑" = "Finish Editing Note";

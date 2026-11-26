@@ -56,6 +56,41 @@ final class BoardAndLauncherTests: XCTestCase {
     }
 
     @MainActor
+    func testInlineNoteEditingCommitsAndKeepsOneUndoStep() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = BoardStore(directory: directory)
+        let session = BoardSession(store: store)
+        session.addNote(at: .zero)
+        XCTAssertNotNil(session.editingID)
+        session.noteDraft = "# Title"
+        session.noteDraft += "\n- [ ] Task"
+        session.finishEditing()
+        XCTAssertNil(session.editingID)
+        XCTAssertEqual(store.active.items.first?.text, "# Title\n- [ ] Task")
+        XCTAssertEqual(BoardStore(directory: directory).active.items.first?.text, "# Title\n- [ ] Task")
+        session.undo()
+        XCTAssertEqual(store.active.items.first?.text, "")
+    }
+
+    @MainActor
+    func testDrawingStyleAndLegacyMarkerPersist() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = BoardStore(directory: directory)
+        let styled = BoardItem(kind: .arrow, frame: CGRect(x: 0, y: 0, width: 100, height: 50),
+                               points: [.zero, CGPoint(x: 1, y: 1)], strokeWidth: 8, dashed: true, translucent: true)
+        let marker = BoardItem(kind: .marker, frame: CGRect(x: 0, y: 0, width: 100, height: 50), strokeWidth: 3)
+        store.editBoard(store.active.id) { $0.items += [styled, marker] }
+        let items = BoardStore(directory: directory).active.items
+        XCTAssertEqual(items, [styled, marker])
+        XCTAssertEqual(items[0].strokeOpacity, 0.35)
+        XCTAssertEqual(items[1].strokeOpacity, 0.3)
+        XCTAssertEqual(items[1].effectiveStrokeWidth, 12)
+        XCTAssertFalse(BoardColor.noteColors.contains(.clear))
+    }
+
+    @MainActor
     func testCorruptBoardDataIsNotOverwritten() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
