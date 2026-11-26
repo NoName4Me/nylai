@@ -176,6 +176,8 @@ struct BoardWorkspace: View {
     let float: () -> Void
     @State private var query = ""
     @State private var shortcutsShown = false
+    @State private var searching = false
+    @FocusState private var searchFocused: Bool
 
     private var board: BoardDocument { session.board }
     private var matches: [BoardItem] {
@@ -185,8 +187,6 @@ struct BoardWorkspace: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
             ZStack(alignment: .bottom) {
                 BoardCanvasRepresentable(session: session, board: board, selection: session.selection, tool: session.tool, editingID: session.editingID)
                     .id(board.id)
@@ -201,7 +201,7 @@ struct BoardWorkspace: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
                 }
-                if !query.isEmpty {
+                if searching && !query.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("搜索结果").font(.caption).foregroundStyle(.secondary)
                         if matches.isEmpty { Text("没有匹配内容").foregroundStyle(.secondary) }
@@ -212,13 +212,13 @@ struct BoardWorkspace: View {
                             }.buttonStyle(.plain)
                         }
                     }.padding(12).frame(width: 260).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(12)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).padding(.trailing, 16).padding(.bottom, 100)
                 }
                 toolbar.padding(.bottom, 14)
             }
         }
         .frame(minWidth: 660, minHeight: 420)
-        .onChange(of: board.id) { _, _ in query = "" }
+        .onChange(of: board.id) { _, _ in query = ""; searching = false }
         .alert("画布", isPresented: Binding(get: { session.store.error != nil }, set: { if !$0 { session.store.error = nil } })) {
             Button("确定") { session.store.error = nil }
         } message: { Text(session.store.error ?? "") }
@@ -233,121 +233,155 @@ struct BoardWorkspace: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            Spacer()
-            TextField("搜索当前画布", text: $query).textFieldStyle(.roundedBorder).frame(width: 180)
-            Button(action: float) { Image(systemName: session.floating ? "pin.fill" : "pin") }.help("置顶画布")
-            Button { session.export() } label: { Image(systemName: "square.and.arrow.up") }.help("导出 PNG")
-        }.buttonStyle(.borderless).padding(.horizontal, 14).padding(.vertical, 6)
+    private func toolButton(_ tool: BoardTool, group: Bool = false) -> some View {
+        Button { session.chooseTool(tool) } label: {
+            Image(systemName: tool.symbol)
+                .frame(width: 24, height: 26)
+                .background((group ? session.tool.isShape : session.tool == tool) ? Color.accentColor.opacity(0.17) : .clear,
+                            in: RoundedRectangle(cornerRadius: 5))
+                .overlay(alignment: .topTrailing) {
+                    if session.showsToolShortcuts {
+                        Text(tool.shortcut).font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .padding(2).background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 3))
+                            .offset(x: 5, y: -7)
+                    }
+                }
+        }.buttonStyle(.plain).help(tool.title + " · " + tool.shortcut)
     }
 
     private var toolbar: some View {
         VStack(spacing: 6) {
-            if session.tool.showsDrawingStyle { drawingStyleBar }
-            HStack(spacing: 5) {
-            ForEach(BoardTool.allCases.filter { !$0.isShape }) { tool in
-                Button {
-                    session.chooseTool(tool)
-                } label: {
-                    Image(systemName: tool.symbol)
-                        .frame(width: 23, height: 25)
-                        .background(session.tool == tool ? Color.accentColor.opacity(0.17) : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 5))
-                }.buttonStyle(.plain).help(tool.title)
+            if !session.toolbarCollapsed {
+                if session.tool.showsDrawingStyle || session.showsToolShortcuts { drawingStyleBar }
+                HStack(spacing: 4) {
+                    ForEach(BoardTool.allCases.filter { !$0.isShape }) { tool in
+                        toolButton(tool)
+                    }
+                    toolButton(session.lastShape, group: true)
+                    Divider().frame(height: 22)
+                    Button { session.undo(); session.focusCanvas?() } label: { Image(systemName: "arrow.uturn.backward") }
+                        .disabled(session.store.undoStack.isEmpty).help("撤销")
+                    Button { session.redo(); session.focusCanvas?() } label: { Image(systemName: "arrow.uturn.forward") }
+                        .disabled(session.store.redoStack.isEmpty).help("重做")
+                    Button { session.confirmClear(); session.focusCanvas?() } label: { Image(systemName: "trash") }
+                        .disabled(board.items.isEmpty).help("清空画布")
+                    Menu {
+                        Button("粘贴") { session.paste() }
+                        Button("复制") { session.copy() }.disabled(session.selection.isEmpty)
+                        Button("编组") { session.group() }.disabled(session.selection.count < 2)
+                        Button("取消编组") { session.ungroup() }.disabled(session.selection.isEmpty)
+                        Button("锁定 / 解锁") { session.toggleLock() }.disabled(session.selection.isEmpty)
+                        Button("移到最前") { session.layer(front: true) }.disabled(session.selection.isEmpty)
+                        Button("移到最后") { session.layer(front: false) }.disabled(session.selection.isEmpty)
+                        Button("置顶便签") {
+                            if let item = session.selected.first { session.onPinNote?(board.id, item.id) }
+                        }.disabled(session.selected.count != 1 || session.selected.first?.kind != .note)
+                        Button("删除", role: .destructive) { session.delete() }.disabled(session.selection.isEmpty)
+                        Divider()
+                        Button("置顶画布", action: float)
+                        Button("导出 PNG") { session.export() }
+                        Toggle("自动吸附", isOn: $session.snap)
+                    } label: { Image(systemName: "ellipsis.circle") }
+                        .menuStyle(.borderlessButton).fixedSize()
+                    Divider().frame(height: 22)
+                    Button { session.zoom(0.8); session.focusCanvas?() } label: { Image(systemName: "minus") }
+                    Button { session.resetZoom(); session.focusCanvas?() } label: { Text("\(Int(board.viewport.zoom * 100))%").monospacedDigit().font(.caption) }
+                        .help("100% 并居中")
+                    Button { session.zoom(1.25); session.focusCanvas?() } label: { Image(systemName: "plus") }
+                    Button { session.fit(); session.focusCanvas?() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }.help("适应全部")
+                    Divider().frame(height: 22)
+                    HStack(spacing: 3) {
+                        Button {
+                            searching.toggle()
+                            if searching {
+                                session.finishEditing()
+                                searchFocused = true
+                            } else { query = ""; session.focusCanvas?() }
+                        } label: { Image(systemName: "magnifyingglass") }.help("搜索当前画布")
+                        if searching {
+                            TextField("搜索", text: $query).textFieldStyle(.plain).font(.system(size: 12))
+                                .focused($searchFocused).frame(width: 104)
+                                .onSubmit { if let item = matches.first { session.focus(item.id); session.focusCanvas?() } }
+                                .onExitCommand { searching = false; query = ""; session.focusCanvas?() }
+                        }
+                    }
+                    .padding(searching ? 3 : 0)
+                    .background(searching ? Color.primary.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                    Button { session.finishEditing(); shortcutsShown.toggle() } label: { Image(systemName: "questionmark.circle") }
+                        .help("画布快捷键").popover(isPresented: $shortcutsShown) { shortcutHelp }
+                    Divider().frame(height: 22)
+                    Button {
+                        searching = false; query = ""; session.toolbarCollapsed = true
+                        session.focusCanvas?()
+                    } label: { Image(systemName: "chevron.down") }.help("收起工具栏")
+                }
+                .buttonStyle(.borderless)
+                .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.12)) }
+                .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+            } else {
+                Button { session.toolbarCollapsed = false; session.focusCanvas?() } label: {
+                    Image(systemName: "chevron.up").frame(width: 40, height: 23)
+                }.buttonStyle(.plain).background(.regularMaterial, in: Capsule())
+                    .overlay { Capsule().strokeBorder(Color.primary.opacity(0.12)) }.help("展开工具栏")
             }
-            Button { session.chooseTool(session.lastShape) } label: {
-                Image(systemName: session.lastShape.symbol).frame(width: 23, height: 25)
-                    .background(session.tool.isShape ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
-            }.buttonStyle(.plain).help("图形")
-            Divider().frame(height: 22)
-            Menu {
-                Button("粘贴") { session.paste() }
-                Button("复制") { session.copy() }.disabled(session.selection.isEmpty)
-                Button("编组") { session.group() }.disabled(session.selection.count < 2)
-                Button("取消编组") { session.ungroup() }.disabled(session.selection.isEmpty)
-                Button("锁定 / 解锁") { session.toggleLock() }.disabled(session.selection.isEmpty)
-                Button("移到最前") { session.layer(front: true) }.disabled(session.selection.isEmpty)
-                Button("移到最后") { session.layer(front: false) }.disabled(session.selection.isEmpty)
-                Button("置顶便签") {
-                    if let item = session.selected.first { session.onPinNote?(board.id, item.id) }
-                }.disabled(session.selected.count != 1 || session.selected.first?.kind != .note)
-                Button("删除", role: .destructive) { session.delete() }.disabled(session.selection.isEmpty)
-                Toggle("自动吸附", isOn: $session.snap)
-            } label: { Image(systemName: "ellipsis.circle") }
-                .menuStyle(.borderlessButton).fixedSize()
-            Divider().frame(height: 22)
-            Button { session.undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                .disabled(session.store.undoStack.isEmpty).help("撤销")
-            Button { session.redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                .disabled(session.store.redoStack.isEmpty).help("重做")
-            Button { session.zoom(0.8) } label: { Image(systemName: "minus") }
-            Button { session.resetZoom() } label: { Text("\(Int(board.viewport.zoom * 100))%").monospacedDigit().font(.caption) }
-                .help("100% 并居中")
-            Button { session.zoom(1.25) } label: { Image(systemName: "plus") }
-            Button { session.fit() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }.help("适应全部")
-            Divider().frame(height: 22)
-            Button { session.finishEditing(); shortcutsShown.toggle() } label: {
-                Label("快捷键", systemImage: "keyboard").font(.caption)
-            }.help("画布快捷键").popover(isPresented: $shortcutsShown) { shortcutHelp }
-        }
-        .buttonStyle(.borderless)
-        .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.12)) }
-        .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
         }
     }
 
     private var drawingStyleBar: some View {
         HStack(spacing: 5) {
-            if session.tool.isShape {
-                ForEach(BoardTool.shapes) { shape in
-                    Button { session.chooseTool(shape) } label: {
-                        Image(systemName: shape.symbol).frame(width: 25, height: 26)
-                            .background(session.tool == shape ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
-                    }.buttonStyle(.plain).help(shape.title)
+            if session.tool.isShape || session.showsToolShortcuts {
+                ForEach(BoardTool.shapes) { shape in toolButton(shape) }
+                if session.tool.showsDrawingStyle { Divider().frame(height: 20) }
+            }
+            if session.tool.showsDrawingStyle {
+                ForEach(BoardColor.drawingColors) { color in
+                    Button { session.color = color; session.focusCanvas?() } label: {
+                        Circle().fill(Color(nsColor: color.ink)).frame(width: 14, height: 14)
+                            .overlay { Circle().strokeBorder(Color.primary.opacity(0.16), lineWidth: 0.75) }
+                            .padding(3)
+                            .overlay { Circle().strokeBorder(session.color == color ? Color.accentColor : .clear, lineWidth: 1.5) }
+                    }.buttonStyle(.plain).help(color.title)
+                }
+                Button { session.translucent.toggle(); session.focusCanvas?() } label: {
+                    Image(systemName: "circle.lefthalf.filled").frame(width: 26, height: 26)
+                        .background(session.translucent ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                }.buttonStyle(.plain).help(session.translucent ? "关闭半透明" : "开启半透明")
+                Divider().frame(height: 20)
+                ForEach([CGFloat(2), 4, 6, 10], id: \.self) { width in
+                    Button { session.strokeWidth = width; session.focusCanvas?() } label: {
+                        Circle().fill(Color.primary).frame(width: width + 2, height: width + 2)
+                            .frame(width: 24, height: 26)
+                            .background(session.strokeWidth == width ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                    }.buttonStyle(.plain).help("\(Int(width)) pt")
                 }
                 Divider().frame(height: 20)
-            }
-            ForEach(BoardColor.allCases) { color in
-                Button { session.color = color } label: {
-                    Circle().fill(Color(nsColor: color.ink)).frame(width: 14, height: 14)
-                        .padding(3)
-                        .overlay { Circle().strokeBorder(session.color == color ? Color.accentColor : .clear, lineWidth: 1.5) }
-                }.buttonStyle(.plain).help(color == .clear ? L10n.shared.string("默认墨色") : color.title)
-            }
-            Divider().frame(height: 20)
-            ForEach([CGFloat(2), 4, 8], id: \.self) { width in
-                Button { session.strokeWidth = width } label: {
-                    Capsule().fill(Color.primary).frame(width: 20, height: width)
-                        .frame(width: 26, height: 26)
-                        .background(session.strokeWidth == width ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
-                }.buttonStyle(.plain).help(width == 2 ? "细" : width == 4 ? "中" : "粗")
-            }
-            Divider().frame(height: 20)
-            Button { session.dashed.toggle() } label: {
-                HStack(spacing: 2) {
-                    if session.dashed {
+                Button { session.dashed.toggle(); session.focusCanvas?() } label: {
+                    HStack(spacing: 2) {
                         ForEach(0..<3) { _ in Capsule().fill(Color.primary).frame(width: 5, height: 2) }
-                    } else {
-                        Capsule().fill(Color.primary).frame(width: 19, height: 2)
-                    }
-                }.frame(width: 26, height: 26)
-                    .background(session.dashed ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
-            }.buttonStyle(.plain).help(session.dashed ? "切换为实线" : "切换为虚线")
-            Button { session.translucent.toggle() } label: {
-                Image(systemName: "circle.lefthalf.filled").frame(width: 26, height: 26)
-                    .background(session.translucent ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
-            }.buttonStyle(.plain).help(session.translucent ? "关闭半透明" : "开启半透明")
-        }
-        .padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
-        .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.12)) }
+                    }.frame(width: 26, height: 26)
+                        .background(session.dashed ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                }.buttonStyle(.plain).help("虚线")
+                if session.tool.isShape {
+                    Button { session.filled.toggle(); session.focusCanvas?() } label: {
+                        Image(systemName: "paintbucket").frame(width: 26, height: 26)
+                            .background(session.filled ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                    }.buttonStyle(.plain).help("填充")
+                }
+            }
+        }.padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+            .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.12)) }
     }
 
     private var shortcutHelp: some View {
-        let rows = [("␣ + 拖动", "平移"), ("⌘ + 滚动 / 捏合", "缩放"), ("⌘0", "100% 并居中"), ("⌘⇧0", "适应全部"), ("⌘+ / ⌘−", "缩放"), ("⇧ + 点击", "多选"), ("⌘A", "全选"), ("⌘C / ⌘V", "复制 / 粘贴"), ("⌘Z / ⌘⇧Z", "撤销 / 重做"), ("⌘G / ⌘⇧G", "编组 / 取消编组"), ("← ↑ ↓ → / ⇧", "移动 / 加速移动"), ("⌥ + 拖动", "临时关闭吸附"), ("⌫ / ⌦", "删除"), ("⎋", "取消选择 / 完成便签编辑"), ("⌘↩", "完成便签编辑"), ("双击", "新建 / 编辑便签或预览图片")]
-        return VStack(alignment: .leading, spacing: 8) {
+        let rows = [("␣ + 拖动", "平移"), ("⌘ + 滚动 / 捏合", "缩放"), ("⌘0", "100% 并居中"), ("⌘⇧0", "适应全部"), ("⌘+ / ⌘−", "缩放"), ("⇧ + 点击", "多选"), ("⌘A", "全选"), ("⌘C / ⌘V", "复制 / 粘贴"), ("⌘Z / ⌘⇧Z", "撤销 / 重做"), ("⌘G / ⌘⇧G", "编组 / 取消编组"), ("← ↑ ↓ → / ⇧", "移动 / 加速移动"), ("⌥ + 拖动", "临时关闭吸附"), ("⌫ / ⌦", "删除"), ("⎋", "取消选择 / 完成便签编辑"), ("⌘↩", "完成便签编辑"), ("⌃ + 拖动", "正形 / 45° 约束"), ("⇧ + 拖动线条", "水平 / 垂直"), ("⌥", "显示工具快捷键"), ("双击", "新建 / 编辑便签或预览图片")]
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 6) {
             Text("画布快捷键").font(.headline)
+            ForEach(BoardTool.allCases) { tool in
+                HStack { Text(tool.title).font(.caption); Spacer(); Text(tool.shortcut).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary) }
+            }
+            Divider()
             ForEach(rows.indices, id: \.self) { index in
                 HStack(spacing: 18) {
                     Text(L10n.shared.string(rows[index].1)).font(.callout)
@@ -355,7 +389,8 @@ struct BoardWorkspace: View {
                     Text(L10n.shared.string(rows[index].0)).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
                 }
             }
-        }.padding(16).frame(width: 360)
+            }.padding(16)
+        }.frame(width: 360, height: 440)
     }
 }
 

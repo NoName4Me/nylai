@@ -149,10 +149,9 @@ struct WindowSwitcherPanelView: View {
         .padding(.horizontal, 36)
         .padding(.vertical, 24)
         .background {
-            WindowSwitcherBackdrop()
-                .overlay(
-                    Color.black.opacity(colorScheme == .dark ? 0.12 : 0.035)
-                )
+            Color(nsColor: colorScheme == .dark
+                  ? NSColor(calibratedWhite: 0.15, alpha: 1)
+                  : NSColor(calibratedWhite: 0.94, alpha: 1))
         }
         .clipShape(RoundedRectangle(cornerRadius: 20))
     }
@@ -245,17 +244,18 @@ struct WindowSwitcherPanelView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(alignment: .bottomLeading) {
+        .overlay(alignment: .topLeading) {
             if canManagePin, application.bundleIdentifier != nil,
                application.isPinned || isSelected || hoveredApplicationID == application.id {
                 Button { model.onTogglePin(application) } label: {
                     Image(systemName: application.isPinned ? "pin.fill" : "pin")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(application.isPinned ? NylaiPalette.accent : Color.secondary)
-                        .frame(width: 24, height: 24)
-                        .background(.regularMaterial, in: Circle())
+                        .frame(width: 21, height: 21)
+                        .background(Color(nsColor: .windowBackgroundColor), in: Circle())
                 }
                 .buttonStyle(.plain)
+                .offset(x: 7, y: 62)
                 .help(application.isPinned ? L10n.shared.string("取消固定") : L10n.shared.string("固定到前排"))
                 .accessibilityLabel(application.isPinned ? L10n.shared.string("取消固定") : L10n.shared.string("固定到前排"))
             }
@@ -296,7 +296,7 @@ struct WindowSwitcherPanelView: View {
                             spacing: 20
                         ) {
                             ForEach(application.windows) { window in
-                                windowItem(window, isSelected: window.id == model.selectedWindowID)
+                                windowItem(window, isSelected: window.id == model.selectedWindowID, itemWidth: layout.itemWidth)
                                     .frame(width: layout.itemWidth)
                                     .id(window.id)
                             }
@@ -338,56 +338,55 @@ struct WindowSwitcherPanelView: View {
 
     private func windowItem(
         _ window: WindowSwitcherWindow,
-        isSelected: Bool
+        isSelected: Bool,
+        itemWidth: CGFloat
     ) -> some View {
         ZStack(alignment: .topTrailing) {
             Button {
                 model.selectWindow(window.id)
             } label: {
-                VStack(spacing: 9) {
-                    Text(window.title.flatMap { $0.isEmpty ? nil : $0 }
-                         ?? L10n.shared.string("未命名窗口"))
-                        .font(.system(size: 13, weight: .semibold))
+                VStack(spacing: 4) {
+                    if let preview = model.previews[window.id] {
+                        let maxWidth = max(1, itemWidth - 16)
+                        let maxHeight = maxWidth / 1.6
+                        let ratio = CGFloat(preview.width) / CGFloat(max(1, preview.height))
+                        let width = min(maxWidth, maxHeight * ratio)
+                        let height = width / max(0.01, ratio)
+                        Image(decorative: preview, scale: 1)
+                            .resizable()
+                            .frame(width: width, height: height)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    } else {
+                        ZStack {
+                            if model.loadingWindowIDs.contains(window.id) {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "macwindow").font(.system(size: 28)).foregroundStyle(.tertiary)
+                            }
+                        }.frame(width: max(1, itemWidth - 16), height: max(1, (itemWidth - 16) / 1.6))
+                    }
+                    Text(window.title.flatMap { $0.isEmpty ? nil : $0 } ?? L10n.shared.string("未命名窗口"))
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
                         .lineLimit(2)
                         .truncationMode(.middle)
                         .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity, minHeight: 32)
-                        .padding(.horizontal, 28)
-                        .foregroundStyle(isSelected ? NylaiPalette.accent : Color.primary)
-
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.black.opacity(0.2))
-                        if let preview = model.previews[window.id] {
-                            Image(decorative: preview, scale: 1)
-                                .resizable()
-                                .scaledToFit()
-                        } else if model.loadingWindowIDs.contains(window.id) {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Image(systemName: "macwindow")
-                                .font(.system(size: 28))
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-                    .aspectRatio(16 / 10, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .foregroundStyle(Color.primary)
+                        .frame(maxWidth: .infinity)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(8)
                 .background(
                     isSelected
-                        ? Color.primary.opacity(0.12)
-                        : hoveredWindowID == window.id ? Color.primary.opacity(0.05) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 14)
+                        ? Color(nsColor: colorScheme == .dark ? NSColor(calibratedWhite: 0.29, alpha: 1) : NSColor(calibratedWhite: 1, alpha: 1))
+                        : hoveredWindowID == window.id ? Color.primary.opacity(0.06) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 10)
                 )
                 .overlay {
                     RoundedRectangle(cornerRadius: 14)
                         .strokeBorder(
                             isSelected ? NylaiPalette.accent
                                 : hoveredWindowID == window.id ? Color.primary.opacity(0.24) : Color.clear,
-                            lineWidth: isSelected ? 2.5 : 1
+                            lineWidth: isSelected ? 1.5 : 1
                         )
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 14))

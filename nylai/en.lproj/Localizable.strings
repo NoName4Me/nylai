@@ -750,3 +750,21 @@
 "关闭半透明" = "Disable Translucency";
 "取消选择 / 完成便签编辑" = "Deselect / Finish Editing Note";
 "完成便签编辑" = "Finish Editing Note";
+
+"红色" = "Red";
+"橙色" = "Orange";
+"黑色" = "Black";
+"白色" = "White";
+"清空当前画布？" = "Clear This Board?";
+"将移除所有对象，可撤销此操作。" = "All objects will be removed. This can be undone.";
+"清空画布" = "Clear Board";
+"填充 / 取消填充" = "Toggle Fill";
+"重置旋转" = "Reset Rotation";
+"新建便签" = "New Note";
+"收起工具栏" = "Collapse Toolbar";
+"展开工具栏" = "Expand Toolbar";
+"正形 / 45° 约束" = "Regular Shape / 45° Snap";
+"水平 / 垂直" = "Horizontal / Vertical";
+"显示工具快捷键" = "Show Tool Shortcuts";
+"⇧ + 拖动线条" = "⇧ + Drag Line";
+"⌃ + 拖动" = "⌃ + Drag";

@@ -90,6 +90,33 @@ final class BoardAndLauncherTests: XCTestCase {
         XCTAssertFalse(BoardColor.noteColors.contains(.clear))
     }
 
+    func testBoardGeometryConstraintsAndEndpointOrder() {
+        let start = CGPoint(x: 10, y: 10)
+        let square = BoardGeometry.constrained(CGPoint(x: 40, y: 25), from: start, shape: true, control: true, shift: false)
+        XCTAssertEqual(square, CGPoint(x: 40, y: 40))
+        let horizontal = BoardGeometry.constrained(CGPoint(x: 40, y: 12), from: start, shape: false, control: false, shift: true)
+        XCTAssertEqual(horizontal.y, 10, accuracy: 0.001)
+        var item = BoardItem(kind: .arrow, frame: CGRect(x: 0, y: 0, width: 20, height: 20))
+        BoardGeometry.setEndpoints(&item, CGPoint(x: 100, y: 50), CGPoint(x: -10, y: 20))
+        XCTAssertEqual(BoardGeometry.endpoints(item), [CGPoint(x: 100, y: 50), CGPoint(x: -10, y: 20)])
+    }
+
+    @MainActor
+    func testClearBoardUndoAndShapeStyle() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = BoardStore(directory: directory)
+        let session = BoardSession(store: store)
+        let shape = BoardItem(kind: .rectangle, frame: CGRect(x: 0, y: 0, width: 100, height: 50),
+                              rotation: .pi / 4, cornerRadius: 10, filled: true)
+        store.editBoard(store.active.id) { $0.items.append(shape) }
+        XCTAssertEqual(BoardStore(directory: directory).active.items.first, shape)
+        session.clearBoard()
+        XCTAssertTrue(store.active.items.isEmpty)
+        session.undo()
+        XCTAssertEqual(store.active.items, [shape])
+    }
+
     @MainActor
     func testCorruptBoardDataIsNotOverwritten() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
