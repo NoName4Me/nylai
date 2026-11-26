@@ -203,7 +203,7 @@ private struct ScreenshotHistoryView: View {
                                 recognizing: model.recognizingID == record.id,
                                 onSave: { model.save(record) },
                                 onPin: { model.pin(record) },
-                                onAddToCollage: { model.addToCollage(record) },
+                                onAddToCollage: preferences.screenshotCollageEnabled ? { model.addToCollage(record) } : nil,
                                 onDelete: { model.delete(record) }
                             )
                         }
@@ -311,7 +311,7 @@ private struct ScreenshotHistoryCard: View {
     let recognizing: Bool
     let onSave: () -> Void
     let onPin: () -> Void
-    let onAddToCollage: () -> Void
+    let onAddToCollage: (() -> Void)?
     let onDelete: () -> Void
     @State private var isHovering = false
 
@@ -371,7 +371,9 @@ private struct ScreenshotHistoryCard: View {
                 .accessibilityLabel("提取文字")
                 actionButton("保存", symbol: "square.and.arrow.down", action: onSave)
                 actionButton("置顶", symbol: "pin", action: onPin)
-                actionButton("加入拼图", symbol: "rectangle.3.group", action: onAddToCollage)
+                if let onAddToCollage {
+                    actionButton("加入拼图", symbol: "rectangle.3.group", action: onAddToCollage)
+                }
                 Spacer(minLength: 0)
                 Button(action: onDelete) {
                     Image(nsImage: NylaiIcon.trash.image(pointSize: 14))

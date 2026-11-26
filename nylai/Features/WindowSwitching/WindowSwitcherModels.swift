@@ -11,7 +11,7 @@ struct WindowSwitcherApplication: Identifiable, Equatable, Sendable {
     let id: pid_t
     let bundleIdentifier: String?
     let name: String
-    let windows: [WindowSwitcherWindow]
+    var windows: [WindowSwitcherWindow]
     var applicationURL: URL? = nil
     var pinnedOrder: Int? = nil
 
@@ -47,9 +47,15 @@ enum WindowSwitcherMode: Equatable, Sendable {
     case windows
 }
 
+enum WindowSwitcherWindowNavigation: Equatable, Sendable {
+    case up
+    case down
+}
+
 enum WindowSwitcherSessionCommand: Equatable, Sendable {
     case cycleApplications(Int)
     case cycleWindows(Int)
+    case navigateWindow(WindowSwitcherWindowNavigation)
     case selectApplication(Int)
     case selectWindow(CGWindowID)
     case confirm
@@ -58,9 +64,10 @@ enum WindowSwitcherSessionCommand: Equatable, Sendable {
 
 struct WindowSwitcherSession: Equatable, Sendable {
     let mode: WindowSwitcherMode
-    let snapshot: WindowSwitcherSnapshot
+    private(set) var snapshot: WindowSwitcherSnapshot
     private(set) var selectedApplicationIndex: Int
     private(set) var selectedWindowIndex: Int
+    private(set) var windowColumnCount = 1
 
     init(
         snapshot: WindowSwitcherSnapshot,
@@ -111,6 +118,23 @@ struct WindowSwitcherSession: Equatable, Sendable {
         return windows[selectedWindowIndex]
     }
 
+    mutating func removeWindow(_ id: CGWindowID, from applicationID: pid_t) {
+        var applications = snapshot.applications
+        guard let index = applications.firstIndex(where: { $0.id == applicationID }) else { return }
+        let selectedID = selectedWindow?.id
+        applications[index].windows.removeAll { $0.id == id }
+        snapshot = .init(applications: applications, currentApplicationID: snapshot.currentApplicationID)
+        if index == selectedApplicationIndex {
+            let windows = applications[index].windows
+            selectedWindowIndex = windows.firstIndex { $0.id == selectedID }
+                ?? min(selectedWindowIndex, max(0, windows.count - 1))
+        }
+    }
+
+    mutating func setWindowColumnCount(_ count: Int) {
+        windowColumnCount = max(1, count)
+    }
+
     var confirmationTarget: WindowSwitcherTarget {
         let application = selectedApplication
         let window = selectedWindow
@@ -146,6 +170,8 @@ struct WindowSwitcherSession: Equatable, Sendable {
                 offset: offset,
                 count: count
             )
+        case .navigateWindow(let direction):
+            moveSelectedWindowRow(direction)
         case .selectApplication(let index):
             guard snapshot.applications.indices.contains(index) else { return }
             selectedApplicationIndex = index
@@ -165,6 +191,30 @@ struct WindowSwitcherSession: Equatable, Sendable {
     private func moved(from index: Int, offset: Int, count: Int) -> Int {
         guard count > 0 else { return 0 }
         return (index + offset % count + count) % count
+    }
+
+    private mutating func moveSelectedWindowRow(
+        _ direction: WindowSwitcherWindowNavigation
+    ) {
+        let windows = selectedApplication.windows
+        guard windows.count > 1 else { return }
+        let columnCount = min(max(1, windowColumnCount), windows.count)
+        let rowCount = (windows.count + columnCount - 1) / columnCount
+        guard rowCount > 1 else { return }
+
+        let currentRow = selectedWindowIndex / columnCount
+        let column = selectedWindowIndex % columnCount
+        let targetRow: Int
+        switch direction {
+        case .up:
+            targetRow = (currentRow - 1 + rowCount) % rowCount
+        case .down:
+            targetRow = (currentRow + 1) % rowCount
+        }
+        selectedWindowIndex = min(
+            targetRow * columnCount + column,
+            windows.count - 1
+        )
     }
 }
 
@@ -293,6 +343,10 @@ enum WindowSwitcherKeyClassifier {
                 return .command(.cycleWindows(-1))
             case 124:
                 return .command(.cycleWindows(1))
+            case 125:
+                return .command(.navigateWindow(.down))
+            case 126:
+                return .command(.navigateWindow(.up))
             default:
                 break
             }
@@ -310,7 +364,8 @@ enum WindowSwitcherKeyClassifier {
         if keyCode == 48 || isWindowKey(keyCode: keyCode, unicode: unicode) {
             return true
         }
-        return sessionIsActive && (keyCode == 53 || keyCode == 123 || keyCode == 124)
+        return sessionIsActive
+            && (keyCode == 53 || (123...126).contains(keyCode))
     }
 
     private static func isWindowKey(keyCode: UInt16, unicode: String?) -> Bool {

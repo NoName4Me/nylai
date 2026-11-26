@@ -35,6 +35,26 @@ enum FinderEnhancementAvailability {
         return value.trimmingCharacters(in: .whitespacesAndNewlines) != "0"
     }
 
+    static var defaultMenuSettingsURL: URL? {
+        defaultFlagURL?.deletingLastPathComponent().appending(path: "finder-menu.json")
+    }
+
+    static func disabledActions(at url: URL? = defaultMenuSettingsURL) -> Set<String> {
+        guard let url, let data = try? Data(contentsOf: url),
+              let actions = try? JSONDecoder().decode(Set<String>.self, from: data) else {
+            return []
+        }
+        return actions
+    }
+
+    static func saveDisabledActions(_ actions: Set<String>, at url: URL? = defaultMenuSettingsURL) throws {
+        guard let url else { throw CocoaError(.fileNoSuchFile) }
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try JSONEncoder().encode(actions).write(to: url, options: .atomic)
+    }
+
     @discardableResult
     static func setEnabled(_ enabled: Bool, at flagURL: URL? = defaultFlagURL) -> Bool {
         guard let flagURL else { return false }

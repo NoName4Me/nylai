@@ -91,7 +91,7 @@ enum ScreenshotAnnotationRenderer {
                         in: contextRect,
                         flipped: false
                     ).copy(
-                        strokingWithWidth: CGFloat(annotation.style.lineWidth),
+                        strokingWithWidth: CGFloat(annotation.style.resolvedRedactionBrushSize),
                         lineCap: .round,
                         lineJoin: .round,
                         miterLimit: 10

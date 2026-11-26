@@ -579,6 +579,27 @@ final class ScreenshotAnnotationTests: XCTestCase {
         XCTAssertEqual(reloaded.style(for: .line), .default)
     }
 
+    func testRedactionDefaultsShareStrengthAndKeepIndependentBrushSize() throws {
+        let suiteName = "ScreenshotAnnotationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = ScreenshotAnnotationStyleStore(defaults: defaults)
+        var stroke = store.style(for: .mosaicBlur)
+        stroke.lineWidth = 8
+        stroke.redactionBrushSize = 44
+        store.setStyle(stroke, for: .mosaicBlur)
+
+        var box = store.style(for: .blur)
+        XCTAssertEqual(box.lineWidth, 8)
+        box.lineWidth = 12
+        store.setStyle(box, for: .blur)
+
+        let reloaded = ScreenshotAnnotationStyleStore(defaults: defaults)
+        XCTAssertEqual(reloaded.style(for: ScreenshotAnnotationKind.mosaic).lineWidth, 12)
+        XCTAssertEqual(reloaded.style(for: .mosaicStroke).lineWidth, 12)
+        XCTAssertEqual(reloaded.style(for: .mosaicStroke).resolvedRedactionBrushSize, 44)
+    }
+
     func testStyleValidationAndRectangleSelectionClamp() throws {
         let style = ScreenshotAnnotationStyle(
             color: ScreenshotAnnotationColor(red: 2, green: -1, blue: 0.5, alpha: 3),
@@ -848,7 +869,8 @@ final class ScreenshotAnnotationTests: XCTestCase {
             style: ScreenshotAnnotationStyle(
                 color: .defaultRed,
                 lineWidth: 16,
-                lineStyle: .solid
+                lineStyle: .solid,
+                redactionBrushSize: 40
             )
         )
         let mosaicSource = try makeCheckerboardImage(width: 100, height: 60)
@@ -860,7 +882,13 @@ final class ScreenshotAnnotationTests: XCTestCase {
             selection: selection,
             annotations: [mosaic]
         )
-        XCTAssertNotEqual(try pngLikeData(mosaicSource), try pngLikeData(mosaicImage))
+        let original = NSBitmapImageRep(cgImage: mosaicSource)
+        let rendered = NSBitmapImageRep(cgImage: mosaicImage)
+        func row(_ image: NSBitmapImageRep, at y: Int) -> [NSColor?] {
+            (32..<68).map { image.colorAt(x: $0, y: y) }
+        }
+        XCTAssertNotEqual(row(original, at: 46), row(rendered, at: 46))
+        XCTAssertEqual(row(original, at: 54), row(rendered, at: 54))
     }
 
     func testBrushUsesColorAlphaAndMosaicBlurProcessesPixels() throws {
@@ -1203,6 +1231,44 @@ final class ScreenshotAnnotationTests: XCTestCase {
     }
 
     @MainActor
+    func testRoundedPolylinePreviewHasNoGrayMiterAtAcuteTurn() throws {
+        let bounds = CGRect(x: 0, y: 0, width: 260, height: 220)
+        let view = ScreenshotOverlayView(frame: bounds)
+        view.showsSelectionChrome = false
+        view.sourcePixelSize = try PixelSize(width: 260, height: 220)
+        view.setSelection(bounds, notify: false)
+        var style = ScreenshotAnnotationStyle.default
+        style.lineWidth = 8
+        let annotation = ScreenshotAnnotation(
+            points: [PixelPoint(x: 90, y: 80), PixelPoint(x: 180, y: 110), PixelPoint(x: 91, y: 125)],
+            kind: .line,
+            style: style
+        )
+        view.setAnnotations([annotation], selectedID: nil)
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: 260, height: 220, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.setFillColor(NSColor.white.cgColor)
+        context.fill(bounds)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        view.draw(bounds)
+        NSGraphicsContext.restoreGraphicsState()
+        let image = NSBitmapImageRep(cgImage: try XCTUnwrap(context.makeImage()))
+        let hasGrayMiter = (185..<220).contains { x in
+            (95..<125).contains { y in
+                guard let color = image.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return false }
+                return color.redComponent < 0.94
+                    && abs(color.redComponent - color.greenComponent) < 0.02
+                    && abs(color.greenComponent - color.blueComponent) < 0.02
+            }
+        }
+        XCTAssertFalse(hasGrayMiter)
+    }
+
+    @MainActor
     func testPolylineAddsVerticesOnClicksUntilRightClick() throws {
         let view = ScreenshotOverlayView(frame: CGRect(x: 0, y: 0, width: 240, height: 160))
         _ = attachToWindow(view)
@@ -1285,15 +1351,11 @@ final class ScreenshotAnnotationTests: XCTestCase {
     }
 
     @MainActor
-    func testSelectionEdgesUseHorizontalCursorAndCornersUseDiagonalCursors() {
-        for handle in [
-            SelectionResizeHandle.top,
-            .left,
-            .right,
-            .bottom,
-        ] {
-            XCTAssertTrue(handle.cursor === NSCursor.resizeLeftRight)
-        }
+    func testSelectionEdgesUseAxisAlignedCursorsAndCornersUseDiagonalCursors() {
+        XCTAssertTrue(SelectionResizeHandle.top.cursor === NSCursor.resizeUpDown)
+        XCTAssertTrue(SelectionResizeHandle.bottom.cursor === NSCursor.resizeUpDown)
+        XCTAssertTrue(SelectionResizeHandle.left.cursor === NSCursor.resizeLeftRight)
+        XCTAssertTrue(SelectionResizeHandle.right.cursor === NSCursor.resizeLeftRight)
         XCTAssertFalse(
             SelectionResizeHandle.topLeft.cursor === NSCursor.resizeLeftRight
         )
@@ -1338,15 +1400,9 @@ final class ScreenshotAnnotationTests: XCTestCase {
             NSApp.sendAction(action, to: effectControl.target, from: effectControl)
         }
 
-        XCTAssertEqual(view.activeAnnotationKind, .blur)
-        XCTAssertEqual(modeControl.selectedSegment, 0)
-        XCTAssertEqual(view.activeTool, .mosaic)
-
-        modeControl.selectedSegment = 1
-        if let action = modeControl.action {
-            NSApp.sendAction(action, to: modeControl.target, from: modeControl)
-        }
         XCTAssertEqual(view.activeAnnotationKind, .mosaicBlur)
+        XCTAssertEqual(modeControl.selectedSegment, 1)
+        XCTAssertEqual(view.activeTool, .mosaic)
 
         effectControl.selectedSegment = 0
         if let action = effectControl.action {
@@ -1526,6 +1582,39 @@ final class ScreenshotAnnotationTests: XCTestCase {
     }
 
     @MainActor
+    func testChangingToolbarFontSizeUpdatesOpenTextEditor() throws {
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let view = ScreenshotOverlayView(frame: bounds)
+        let window = attachToWindow(view)
+        defer { window.orderOut(nil) }
+        view.sourcePixelSize = try PixelSize(width: 800, height: 600)
+        view.setSelection(bounds, notify: false)
+        let annotation = ScreenshotAnnotation(
+            rect: PixelRect(x: 80, y: 80, width: 90, height: 28),
+            kind: .text, style: .defaultStyle(for: .text)
+        )
+        view.setAnnotations([annotation], selectedID: annotation.id)
+        view.beginTextEditing(annotation.id)
+        let editor = try XCTUnwrap(findTextView(in: view))
+        editor.string = "正在输入"
+        editor.didChangeText()
+        let originalHeight = editor.frame.height
+        let stepper = try XCTUnwrap(findView(accessibilityLabel: "标注参数", in: view) as? NSStepper)
+        stepper.integerValue = 36
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(stepper.action), to: stepper.target, from: stepper))
+        XCTAssertEqual(editor.font?.pointSize, 36)
+        XCTAssertEqual(editor.string, "正在输入")
+        XCTAssertGreaterThan(editor.frame.height, originalHeight)
+        let scroll = try XCTUnwrap(CGEvent(
+            scrollWheelEvent2Source: nil, units: .line, wheelCount: 1,
+            wheel1: 1, wheel2: 0, wheel3: 0
+        ))
+        scroll.location = view.convert(CGPoint(x: 100, y: 100), to: nil)
+        editor.scrollWheel(with: try XCTUnwrap(NSEvent(cgEvent: scroll)))
+        XCTAssertGreaterThan(try XCTUnwrap(editor.font?.pointSize), 36)
+    }
+
+    @MainActor
     func testTextEditorEscapeCancelsAndRestoresOriginalText() throws {
         let view = ScreenshotOverlayView(frame: CGRect(x: 0, y: 0, width: 240, height: 160))
         _ = attachToWindow(view)
@@ -1553,7 +1642,7 @@ final class ScreenshotAnnotationTests: XCTestCase {
     }
 
     @MainActor
-    func testTextResizeChangesWidthAndKeepsFontSize() throws {
+    func testTextResizeStopsAtMaximumWidthAndKeepsFontSize() throws {
         let view = ScreenshotOverlayView(frame: CGRect(x: 0, y: 0, width: 240, height: 180))
         _ = attachToWindow(view)
         view.sourcePixelSize = try PixelSize(width: 240, height: 180)
@@ -1581,7 +1670,10 @@ final class ScreenshotAnnotationTests: XCTestCase {
         XCTAssertNil(changedStyle)
         XCTAssertEqual(view.annotations.first?.style.lineWidth, 18)
         let textRect = try XCTUnwrap(view.annotations.first?.rect)
-        XCTAssertEqual(textRect.width, 145)
+        XCTAssertEqual(textRect.minX, 20)
+        XCTAssertEqual(textRect.width, Int(max(26, ScreenshotTextLayout.size(
+            annotation.text, style: annotation.style, width: .greatestFiniteMagnitude, scale: 1
+        ).width)))
         XCTAssertLessThan(textRect.height, 40)
     }
 
@@ -1667,7 +1759,11 @@ final class ScreenshotAnnotationTests: XCTestCase {
             try XCTUnwrap(findView(accessibilityLabel: "标注参数", in: toolbar)).isHidden
         )
 
+        let brushSize = try XCTUnwrap(findView(accessibilityLabel: "笔刷大小", in: toolbar))
+        XCTAssertTrue(brushSize.isHidden)
+
         toolbar.styleKind = .mosaicStroke
+        XCTAssertFalse(brushSize.isHidden)
         let widthControl = try XCTUnwrap(
             findView(accessibilityLabel: "标注参数", in: toolbar)
         )
@@ -1841,6 +1937,30 @@ final class ScreenshotAnnotationTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testScreenshotOutputToolbarGroupsAnalysisAndOutputActions() throws {
+        let toolbar = ScreenshotOutputToolbarView(frame: .zero)
+        let stack = try XCTUnwrap(toolbar.subviews.first as? NSStackView)
+        let groups = stack.arrangedSubviews
+            .split(whereSeparator: { !($0 is NSButton) })
+            .map { group in
+                group.compactMap { ($0 as? NSButton)?.accessibilityLabel() }
+            }
+        XCTAssertEqual(groups, [
+            [NylaiIcon.crop, .cursor].map(\.accessibilityLabel),
+            [NylaiIcon.scroll, .recognize].map(\.accessibilityLabel),
+            [NylaiIcon.copy, .save, .close, .pin].map(\.accessibilityLabel),
+        ])
+
+        var copyRequested = false
+        toolbar.onCopy = { copyRequested = true }
+        let copyButton = try XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? NSButton }.first {
+            $0.accessibilityLabel() == NylaiIcon.copy.accessibilityLabel
+        })
+        copyButton.performClick(nil)
+        XCTAssertTrue(copyRequested)
+    }
+
     func testMosaicIconUsesStrictTwoByTwoDiagonalFill() throws {
         let size = NSSize(width: 24, height: 24)
         let image = NSImage(size: size)
@@ -1990,7 +2110,7 @@ final class ScreenshotAnnotationTests: XCTestCase {
     }
 
     @MainActor
-    func testStepClickUsesConfiguredDiameter() throws {
+    func testStepClickCentersConfiguredDiameterOnPointer() throws {
         let view = ScreenshotOverlayView(frame: CGRect(x: 0, y: 0, width: 200, height: 120))
         _ = attachToWindow(view)
         view.sourcePixelSize = try PixelSize(width: 200, height: 120)
@@ -2010,7 +2130,7 @@ final class ScreenshotAnnotationTests: XCTestCase {
         view.mouseUp(with: try mouseEvent(.leftMouseUp, in: view, at: CGPoint(x: 40, y: 30)))
 
         XCTAssertEqual(created?.kind, .step)
-        XCTAssertEqual(created?.rect, PixelRect(x: 40, y: 30, width: 48, height: 48))
+        XCTAssertEqual(created?.rect, PixelRect(x: 16, y: 6, width: 48, height: 48))
         XCTAssertEqual(created?.style.lineWidth, 48)
     }
 

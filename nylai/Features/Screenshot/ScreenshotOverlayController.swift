@@ -265,6 +265,11 @@ final class ScreenshotOverlayController {
             try? session.updateArrowGeometry(annotation)
             refreshOverlayState()
         }
+        view.onAnnotationGeometryChanged = { [weak self] annotation in
+            guard let self else { return }
+            try? session.updateAnnotationGeometry(annotation)
+            refreshOverlayState()
+        }
         view.onAnnotationSelected = { [weak self] id in
             self?.finishStyleInteraction()
             self?.session.selectAnnotation(id)

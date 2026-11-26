@@ -10,7 +10,8 @@ final class SettingsWindowController: NSWindowController {
         mouseGestureController: MouseGestureController,
         clipboardHistoryStore: ClipboardHistoryStore?,
         clipboardMonitor: ClipboardMonitor?,
-        clipboardLoadError: String?
+        clipboardLoadError: String?,
+        openShortcutConflictChecker: @escaping () -> Void
     ) {
         let hostingController = NSHostingController(
             rootView: SettingsView(
@@ -20,9 +21,11 @@ final class SettingsWindowController: NSWindowController {
                 mouseGestureController: mouseGestureController,
                 clipboardHistoryStore: clipboardHistoryStore,
                 clipboardMonitor: clipboardMonitor,
-                clipboardLoadError: clipboardLoadError
+                clipboardLoadError: clipboardLoadError,
+                openShortcutConflictChecker: openShortcutConflictChecker
             )
         )
+        hostingController.sizingOptions = []
         let window = NSWindow(contentViewController: hostingController)
         window.title = ""
         window.identifier = NSUserInterfaceItemIdentifier("nylai.settings")
@@ -30,6 +33,7 @@ final class SettingsWindowController: NSWindowController {
             .titled,
             .closable,
             .miniaturizable,
+            .resizable,
             .fullSizeContentView
         ]
         window.titleVisibility = .hidden
@@ -38,6 +42,7 @@ final class SettingsWindowController: NSWindowController {
         window.backgroundColor = NylaiTheme.panelBackground()
         window.isMovableByWindowBackground = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
+        window.contentMinSize = NSSize(width: 760, height: 540)
         window.setContentSize(NSSize(width: 760, height: 580))
         window.isReleasedWhenClosed = false
         super.init(window: window)

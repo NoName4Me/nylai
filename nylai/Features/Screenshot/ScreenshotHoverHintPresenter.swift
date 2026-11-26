@@ -156,6 +156,7 @@ final class ScreenshotHoverHintPresenter {
         panel.isReleasedWhenClosed = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        panel.appearance = NSApp.appearance
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = true

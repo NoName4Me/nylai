@@ -19,12 +19,13 @@ enum ScreenshotPixelProcessor {
         guard annotation.kind.redactionEffect == .blur || annotation.kind.isFreehand else {
             return rect.clamped(to: sourceSize)
         }
-        let padding: Int
-        if annotation.kind.redactionEffect == .blur {
-            padding = blurRadius(for: annotation.style.lineWidth) + 2
-        } else {
-            padding = max(1, annotation.style.lineWidth / 2 + 1)
-        }
+        let brushPadding = annotation.kind.isFreehand
+            ? annotation.style.resolvedRedactionBrushSize / 2 + 1
+            : 0
+        let blurPadding = annotation.kind.redactionEffect == .blur
+            ? blurRadius(for: annotation.style.lineWidth) + 2
+            : 0
+        let padding = brushPadding + blurPadding
         return PixelRect(
             x: rect.minX - padding,
             y: rect.minY - padding,
@@ -59,7 +60,7 @@ enum ScreenshotPixelProcessor {
         switch effect {
         case .mosaic:
             guard let filter = CIFilter(name: "CIPixellate") else { return nil }
-            filter.setValue(input, forKey: kCIInputImageKey)
+            filter.setValue(input.clampedToExtent(), forKey: kCIInputImageKey)
             filter.setValue(max(4, intensity), forKey: kCIInputScaleKey)
             guard let image = filter.outputImage else { return nil }
             output = image.cropped(to: input.extent)

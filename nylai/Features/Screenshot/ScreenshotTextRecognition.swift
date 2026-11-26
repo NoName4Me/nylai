@@ -35,9 +35,15 @@ enum ScreenshotTextRecognition {
             try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
             try Task.checkCancellation()
             let lines = (request.results ?? []).compactMap { observation -> RecognizedTextLine? in
-                guard let text = observation.topCandidates(1).first?.string,
-                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-                return RecognizedTextLine(text: text, box: observation.boundingBox)
+                guard let candidate = observation.topCandidates(1).first else { return nil }
+                let text = candidate.string
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+                let glyphs = text.indices.compactMap { start -> RecognizedTextGlyph? in
+                    let range = start..<text.index(after: start)
+                    guard let box = try? candidate.boundingBox(for: range)?.boundingBox else { return nil }
+                    return RecognizedTextGlyph(range: NSRange(range, in: text), box: box)
+                }
+                return RecognizedTextLine(text: text, box: observation.boundingBox, glyphs: characterBoxes(from: glyphs))
             }
             guard !lines.isEmpty else { throw TextRecognitionError.noText }
             return lines
@@ -47,6 +53,26 @@ enum ScreenshotTextRecognition {
             try Task.checkCancellation()
             return text
         } onCancel: { task.cancel() }
+    }
+
+    // Accurate recognition may return the same word rectangle for several characters.
+    private static func characterBoxes(from glyphs: [RecognizedTextGlyph]) -> [RecognizedTextGlyph] {
+        var result: [RecognizedTextGlyph] = []
+        var start = 0
+        while start < glyphs.count {
+            let box = glyphs[start].box
+            var end = start + 1
+            while end < glyphs.count, glyphs[end].box == box { end += 1 }
+            let width = box.width / CGFloat(end - start)
+            for index in start..<end {
+                result.append(.init(range: glyphs[index].range, box: CGRect(
+                    x: box.minX + CGFloat(index - start) * width,
+                    y: box.minY, width: width, height: box.height
+                )))
+            }
+            start = end
+        }
+        return result
     }
 
     static func recognize(_ image: CGImage, layout: RecognizedTextLayout) async throws -> String {

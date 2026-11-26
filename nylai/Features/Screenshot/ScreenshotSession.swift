@@ -12,6 +12,7 @@ struct ScreenshotAnnotation: Identifiable, Equatable {
     var stepNumber: Int?
     var style: ScreenshotAnnotationStyle
     var arrowAnchors: ScreenshotArrowAnchors? = nil
+    var rotationDegrees: Double = 0
 
     init(
         id: UUID = UUID(),
@@ -375,6 +376,22 @@ final class ScreenshotSession {
             annotations[index].start = updated.start
             annotations[index].end = updated.end
             annotations[index].arrowAnchors = updated.arrowAnchors
+        }
+    }
+
+    func updateAnnotationGeometry(_ updated: ScreenshotAnnotation) throws {
+        guard let source, phase == .editing,
+              updated.kind == .line || updated.kind.supportsRotation,
+              let index = annotations.firstIndex(where: {
+                  $0.id == updated.id && $0.kind == updated.kind
+              }) else {
+            throw ScreenshotSessionError.invalidPhase
+        }
+        guard updated.rect.clamped(to: source.geometry.pixelSize) == updated.rect else {
+            throw ScreenshotGeometryError.selectionOutsideSource
+        }
+        mutateContent {
+            annotations[index] = updated
         }
     }
 

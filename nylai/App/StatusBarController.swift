@@ -30,6 +30,7 @@ final class StatusBarController: NSObject {
         self.isInteractionLocked = isInteractionLocked
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
+        panel.appearance = NSApp.appearance
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true

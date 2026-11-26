@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mouseGestureController: MouseGestureController?
     private var windowSwitcherController: WindowSwitcherController?
     private var settingsWindowController: SettingsWindowController?
+    private var shortcutConflictCheckerController: ShortcutConflictCheckerWindowController?
     private var screenshotHistoryWindowController: ScreenshotHistoryWindowController?
     private var collageWindowController: CollageWindowController?
     private var longScreenshotEditorController: LongScreenshotEditorWindowController?
@@ -101,6 +102,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipboardPanelController = nil
         settingsWindowController?.close()
         settingsWindowController = nil
+        shortcutConflictCheckerController?.close()
+        shortcutConflictCheckerController = nil
         longScreenshotPinnedImageManager.closeAll()
         pinnedImageManager.closeAll()
     }
@@ -112,8 +115,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !isScreenshotInteractionActive,
               moduleStateController.isEnabled(.finderEnhancements) else { return }
+        let disabledActions = FinderEnhancementAvailability.disabledActions()
         for url in urls {
-            if let request = FinderEnhancementRequest(url: url) {
+            if let request = FinderEnhancementRequest(url: url),
+               !disabledActions.contains(request.action.rawValue) {
                 FinderEnhancementAction.perform(request)
             }
         }
@@ -138,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mouseGestureController?.refreshLocalization()
         windowSwitcherController?.refreshLocalization()
         clipboardMonitor?.refreshLocalization()
+        shortcutConflictCheckerController?.refreshLocalization()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -175,14 +181,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ensureSettingsWindowController().present()
     }
 
+    private func showShortcutConflictChecker() {
+        guard !isScreenshotInteractionActive else { return }
+        ensureShortcutConflictCheckerController().present(
+            relativeTo: settingsWindowController?.window
+        )
+    }
+
     @objc private func showScreenshotHistory() {
         guard moduleStateController.isEnabled(.screenshot),
+              preferences.screenshotHistoryAvailable,
               !isScreenshotInteractionActive else { return }
         ensureScreenshotHistoryWindowController().present()
     }
 
     @objc private func openCollageWindow() {
         guard moduleStateController.isEnabled(.screenshot),
+              preferences.screenshotCollageEnabled,
               !isScreenshotInteractionActive else { return }
         ensureCollageWindowController().present()
     }
@@ -217,7 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pinnedImageManager: longScreenshotPinnedImageManager,
                 historyStore: screenshotHistoryStore,
                 isHistoryEnabled: { [weak self] in
-                    self?.preferences.screenshotHistoryEnabled ?? false
+                    self.map { $0.preferences.screenshotHistoryAvailable && $0.preferences.screenshotHistoryEnabled } ?? false
                 }
             )
             controller.onClose = { [weak self] in
@@ -232,6 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showCollage(adding image: CGImage) {
         guard moduleStateController.isEnabled(.screenshot),
+              preferences.screenshotCollageEnabled,
               !isScreenshotInteractionActive else {
             return
         }
@@ -281,8 +297,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch action {
         case .openSettings, .application:
             true
-        case .captureMainDisplay, .captureInteractive, .screenshotHistory,
-             .openCollage, .scrollCapture:
+        case .screenshotHistory:
+            moduleStateController.isEnabled(.screenshot) && preferences.screenshotHistoryAvailable
+        case .openCollage:
+            moduleStateController.isEnabled(.screenshot) && preferences.screenshotCollageEnabled
+        case .captureMainDisplay, .captureInteractive, .scrollCapture:
             moduleStateController.isEnabled(.screenshot)
         case .clipboardHistory:
             moduleStateController.isEnabled(.clipboard)
@@ -369,7 +388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pinnedImageManager: pinnedImageManager,
             historyStore: screenshotHistoryStore,
             isHistoryEnabled: { [weak self] in
-                self?.preferences.screenshotHistoryEnabled ?? false
+                self.map { $0.preferences.screenshotHistoryAvailable && $0.preferences.screenshotHistoryEnabled } ?? false
             },
             startScrollCapture: { [weak self] request in
                 self?.ensureScrollCaptureController().begin(with: request)
@@ -427,7 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = CollageWindowController(
             historyStore: screenshotHistoryStore,
             isHistoryEnabled: { [weak self] in
-                self?.preferences.screenshotHistoryEnabled ?? false
+                self.map { $0.preferences.screenshotHistoryAvailable && $0.preferences.screenshotHistoryEnabled } ?? false
             }
         )
         collageWindowController = controller
@@ -528,10 +547,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mouseGestureController: ensureMouseGestureController(),
             clipboardHistoryStore: ensureClipboardHistoryStore(),
             clipboardMonitor: ensureClipboardMonitor(),
-            clipboardLoadError: clipboardLoadError
+            clipboardLoadError: clipboardLoadError,
+            openShortcutConflictChecker: { [weak self] in
+                self?.showShortcutConflictChecker()
+            }
         )
         settingsWindowController = controller
         return controller
+    }
+
+    private func ensureShortcutConflictCheckerController()
+        -> ShortcutConflictCheckerWindowController {
+        if let shortcutConflictCheckerController {
+            return shortcutConflictCheckerController
+        }
+        let controller = ShortcutConflictCheckerWindowController(
+            beginInterception: { [weak self] in
+                guard let self else {
+                    throw ShortcutOperationError.configurationUnavailable
+                }
+                try self.shortcutRuntime.beginTransientRecording()
+            },
+            endInterception: { [weak self] in
+                self?.shortcutRuntime.endTransientRecording()
+            },
+            ownShortcuts: { [weak self] in
+                self?.ownShortcutMatches() ?? []
+            }
+        )
+        shortcutConflictCheckerController = controller
+        return controller
+    }
+
+    private func ownShortcutMatches() -> [ShortcutConflictMatch] {
+        guard let configuration = shortcutRuntime.configuration,
+              configuration.isEnabled else {
+            return []
+        }
+        let applicationIdentifier = Bundle.main.bundleIdentifier
+            ?? "com.noname4me.nylai"
+        return configuration.bindings.compactMap { binding in
+            guard binding.isEnabled,
+                  let shortcut = binding.shortcut,
+                  shortcutRuntime.status(for: binding.id) == .registered else {
+                return nil
+            }
+            let title = ShortcutBindingRuntime.title(for: binding.action)
+            return ShortcutConflictMatch(
+                id: "\(applicationIdentifier)|\(binding.id.rawValue)|\(shortcut.keyCode)|\(shortcut.modifiers.rawValue)",
+                applicationIdentifier: applicationIdentifier,
+                applicationName: AppName.current,
+                bundleIdentifier: Bundle.main.bundleIdentifier,
+                applicationURL: Bundle.main.bundleURL,
+                menuPath: [title],
+                shortcut: shortcut
+            )
+        }
     }
 
     private func installMainMenu() {
@@ -636,7 +707,14 @@ extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         let screenshotAvailable = moduleStateController.isEnabled(.screenshot)
             && !isScreenshotInteractionActive
-        screenshotMenuItems.forEach { $0.isEnabled = screenshotAvailable }
+        for item in screenshotMenuItems {
+            if item.action == #selector(showScreenshotHistory) {
+                item.isHidden = !preferences.screenshotHistoryAvailable
+            } else if item.action == #selector(openCollageWindow) {
+                item.isHidden = !preferences.screenshotCollageEnabled
+            }
+            item.isEnabled = screenshotAvailable
+        }
         clipboardMenuItem?.isEnabled = moduleStateController.isEnabled(.clipboard)
             && !isScreenshotInteractionActive
         settingsMenuItem?.isEnabled = !isScreenshotInteractionActive

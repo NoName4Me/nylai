@@ -88,6 +88,7 @@ final class WindowSwitcherPanelController {
         panel.contentView = contentView
         panel.backgroundColor = .clear
         panel.isOpaque = false
+        panel.appearance = NSApp.appearance
         panel.hasShadow = true
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -110,6 +111,13 @@ final class WindowSwitcherPanelController {
 
     func close() {
         panel.orderOut(nil)
+    }
+
+    func windowColumnCount(for windowCount: Int) -> Int {
+        WindowPreviewGridLayout.columnCount(
+            windowCount: windowCount,
+            availableWidth: max(1, panel.frame.width - 72)
+        )
     }
 
     static func panelFrame(in visibleFrame: CGRect) -> CGRect {
@@ -237,7 +245,7 @@ struct WindowSwitcherPanelView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(alignment: .topTrailing) {
+        .overlay(alignment: .bottomLeading) {
             if canManagePin, application.bundleIdentifier != nil,
                application.isPinned || isSelected || hoveredApplicationID == application.id {
                 Button { model.onTogglePin(application) } label: {
@@ -250,7 +258,6 @@ struct WindowSwitcherPanelView: View {
                 .buttonStyle(.plain)
                 .help(application.isPinned ? L10n.shared.string("取消固定") : L10n.shared.string("固定到前排"))
                 .accessibilityLabel(application.isPinned ? L10n.shared.string("取消固定") : L10n.shared.string("固定到前排"))
-                .offset(x: 0, y: 60)
             }
         }
         .contextMenu {
@@ -337,7 +344,17 @@ struct WindowSwitcherPanelView: View {
             Button {
                 model.selectWindow(window.id)
             } label: {
-                VStack(alignment: .leading, spacing: 9) {
+                VStack(spacing: 9) {
+                    Text(window.title.flatMap { $0.isEmpty ? nil : $0 }
+                         ?? L10n.shared.string("未命名窗口"))
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, minHeight: 32)
+                        .padding(.horizontal, 28)
+                        .foregroundStyle(isSelected ? NylaiPalette.accent : Color.primary)
+
                     ZStack {
                         RoundedRectangle(cornerRadius: 10)
                             .fill(Color.black.opacity(0.2))
@@ -356,14 +373,8 @@ struct WindowSwitcherPanelView: View {
                     }
                     .aspectRatio(16 / 10, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
-
-                    Text(window.title.flatMap { $0.isEmpty ? nil : $0 } ?? "未命名窗口")
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, 2)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity)
                 .padding(8)
                 .background(
                     isSelected
@@ -409,14 +420,6 @@ struct WindowSwitcherPanelView: View {
                 .padding(12)
             }
         }
-        .contextMenu {
-            Button(role: .destructive) {
-                model.closeWindow(window)
-            } label: {
-                Label(L10n.shared.string("关闭窗口"), systemImage: "xmark")
-            }
-            .disabled(model.closingWindowIDs.contains(window.id))
-        }
         .onHover { hovering in
             if hovering { hoveredWindowID = window.id }
             else if hoveredWindowID == window.id { hoveredWindowID = nil }
@@ -430,6 +433,9 @@ struct WindowSwitcherPanelView: View {
                 .padding(.trailing, 10)
             keycap("`")
             Text("切换窗口")
+                .padding(.trailing, 10)
+            keycap("↑↓")
+            Text("上下换行")
             Spacer()
             keycap("⌘")
             Text("松开确认")
@@ -489,31 +495,10 @@ struct WindowPreviewGridLayout {
     init(windowCount: Int, availableWidth: CGFloat, availableHeight: CGFloat) {
         let safeWidth = max(360, availableWidth)
         let contentWidth = max(0, safeWidth - 48)
-        let responsiveColumnCount = max(
-            1,
-            min(6, Int((contentWidth + 20) / 240))
+        let columnCount = Self.columnCount(
+            windowCount: windowCount,
+            availableWidth: safeWidth
         )
-        let columnCount: Int
-        switch windowCount {
-        case 1:
-            columnCount = 1
-        case 2:
-            columnCount = 2
-        case 3:
-            columnCount = 3
-        case 4:
-            columnCount = 2
-        case 5...6:
-            columnCount = 3
-        case 7...8:
-            columnCount = 4
-        case 9:
-            columnCount = 3
-        case 10...12:
-            columnCount = 4
-        default:
-            columnCount = max(4, responsiveColumnCount)
-        }
         let rows = CGFloat(max(1, (windowCount + columnCount - 1) / columnCount))
         let widthLimit = max(1, (contentWidth - CGFloat(columnCount - 1) * 20) / CGFloat(columnCount))
         let heightLimit = max(1, (availableHeight - 48 - (rows - 1) * 20) / rows - 40) * 1.6 + 16
@@ -523,6 +508,34 @@ struct WindowPreviewGridLayout {
             count: columnCount
         )
         maximumWidth = safeWidth
+    }
+
+    static func columnCount(windowCount: Int, availableWidth: CGFloat) -> Int {
+        let contentWidth = max(0, max(360, availableWidth) - 48)
+        let responsiveColumnCount = max(
+            1,
+            min(6, Int((contentWidth + 20) / 240))
+        )
+        switch windowCount {
+        case 1:
+            return 1
+        case 2:
+            return 2
+        case 3:
+            return 3
+        case 4:
+            return 2
+        case 5...6:
+            return 3
+        case 7...8:
+            return 4
+        case 9:
+            return 3
+        case 10...12:
+            return 4
+        default:
+            return max(4, responsiveColumnCount)
+        }
     }
 }
 

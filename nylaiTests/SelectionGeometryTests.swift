@@ -51,15 +51,11 @@ final class SelectionGeometryTests: XCTestCase {
     }
 
     @MainActor
-    func testEdgesUseHorizontalCursorAndCornersUseDiagonalCursors() throws {
-        for handle in [
-            SelectionResizeHandle.top,
-            .left,
-            .right,
-            .bottom,
-        ] {
-            XCTAssertTrue(handle.cursor === NSCursor.resizeLeftRight)
-        }
+    func testEdgesUseAxisAlignedCursorsAndCornersUseDiagonalCursors() throws {
+        XCTAssertTrue(SelectionResizeHandle.top.cursor === NSCursor.resizeUpDown)
+        XCTAssertTrue(SelectionResizeHandle.bottom.cursor === NSCursor.resizeUpDown)
+        XCTAssertTrue(SelectionResizeHandle.left.cursor === NSCursor.resizeLeftRight)
+        XCTAssertTrue(SelectionResizeHandle.right.cursor === NSCursor.resizeLeftRight)
         XCTAssertTrue(
             SelectionResizeHandle.topLeft.cursor
                 === SelectionResizeHandle.bottomRight.cursor
@@ -237,6 +233,21 @@ final class SelectionGeometryTests: XCTestCase {
         XCTAssertTrue(bounds.contains(fullScreen.editingFrame))
         XCTAssertLessThan(fullScreen.editingFrame.maxY, bounds.maxY)
         XCTAssertGreaterThan(fullScreen.outputFrame.minX, bounds.maxX - 130)
+    }
+
+    func testRightAndBottomEdgesMoveToolbarsInside() {
+        let bounds = CGRect(x: 0, y: 0, width: 1000, height: 700)
+        let selection = CGRect(x: 400, y: 300, width: 600, height: 400)
+        let layout = ScreenshotToolbarLayout.layout(
+            selection: selection, bounds: bounds,
+            editingSize: CGSize(width: 440, height: 92),
+            outputSize: CGSize(width: 48, height: 250)
+        )
+        XCTAssertTrue(selection.contains(layout.editingFrame))
+        XCTAssertTrue(selection.contains(layout.outputFrame))
+        XCTAssertFalse(layout.editingFrame.intersects(layout.outputFrame))
+        XCTAssertFalse(layout.editingFrame.intersects(CGRect(x: 968, y: 668, width: 24, height: 24)))
+        XCTAssertFalse(layout.outputFrame.intersects(CGRect(x: 968, y: 668, width: 24, height: 24)))
     }
 
     func testToolbarGroupsAvoidEachOtherAtScreenCorner() {

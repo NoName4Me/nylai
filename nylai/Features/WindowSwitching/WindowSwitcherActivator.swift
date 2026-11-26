@@ -153,10 +153,7 @@ final class WindowSwitcherActivator: WindowSwitcherActivating {
     }
 
     func activate(_ target: WindowSwitcherTarget) async throws {
-        guard target.processIdentifier > 0,
-              let application = NSRunningApplication(processIdentifier: target.processIdentifier),
-              !application.isTerminated,
-              application.bundleIdentifier == target.bundleIdentifier else {
+        guard let application = Self.runningApplication(for: target) else {
             guard target.launchIfNeeded, let url = target.applicationURL,
                   let identifier = target.bundleIdentifier,
                   Bundle(url: url)?.bundleIdentifier == identifier else {
@@ -176,12 +173,22 @@ final class WindowSwitcherActivator: WindowSwitcherActivating {
         guard isAccessibilityGranted() else {
             throw WindowSwitcherError.accessibilityUnavailable
         }
-        guard let window = Self.windowElement(
-            processIdentifier: target.processIdentifier,
+        var window = Self.windowElement(
+            processIdentifier: application.processIdentifier,
             windowID: windowID,
             title: target.windowTitle,
             frame: target.windowFrame
-        ) else {
+        )
+        if window == nil {
+            try? await Task.sleep(for: .milliseconds(80))
+            window = Self.windowElement(
+                processIdentifier: application.processIdentifier,
+                windowID: windowID,
+                title: target.windowTitle,
+                frame: target.windowFrame
+            )
+        }
+        guard let window else {
             throw WindowSwitcherError.windowUnavailable
         }
         do {
@@ -192,6 +199,25 @@ final class WindowSwitcherActivator: WindowSwitcherActivating {
             )
         } catch {
             throw WindowSwitcherError.windowUnavailable
+        }
+    }
+
+    private static func runningApplication(
+        for target: WindowSwitcherTarget
+    ) -> NSRunningApplication? {
+        if target.processIdentifier > 0,
+           let application = NSRunningApplication(
+               processIdentifier: target.processIdentifier
+           ),
+           !application.isTerminated,
+           application.bundleIdentifier == target.bundleIdentifier {
+            return application
+        }
+        guard let bundleIdentifier = target.bundleIdentifier else {
+            return nil
+        }
+        return NSWorkspace.shared.runningApplications.first {
+            !$0.isTerminated && $0.bundleIdentifier == bundleIdentifier
         }
     }
 

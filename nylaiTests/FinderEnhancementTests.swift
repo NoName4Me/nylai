@@ -214,6 +214,18 @@ final class FinderEnhancementTests: XCTestCase {
         XCTAssertTrue(FinderEnhancementAvailability.isEnabled(at: flagURL))
     }
 
+    func testFinderMenuSettingsPersistIndividualDisabledActions() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "nylai/finder-menu.json")
+
+        XCTAssertTrue(FinderEnhancementAvailability.disabledActions(at: url).isEmpty)
+        try FinderEnhancementAvailability.saveDisabledActions(["copy-path", "new-excel"], at: url)
+        XCTAssertEqual(FinderEnhancementAvailability.disabledActions(at: url), ["copy-path", "new-excel"])
+        try FinderEnhancementAvailability.saveDisabledActions(["new-excel"], at: url)
+        XCTAssertEqual(FinderEnhancementAvailability.disabledActions(at: url), ["new-excel"])
+    }
+
     private func makeURL(action: String, target: URL) -> URL {
         var components = URLComponents()
         components.scheme = "nylai"

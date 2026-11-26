@@ -19,21 +19,19 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
 
     @MainActor
     func apply() {
+        let appearance: NSAppearance?
         switch self {
         case .system:
-            NSApp.appearance = nil
+            appearance = nil
         case .light:
-            NSApp.appearance = NSAppearance(named: .aqua)
+            appearance = NSAppearance(named: .aqua)
         case .dark:
-            NSApp.appearance = NSAppearance(named: .darkAqua)
+            appearance = NSAppearance(named: .darkAqua)
         }
-        NSApp.windows
-            .filter { $0.identifier?.rawValue == "nylai.settings" }
-            .forEach {
-                $0.backgroundColor = NylaiTheme.panelBackground(
-                    for: $0.effectiveAppearance
-                )
-            }
+        NSApp.appearance = appearance
+        for window in NSApp.windows {
+            window.appearance = appearance
+        }
     }
 }
 
@@ -101,6 +99,14 @@ final class AppPreferences {
         didSet {
             defaults.set(showSettingsOnLaunch, forKey: Self.showSettingsOnLaunchKey)
         }
+    }
+
+    var screenshotHistoryAvailable: Bool {
+        didSet { defaults.set(screenshotHistoryAvailable, forKey: "screenshot.history.available") }
+    }
+
+    var screenshotCollageEnabled: Bool {
+        didSet { defaults.set(screenshotCollageEnabled, forKey: "screenshot.collage.enabled") }
     }
 
     var screenshotHistoryEnabled: Bool {
@@ -172,6 +178,8 @@ final class AppPreferences {
         language = storedLanguage
         L10n.shared.setLanguage(storedLanguage)
         showSettingsOnLaunch = defaults.bool(forKey: Self.showSettingsOnLaunchKey)
+        screenshotHistoryAvailable = defaults.object(forKey: "screenshot.history.available") as? Bool ?? true
+        screenshotCollageEnabled = defaults.object(forKey: "screenshot.collage.enabled") as? Bool ?? true
         screenshotHistoryEnabled = defaults.object(
             forKey: Self.screenshotHistoryEnabledKey
         ) as? Bool ?? false

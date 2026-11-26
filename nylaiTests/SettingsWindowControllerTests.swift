@@ -29,7 +29,8 @@ final class SettingsWindowControllerTests: XCTestCase {
             ),
             clipboardHistoryStore: nil,
             clipboardMonitor: nil,
-            clipboardLoadError: nil
+            clipboardLoadError: nil,
+            openShortcutConflictChecker: {}
         )
         let window = try XCTUnwrap(controller.window)
         defer { controller.close() }

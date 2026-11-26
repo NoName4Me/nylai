@@ -211,6 +211,13 @@ struct ScreenshotAnnotationStyle: Codable, Equatable, Sendable {
     var fillsTextBackground: Bool? = nil
     var cornerStyle: ScreenshotAnnotationCornerStyle? = nil
 
+    static let redactionBrushSizeRange = 1...60
+    var redactionBrushSize: Int? = nil
+
+    var resolvedRedactionBrushSize: Int {
+        redactionBrushSize ?? lineWidth
+    }
+
     var resolvedCornerStyle: ScreenshotAnnotationCornerStyle {
         cornerStyle ?? .rounded
     }
@@ -260,6 +267,10 @@ struct ScreenshotAnnotationStyle: Codable, Equatable, Sendable {
         var copy = self
         let range = kind.lineWidthRange
         copy.lineWidth = min(max(lineWidth, range.lowerBound), range.upperBound)
+        if let size = redactionBrushSize, kind.redactionShape == .stroke {
+            let range = Self.redactionBrushSizeRange
+            copy.redactionBrushSize = min(max(size, range.lowerBound), range.upperBound)
+        }
         copy.color = Self.validated(color)
         return copy
     }
@@ -296,11 +307,32 @@ final class ScreenshotAnnotationStyleStore {
     }
 
     func style(for kind: ScreenshotAnnotationKind) -> ScreenshotAnnotationStyle {
-        styles[kind.rawValue]?.validated(for: kind) ?? .defaultStyle(for: kind)
+        var style = styles[kind.rawValue] ?? .defaultStyle(for: kind)
+        if kind.isMosaicEffect {
+            let stroke = styles[ScreenshotAnnotationKind.mosaicStroke.rawValue]
+                ?? .defaultStyle(for: .mosaicStroke)
+            style.redactionBrushSize = stroke.resolvedRedactionBrushSize
+            style.lineWidth = styles[ScreenshotAnnotationKind.mosaic.rawValue]?.lineWidth
+                ?? ScreenshotAnnotationStyle.defaultStyle(for: .mosaic).lineWidth
+        }
+        return style.validated(for: kind)
     }
 
     func setStyle(_ style: ScreenshotAnnotationStyle, for kind: ScreenshotAnnotationKind) {
-        styles[kind.rawValue] = style.validated(for: kind)
+        let validated = style.validated(for: kind)
+        if kind.isMosaicEffect {
+            var box = self.style(for: ScreenshotAnnotationKind.mosaic)
+            var stroke = self.style(for: .mosaicStroke)
+            box.lineWidth = validated.lineWidth
+            stroke.lineWidth = validated.lineWidth
+            if kind.redactionShape == .stroke, let size = validated.redactionBrushSize {
+                stroke.redactionBrushSize = size
+            }
+            styles[ScreenshotAnnotationKind.mosaic.rawValue] = box
+            styles[ScreenshotAnnotationKind.mosaicStroke.rawValue] = stroke
+        } else {
+            styles[kind.rawValue] = validated
+        }
         if let data = try? JSONEncoder().encode(styles) {
             defaults.set(data, forKey: Self.storageKey)
         }
@@ -392,6 +424,10 @@ extension ScreenshotAnnotationKind {
         case .rectangle, .ellipse, .text, .step, .mosaic, .blur:
             false
         }
+    }
+
+    var supportsRotation: Bool {
+        self == .rectangle || self == .ellipse
     }
 
     var isMosaicEffect: Bool {

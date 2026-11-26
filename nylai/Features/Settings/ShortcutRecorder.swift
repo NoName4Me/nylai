@@ -11,6 +11,10 @@ struct ShortcutRecorder: NSViewRepresentable {
     let onCancel: () -> Void
     let onClear: () -> Void
     let onMessage: (String?) -> Void
+    var idleTitle: String? = nil
+    var dimsShortcut = false
+
+    static let defaultWidth: CGFloat = 132
 
     func makeNSView(context: Context) -> ShortcutRecorderView {
         let view = ShortcutRecorderView()
@@ -25,6 +29,8 @@ struct ShortcutRecorder: NSViewRepresentable {
     private func update(_ view: ShortcutRecorderView) {
         view.shortcut = shortcut
         view.isRecording = isRecording
+        view.idleTitle = idleTitle
+        view.dimsShortcut = dimsShortcut
         view.onBegin = onBegin
         view.onCapture = onCapture
         view.onCancel = onCancel
@@ -49,6 +55,12 @@ final class ShortcutRecorderView: NSView {
     }
 
     var shortcut: ShortcutKey? {
+        didSet { needsDisplay = true }
+    }
+    var idleTitle: String? {
+        didSet { needsDisplay = true }
+    }
+    var dimsShortcut = false {
         didSet { needsDisplay = true }
     }
     var isRecording = false {
@@ -77,7 +89,7 @@ final class ShortcutRecorderView: NSView {
 
     override var acceptsFirstResponder: Bool { isRecording }
     override var focusRingMaskBounds: NSRect { .zero }
-    override var intrinsicContentSize: NSSize { NSSize(width: 112, height: 28) }
+    override var intrinsicContentSize: NSSize { NSSize(width: ShortcutRecorder.defaultWidth, height: 28) }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -119,6 +131,11 @@ final class ShortcutRecorderView: NSView {
         addCursorRect(bounds, cursor: isRecording ? .arrow : .pointingHand)
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         if let shortcut, !isRecording {
@@ -158,7 +175,7 @@ final class ShortcutRecorderView: NSView {
             font = .systemFont(ofSize: 11.5, weight: .medium)
             color = NylaiTheme.accent
         } else {
-            text = L10n.shared.string("未绑定")
+            text = idleTitle ?? L10n.shared.string("未绑定")
             font = .systemFont(ofSize: 11.5)
             color = .secondaryLabelColor
         }
@@ -180,7 +197,9 @@ final class ShortcutRecorderView: NSView {
         guard width > 0 else { return }
         let height: CGFloat = 21
         let start = bounds.midX - (CGFloat(labels.count) * (width + gap) - gap) / 2
-        var attributes: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.labelColor]
+        var attributes: [NSAttributedString.Key: Any] = [
+            .foregroundColor: dimsShortcut ? NSColor.secondaryLabelColor : NSColor.labelColor
+        ]
         for (index, label) in labels.enumerated() {
             let modifier = index < labels.count - 1 || ShortcutDisplayFormatter.isSymbolKey(label)
             attributes[.font] = modifier ? NSFont.systemFont(ofSize: 14.5, weight: .medium)
@@ -214,11 +233,16 @@ final class ShortcutRecorderView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        beginRecording()
+    }
+
+    @discardableResult
+    private func beginRecording() -> Bool {
         if !isRecording {
-            guard onBegin() else { return }
+            guard onBegin() else { return false }
             isRecording = true
         }
-        window?.makeFirstResponder(self)
+        return window?.makeFirstResponder(self) ?? false
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -374,7 +398,9 @@ final class ShortcutRecorderView: NSView {
         return super.resignFirstResponder()
     }
 
+    override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityPerformPress() -> Bool { beginRecording() }
     override func accessibilityLabel() -> String? {
         isRecording
             ? L10n.shared.string("正在录入快捷键")
@@ -437,6 +463,34 @@ enum ShortcutDisplayFormatter {
             return localizedName
         }
         return keyNameByCode[keyCode] ?? "Key \(keyCode)"
+    }
+
+    static func keyCode(for character: String) -> UInt32? {
+        if let specialKeyCode = specialKeyCode(for: character) {
+            return specialKeyCode
+        }
+        let trimmed = character.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return keyCodeByLowercaseCharacter[trimmed.lowercased()]
+    }
+
+    private static func specialKeyCode(for character: String) -> UInt32? {
+        switch character {
+        case "\r", "\n":
+            UInt32(kVK_Return)
+        case "\t":
+            UInt32(kVK_Tab)
+        case " ":
+            UInt32(kVK_Space)
+        case "\u{1b}":
+            UInt32(kVK_Escape)
+        case "\u{8}":
+            UInt32(kVK_Delete)
+        case "\u{7f}":
+            UInt32(kVK_ForwardDelete)
+        default:
+            nil
+        }
     }
 
     private static func localizedKeyName(for keyCode: UInt32) -> String? {
@@ -520,6 +574,22 @@ enum ShortcutDisplayFormatter {
         UInt32(kVK_ANSI_Keypad6): "6", UInt32(kVK_ANSI_Keypad7): "7",
         UInt32(kVK_ANSI_Keypad8): "8", UInt32(kVK_ANSI_Keypad9): "9",
     ]
+
+    private static let keyCodeByLowercaseCharacter: [String: UInt32] = {
+        var result: [String: UInt32] = [:]
+        let keypadKeyCodes: Set<UInt32> = [
+            UInt32(kVK_ANSI_Keypad0), UInt32(kVK_ANSI_Keypad1),
+            UInt32(kVK_ANSI_Keypad2), UInt32(kVK_ANSI_Keypad3),
+            UInt32(kVK_ANSI_Keypad4), UInt32(kVK_ANSI_Keypad5),
+            UInt32(kVK_ANSI_Keypad6), UInt32(kVK_ANSI_Keypad7),
+            UInt32(kVK_ANSI_Keypad8), UInt32(kVK_ANSI_Keypad9),
+        ]
+        for (keyCode, name) in keyNameByCode
+        where name.count == 1 && !keypadKeyCodes.contains(keyCode) {
+            result[name.lowercased()] = keyCode
+        }
+        return result
+    }()
 }
 
 enum ShortcutRecorderEvent {

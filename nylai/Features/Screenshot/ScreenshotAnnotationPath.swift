@@ -108,13 +108,13 @@ enum ScreenshotAnnotationPath {
                 path.addLine(to: endpoint(annotation.end, annotation: annotation, in: boundingRect))
             }
         case .arrow:
-            return arrowGeometry(
+            path.addPath(arrowGeometry(
                 for: annotation,
                 in: boundingRect,
                 options: resolvedOptions(for: annotation),
                 flipped: flipped,
                 strokeScale: strokeScale
-            ).outline
+            ).outline)
         case .brush, .marker, .mosaicStroke, .mosaicBlur:
             appendPolyline(
                 annotation.points,
@@ -129,7 +129,19 @@ enum ScreenshotAnnotationPath {
         case .mosaic, .blur:
             path.addRect(boundingRect)
         }
-        return path
+        guard annotation.kind.supportsRotation,
+              abs(annotation.rotationDegrees) > 0.001 else {
+            return path
+        }
+        let center = CGPoint(x: boundingRect.midX, y: boundingRect.midY)
+        let radians = CGFloat(annotation.rotationDegrees) * .pi / 180 * (flipped ? 1 : -1)
+        let transform = CGAffineTransform(
+            translationX: center.x,
+            y: center.y
+        ).rotated(by: radians).translatedBy(x: -center.x, y: -center.y)
+        let rotated = CGMutablePath()
+        rotated.addPath(path, transform: transform)
+        return rotated
     }
 
     private static func appendPolyline(
@@ -209,6 +221,16 @@ enum ScreenshotAnnotationPath {
             ScreenshotArrowAnchors.position(anchors.second, start: start, end: end),
             end,
         ]
+    }
+
+    static func polylineHandles(
+        for annotation: ScreenshotAnnotation,
+        in rect: CGRect
+    ) -> [CGPoint] {
+        let points = annotation.points.isEmpty
+            ? [annotation.start, annotation.end]
+            : annotation.points
+        return points.map { endpoint($0, annotation: annotation, in: rect) }
     }
 
     private static func arrowGeometry(

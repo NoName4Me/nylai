@@ -20,7 +20,6 @@ final class ClipboardTests: XCTestCase {
             targetApplication: nil,
             groups: groups
         )
-        model.reveal = 1
         let host = NSHostingView(rootView: ClipboardPanelView(model: model)
             .nylaiLocalized()
             .environment(\.colorScheme, .light))
@@ -1162,7 +1161,12 @@ final class ClipboardTests: XCTestCase {
             text: "snippet"
         )
         try snippets.save(snippet)
-        let target = FakeRunningClipboardTarget()
+        guard let target = NSWorkspace.shared.runningApplications.first(where: {
+            !$0.isTerminated && $0.bundleIdentifier != nil
+                && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+        }) else {
+            throw XCTSkip("需要一个本应用之外的运行进程。")
+        }
         let paster = RecordingClipboardPaster()
         let focusSnapshot = ClipboardFocusSnapshot(
             focusedElement: AXUIElementCreateSystemWide(),
@@ -1171,7 +1175,7 @@ final class ClipboardTests: XCTestCase {
         let model = ClipboardPanelModel(
             store: store,
             pasteboard: FakeClipboardPasteboard(),
-            targetApplication: target.application,
+            targetApplication: target,
             focusSnapshot: focusSnapshot,
             directPaster: paster,
             snippets: snippets

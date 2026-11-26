@@ -14,6 +14,7 @@ final class WindowSwitcherController {
     private var isMenuTracking = false
     private var snapshotTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
+    private var keepPanelOnModifierRelease = false
     private var windowCloseTask: Task<Void, Never>?
     private var session: WindowSwitcherSession?
     private var pendingCommands: [WindowSwitcherSessionCommand] = []
@@ -130,7 +131,7 @@ final class WindowSwitcherController {
         switch event {
         case .begin(let mode, let reverse):
             guard windowCloseTask == nil else {
-                monitor.setSessionActive(false)
+                monitor.setSessionActive(session != nil)
                 return
             }
             guard !isInteractionSuppressed() else {
@@ -193,7 +194,10 @@ final class WindowSwitcherController {
 
     private func handleCommand(_ command: WindowSwitcherSessionCommand) {
         if command == .confirm, isMenuTracking { return }
-        if windowCloseTask != nil { return }
+        if command == .confirm, keepPanelOnModifierRelease || windowCloseTask != nil {
+            keepPanelOnModifierRelease = false
+            return
+        }
         if command == .cancel {
             cancelSession()
             return
@@ -213,14 +217,16 @@ final class WindowSwitcherController {
         }
         session?.apply(command)
         guard let session else { return }
+        updateWindowColumnCount()
         panelController.model.update(with: session)
         loadPreviews(for: session.selectedApplication, generation: generation)
     }
 
     private func presentSession() {
         guard let session else { return }
-        panelController.model.update(with: session)
         panelController.present()
+        updateWindowColumnCount()
+        panelController.model.update(with: self.session ?? session)
         loadPreviews(for: session.selectedApplication, generation: generation)
     }
 
@@ -228,6 +234,7 @@ final class WindowSwitcherController {
         guard session != nil else { return }
         session?.apply(.selectApplication(index))
         guard let session else { return }
+        updateWindowColumnCount()
         panelController.model.update(with: session)
         if session.selectedApplication.windows.isEmpty {
             finish(with: session)
@@ -250,6 +257,7 @@ final class WindowSwitcherController {
                 if let window = previous.selectedWindow { updated.apply(.selectWindow(window.id)) }
             }
             session = updated
+            updateWindowColumnCount()
             panelController.model.update(with: updated)
             loadPreviews(for: updated.selectedApplication, generation: generation)
         } catch {
@@ -296,34 +304,18 @@ final class WindowSwitcherController {
             return
         }
         let application = session.selectedApplication
-        let target = WindowSwitcherTarget(
-            processIdentifier: application.id,
-            bundleIdentifier: application.bundleIdentifier,
-            applicationName: application.name,
-            windowID: window.id,
-            windowTitle: window.title,
-            windowFrame: window.frame,
-            applicationURL: application.applicationURL,
-            launchIfNeeded: false
-        )
+        keepPanelOnModifierRelease = NSEvent.modifierFlags.contains(.command)
         panelController.model.closingWindowIDs.insert(window.id)
-        monitor.setSessionActive(false)
-        snapshotTask?.cancel()
-        snapshotTask = nil
-        previewTask?.cancel()
-        previewTask = nil
-        self.session = nil
-        pendingCommands = []
-        confirmWhenReady = false
-        isMenuTracking = false
-        closePanel()
-
+        let closeGeneration = generation
         windowCloseTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if generation == closeGeneration {
+                    windowCloseTask = nil
+                    panelController.model.closingWindowIDs.remove(window.id)
+                }
+            }
             do {
-                try Task.checkCancellation()
-                try await activator.activate(target)
-                try Task.checkCancellation()
                 try await windowCloser.close(
                     windowID: window.id,
                     processIdentifier: application.id,
@@ -331,13 +323,27 @@ final class WindowSwitcherController {
                     title: window.title,
                     frame: window.frame
                 )
+                for _ in 0..<8 {
+                    try await Task.sleep(for: .milliseconds(100))
+                    let snapshot = try await catalogProvider.makeSnapshot()
+                    try Task.checkCancellation()
+                    if !snapshot.applications.contains(where: { app in
+                        app.id == application.id && app.windows.contains { $0.id == window.id }
+                    }) {
+                        self.session?.removeWindow(window.id, from: application.id)
+                        if let session = self.session {
+                            updateWindowColumnCount()
+                            panelController.model.update(with: session)
+                            loadPreviews(for: session.selectedApplication, generation: generation)
+                        }
+                        break
+                    }
+                }
             } catch is CancellationError {
                 return
             } catch {
                 onError(error)
             }
-            windowCloseTask = nil
-            panelController.model.closingWindowIDs.remove(window.id)
         }
     }
 
@@ -379,6 +385,14 @@ final class WindowSwitcherController {
         }
     }
 
+    private func updateWindowColumnCount() {
+        guard let session else { return }
+        let count = panelController.windowColumnCount(
+            for: session.selectedApplication.windows.count
+        )
+        self.session?.setWindowColumnCount(count)
+    }
+
     private func finish(with session: WindowSwitcherSession) {
         let target = session.confirmationTarget
         monitor.setSessionActive(false)
@@ -406,6 +420,7 @@ final class WindowSwitcherController {
         previewTask = nil
         windowCloseTask?.cancel()
         windowCloseTask = nil
+        keepPanelOnModifierRelease = false
         pendingCommands = []
         confirmWhenReady = false
         session = nil

@@ -56,7 +56,6 @@ struct ClipboardPanelView: View {
         .coordinateSpace(name: "clipboard.history")
         .background(theme.page)
         .tint(NylaiPalette.accent)
-        .mask { Rectangle().scaleEffect(x: max(0.002, model.reveal), y: 1) }
         .onAppear { searchFocused = true }
         .onKeyPress(.escape) {
             if !model.isPinned { model.onClose() }
@@ -289,6 +288,17 @@ struct ClipboardPanelView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
             if !model.isSelecting {
+                Button { model.togglePinned(record) } label: {
+                    Image(systemName: record.isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(record.isPinned ? NylaiPalette.accent : .secondary)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .opacity(record.isPinned || hoveredID == record.id ? 1 : 0)
+                .help(record.isPinned ? L10n.shared.string("取消置顶") : L10n.shared.string("置顶"))
+                .accessibilityLabel(record.isPinned ? L10n.shared.string("取消置顶") : L10n.shared.string("置顶"))
                 Button("粘贴") { model.directPaste(record) }.buttonStyle(.borderless)
                     .disabled(!model.canDirectPaste)
                     .help(model.canDirectPaste ? L10n.shared.string("粘贴到 %@", model.targetApplication?.localizedName ?? "") : L10n.shared.string("先切换到目标应用，再打开剪贴板。"))
@@ -316,6 +326,9 @@ struct ClipboardPanelView: View {
 
     @ViewBuilder private func recordActions(_ record: ClipboardRecord) -> some View {
         Button("复制") { model.copy(record) }
+        Button(record.isPinned ? L10n.shared.string("取消置顶") : L10n.shared.string("置顶")) {
+            model.togglePinned(record)
+        }
         Menu("分组") {
             ForEach(model.groups?.groups ?? []) { group in
                 Button {

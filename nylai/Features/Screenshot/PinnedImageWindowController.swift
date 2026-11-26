@@ -390,12 +390,12 @@ private final class PinnedImageContentView: NSView, NSWindowDelegate {
             x: dragStartOrigin.x + mouse.x - dragStartMouse.x,
             y: dragStartOrigin.y + mouse.y - dragStartMouse.y
         ))
-        layoutControls()
     }
 
     override func mouseUp(with event: NSEvent) {
         dragStartMouse = nil
         dragStartOrigin = nil
+        layoutControls()
     }
 
     override func cancelOperation(_ sender: Any?) { onClose() }
@@ -417,7 +417,9 @@ private final class PinnedImageContentView: NSView, NSWindowDelegate {
         layoutSubtreeIfNeeded()
     }
 
-    func windowDidMove(_ notification: Notification) { layoutControls() }
+    func windowDidMove(_ notification: Notification) {
+        if dragStartMouse == nil { layoutControls() }
+    }
     func windowDidBecomeKey(_ notification: Notification) { needsLayout = true }
 
     func windowWillClose(_ notification: Notification) {
@@ -463,9 +465,12 @@ private final class PinnedImageContentView: NSView, NSWindowDelegate {
             controlsSize: controlsSize,
             visibleFrame: visibleFrame
         )
-        floatingControls?.setFrame(frame, display: true)
-        if window.isVisible {
-            floatingControls?.orderFrontRegardless()
+        guard let floatingControls else { return }
+        if floatingControls.frame != frame {
+            floatingControls.setFrameOrigin(frame.origin)
+        }
+        if window.isVisible, !floatingControls.isVisible {
+            floatingControls.orderFrontRegardless()
         }
     }
 

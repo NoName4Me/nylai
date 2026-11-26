@@ -62,14 +62,10 @@ private final class MouseGestureTraceView: NSView {
         for point in converted.dropFirst() {
             path.line(to: point)
         }
-        NSColor.black.withAlphaComponent(0.55).setStroke()
-        path.lineWidth = 7
-        path.lineCapStyle = .round
-        path.lineJoinStyle = .round
-        path.stroke()
-
         (isCancelled ? NSColor.systemRed : NylaiTheme.accent).setStroke()
         path.lineWidth = 4
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
         path.stroke()
 
         guard let destination, converted.count > 1 else { return }

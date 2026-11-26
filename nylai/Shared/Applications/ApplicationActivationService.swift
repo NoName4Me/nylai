@@ -114,15 +114,12 @@ final class ApplicationActivationService {
         restoresMinimizedWindow: Bool
     ) throws {
         if restoresMinimizedWindow {
-            guard Self.unminimize(window) else {
-                throw ApplicationActivationError.activationFailed
-            }
+            Self.restoreIfMinimized(window)
         }
         try activate(target: target)
         guard restoresMinimizedWindow else { return }
-        guard Self.focusAndRaise(window) else {
-            throw ApplicationActivationError.activationFailed
-        }
+        // 应用已经激活成功；个别窗口拒绝 AX 焦点属性时不应误报切换失败。
+        _ = Self.focusAndRaise(window)
     }
 
     private func activate(target: ApplicationActivationTarget) throws {
@@ -170,6 +167,19 @@ final class ApplicationActivationService {
         windowState(processIdentifier)
     }
 
+    private static func restoreIfMinimized(_ window: AXUIElement) {
+        var rawValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            window,
+            kAXMinimizedAttribute as CFString,
+            &rawValue
+        ) == .success,
+        (rawValue as? NSNumber)?.boolValue == true else {
+            return
+        }
+        _ = unminimize(window)
+    }
+
     private static func unminimize(_ window: AXUIElement) -> Bool {
         AXUIElementSetAttributeValue(
             window,
@@ -179,21 +189,21 @@ final class ApplicationActivationService {
     }
 
     private static func focusAndRaise(_ window: AXUIElement) -> Bool {
-        guard AXUIElementSetAttributeValue(
+        let focused = AXUIElementSetAttributeValue(
             window,
             kAXFocusedAttribute as CFString,
             kCFBooleanTrue
-        ) == .success else {
-            return false
-        }
-        guard AXUIElementSetAttributeValue(
+        ) == .success
+        let main = AXUIElementSetAttributeValue(
             window,
             kAXMainAttribute as CFString,
             kCFBooleanTrue
-        ) == .success else {
-            return false
-        }
-        return AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success
+        ) == .success
+        let raised = AXUIElementPerformAction(
+            window,
+            kAXRaiseAction as CFString
+        ) == .success
+        return focused || main || raised
     }
 
     private static func accessibilityWindows(of element: AXUIElement) -> [AXUIElement] {

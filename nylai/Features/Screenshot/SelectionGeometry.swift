@@ -18,7 +18,9 @@ enum SelectionResizeHandle: CaseIterable, Equatable, Sendable {
             SelectionResizeCursor.downwardDiagonal
         case .topRight, .bottomLeft:
             SelectionResizeCursor.upwardDiagonal
-        case .top, .left, .right, .bottom:
+        case .top, .bottom:
+            .resizeUpDown
+        case .left, .right:
             .resizeLeftRight
         }
     }
@@ -228,6 +230,34 @@ enum SelectionGeometry {
             bottomRight: CGPoint(x: rect.maxX, y: rect.maxY)
         )
     }
+
+    static func rotatedHandlePoints(
+        in rect: CGRect,
+        degrees: Double
+    ) -> SelectionHandlePoints {
+        let points = handlePoints(in: rect)
+        guard abs(degrees) > 0.001 else { return points }
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        func rotated(_ point: CGPoint) -> CGPoint {
+            let radians = CGFloat(degrees) * .pi / 180
+            let dx = point.x - center.x
+            let dy = point.y - center.y
+            return CGPoint(
+                x: center.x + dx * cos(radians) - dy * sin(radians),
+                y: center.y + dx * sin(radians) + dy * cos(radians)
+            )
+        }
+        return SelectionHandlePoints(
+            topLeft: rotated(points.topLeft),
+            top: rotated(points.top),
+            topRight: rotated(points.topRight),
+            left: rotated(points.left),
+            right: rotated(points.right),
+            bottomLeft: rotated(points.bottomLeft),
+            bottom: rotated(points.bottom),
+            bottomRight: rotated(points.bottomRight)
+        )
+    }
 }
 
 enum AnnotationSelectionGeometry {
@@ -235,9 +265,13 @@ enum AnnotationSelectionGeometry {
         at point: CGPoint,
         in rect: CGRect,
         hitSize: CGFloat = SelectionGeometry.handleHitSize,
-        proportional: Bool = false
+        proportional: Bool = false,
+        rotationDegrees: Double = 0
     ) -> SelectionResizeHandle? {
-        let points = SelectionGeometry.handlePoints(in: rect)
+        let points = SelectionGeometry.rotatedHandlePoints(
+            in: rect,
+            degrees: rotationDegrees
+        )
         let cornerHandles: [(SelectionResizeHandle, CGPoint)] = [
             (SelectionResizeHandle.topLeft, points.topLeft),
             (.topRight, points.topRight),
@@ -365,121 +399,84 @@ struct ScreenshotToolbarLayout: Equatable, Sendable {
         bounds: CGRect,
         editingSize: CGSize,
         outputSize: CGSize,
-        forceInside: Bool = false
+        forceInside: Bool = false,
+        cornerRadius: Int? = 0
     ) -> ScreenshotToolbarLayout {
-        let margin: CGFloat = 12
         let gap: CGFloat = 10
-        let safeBounds = bounds.insetBy(dx: margin, dy: margin)
-        let editingX = clampedCenter(
-            selection.maxX - editingSize.width / 2,
-            length: editingSize.width,
-            lower: safeBounds.minX,
-            upper: safeBounds.maxX
-        )
-        let editingCandidates = forceInside ? [] : [
-            selection.maxY + gap,
-            selection.minY - gap - editingSize.height,
-        ]
-        let editingY = editingCandidates.first(where: {
-            $0 >= safeBounds.minY && $0 + editingSize.height <= safeBounds.maxY
-        }) ?? min(
-            max(selection.maxY - gap - editingSize.height, safeBounds.minY),
-            max(safeBounds.minY, safeBounds.maxY - editingSize.height)
-        )
-        let editingFrame = CGRect(
-            x: editingX,
-            y: editingY,
-            width: editingSize.width,
-            height: editingSize.height
-        )
+        let safe = bounds.insetBy(dx: 12, dy: 12)
+        let inside = safe.intersection(selection)
+        let handle = cornerRadius.map { radius in
+            let center = SelectionCornerRadiusGeometry.handleCenter(in: selection, radius: radius)
+            let size = SelectionCornerRadiusGeometry.hitSize
+            return CGRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)
+        } ?? .null
 
-        let outputCandidates = forceInside ? [] : [
-            selection.maxX + gap,
-            selection.minX - gap - outputSize.width,
-        ]
-        let outputFrame = outputCandidates.lazy.map {
+        func frame(_ size: CGSize, x: CGFloat, y: CGFloat, in region: CGRect) -> CGRect {
             CGRect(
-                x: $0,
-                y: selection.maxY - outputSize.height,
-                width: outputSize.width,
-                height: outputSize.height
+                x: min(max(x, region.minX), max(region.minX, region.maxX - size.width)),
+                y: min(max(y, region.minY), max(region.minY, region.maxY - size.height)),
+                width: size.width, height: size.height
             )
-        }.map { frame in
-            CGRect(
-                x: frame.minX,
-                y: min(
-                    max(frame.minY, safeBounds.minY),
-                    max(safeBounds.minY, safeBounds.maxY - frame.height)
-                ),
-                width: frame.width,
-                height: frame.height
-            )
-        }.first {
-            safeBounds.contains($0) && !$0.intersects(editingFrame)
-        } ?? fallbackOutputFrame(
-            selection: selection,
-            safeBounds: safeBounds,
-            outputSize: outputSize,
-            editingFrame: editingFrame,
-            gap: gap
-        )
-        return ScreenshotToolbarLayout(
-            editingFrame: editingFrame,
-            outputFrame: outputFrame
-        )
-    }
+        }
 
-    private static func fallbackOutputFrame(
-        selection: CGRect,
-        safeBounds: CGRect,
-        outputSize: CGSize,
-        editingFrame: CGRect,
-        gap: CGFloat
-    ) -> CGRect {
-        let candidates = [
-            CGRect(
-                x: selection.maxX - gap - outputSize.width,
-                y: selection.maxY - gap - outputSize.height,
-                width: outputSize.width,
-                height: outputSize.height
-            ),
-            CGRect(
-                x: safeBounds.maxX - outputSize.width,
-                y: editingFrame.minY - gap - outputSize.height,
-                width: outputSize.width,
-                height: outputSize.height
-            ),
-            CGRect(
-                x: safeBounds.maxX - outputSize.width,
-                y: editingFrame.maxY + gap,
-                width: outputSize.width,
-                height: outputSize.height
-            ),
-            CGRect(
-                x: safeBounds.maxX - outputSize.width,
-                y: safeBounds.maxY - outputSize.height,
-                width: outputSize.width,
-                height: outputSize.height
-            ),
-        ]
-        return candidates.map { frame in
-            CGRect(
-                x: min(max(frame.minX, safeBounds.minX), safeBounds.maxX - frame.width),
-                y: min(max(frame.minY, safeBounds.minY), safeBounds.maxY - frame.height),
-                width: frame.width,
-                height: frame.height
-            )
-        }.first { safeBounds.contains($0) && !$0.intersects(editingFrame) }
-            ?? candidates[3]
-    }
+        let bottomY = selection.maxY - gap - editingSize.height
+        let rightX = selection.maxX - gap - outputSize.width
+        var editing: [CGRect] = []
+        var output: [CGRect] = []
+        if !forceInside, selection.maxY + gap + editingSize.height <= safe.maxY {
+            editing.append(frame(editingSize, x: selection.maxX - editingSize.width,
+                                 y: selection.maxY + gap, in: safe))
+        }
+        if !forceInside, selection.maxX + gap + outputSize.width <= safe.maxX {
+            output.append(frame(outputSize, x: selection.maxX + gap,
+                                y: selection.maxY - outputSize.height, in: safe))
+        }
 
-    private static func clampedCenter(
-        _ center: CGFloat,
-        length: CGFloat,
-        lower: CGFloat,
-        upper: CGFloat
-    ) -> CGFloat {
-        min(max(center - length / 2, lower), max(lower, upper - length))
+        for region in [inside, safe] where !region.isNull {
+            editing += [
+                frame(editingSize, x: selection.maxX - gap - editingSize.width, y: bottomY, in: region),
+                frame(editingSize, x: handle.isNull ? rightX : handle.minX - gap - editingSize.width,
+                      y: bottomY, in: region),
+                frame(editingSize, x: selection.maxX - gap - editingSize.width,
+                      y: handle.isNull ? bottomY : handle.minY - gap - editingSize.height, in: region),
+                frame(editingSize, x: rightX - gap - editingSize.width, y: bottomY, in: region),
+            ].filter { region.contains($0) }
+            output += [
+                frame(outputSize, x: rightX, y: selection.maxY - gap - outputSize.height, in: region),
+                frame(outputSize, x: rightX,
+                      y: handle.isNull ? selection.minY : handle.minY - gap - outputSize.height, in: region),
+                frame(outputSize, x: handle.isNull ? rightX : handle.minX - gap - outputSize.width,
+                      y: selection.maxY - gap - outputSize.height, in: region),
+                frame(outputSize, x: rightX, y: region.minY, in: region),
+            ].filter { region.contains($0) }
+        }
+        // Try the preferred side or an in-selection placement before using screen space.
+        let preferredEditing = editing.filter {
+            inside.contains($0) || $0.minY >= selection.maxY + gap
+        }
+        let preferredOutput = output.filter {
+            inside.contains($0) || $0.minX >= selection.maxX + gap
+        }
+        for edit in preferredEditing where !edit.intersects(handle) {
+            if let out = preferredOutput.first(where: { !$0.intersects(edit) && !$0.intersects(handle) }) {
+                return .init(editingFrame: edit, outputFrame: out)
+            }
+        }
+
+        // Small selections may need to borrow space from the surrounding screen.
+        for edit in editing where !edit.intersects(handle) {
+            let above = frame(outputSize, x: rightX, y: edit.minY - gap - outputSize.height, in: safe)
+            let below = frame(outputSize, x: rightX, y: edit.maxY + gap, in: safe)
+            if let out = (output + [above, below]).first(where: {
+                !$0.intersects(edit) && !$0.intersects(handle)
+            }) {
+                return .init(editingFrame: edit, outputFrame: out)
+            }
+        }
+        return .init(
+            editingFrame: editing.first ?? frame(editingSize, x: safe.minX, y: bottomY, in: safe),
+            outputFrame: output.first ?? frame(outputSize, x: rightX, y: safe.minY, in: safe)
+        )
     }
 }
 

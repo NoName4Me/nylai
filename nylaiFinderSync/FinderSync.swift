@@ -23,12 +23,13 @@ final class FinderSync: FIFinderSync {
         let point = NSEvent.mouseLocation
         let createdAt = ProcessInfo.processInfo.systemUptime
         let chinese = Locale.preferredLanguages.first?.hasPrefix("zh") == true
+        let disabledActions = FinderEnhancementAvailability.disabledActions()
         let menu = NSMenu()
         for definition in FinderDocumentCatalog.menus(chinese: chinese) {
             let parent = NSMenuItem(title: definition.title, action: nil, keyEquivalent: "")
             parent.image = definition.image
             let submenu = NSMenu(title: definition.title)
-            for document in definition.items {
+            for document in definition.items where !disabledActions.contains(document.action) {
                 guard let item = actionItem(
                     title: document.title,
                     action: document.action,
@@ -63,7 +64,8 @@ final class FinderSync: FIFinderSync {
                 terminalIcon()
             ),
         ] {
-            guard let item = actionItem(
+            guard !disabledActions.contains(definition.0),
+                  let item = actionItem(
                 title: definition.1,
                 action: definition.0,
                 image: definition.2,
@@ -75,7 +77,7 @@ final class FinderSync: FIFinderSync {
             ) else { continue }
             menu.addItem(item)
         }
-        return menu
+        return menu.items.isEmpty ? nil : menu
     }
 
     private func actionItem(

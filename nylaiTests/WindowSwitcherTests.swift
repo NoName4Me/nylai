@@ -96,6 +96,53 @@ final class WindowSwitcherTests: XCTestCase {
         XCTAssertEqual(session.selectedWindow?.id, 11)
     }
 
+    func testWindowArrowNavigationMovesBetweenGridRows() throws {
+        let snapshot = WindowSwitcherSnapshot(
+            applications: [
+                application(
+                    id: 1,
+                    name: "Current",
+                    windows: (11...16).map { window(id: UInt32($0)) }
+                ),
+            ],
+            currentApplicationID: 1
+        )
+        var session = try WindowSwitcherSession(
+            snapshot: snapshot,
+            mode: .windows,
+            reverse: false
+        )
+        session.setWindowColumnCount(3)
+        XCTAssertEqual(session.selectedWindow?.id, 12)
+
+        session.apply(.navigateWindow(.down))
+        XCTAssertEqual(session.selectedWindow?.id, 15)
+
+        session.apply(.navigateWindow(.up))
+        XCTAssertEqual(session.selectedWindow?.id, 12)
+
+        session.apply(.selectWindow(14))
+        session.apply(.navigateWindow(.down))
+        XCTAssertEqual(session.selectedWindow?.id, 11)
+    }
+
+    func testWindowGridLayoutExposesColumnsUsedForVerticalNavigation() {
+        XCTAssertEqual(
+            WindowPreviewGridLayout.columnCount(
+                windowCount: 6,
+                availableWidth: 1_200
+            ),
+            3
+        )
+        XCTAssertEqual(
+            WindowPreviewGridLayout.columnCount(
+                windowCount: 8,
+                availableWidth: 1_200
+            ),
+            4
+        )
+    }
+
     func testChangingApplicationResetsWindowSelection() throws {
         let snapshot = WindowSwitcherSnapshot(
             applications: [
@@ -194,6 +241,32 @@ final class WindowSwitcherTests: XCTestCase {
                 sessionIsActive: true
             ),
             .command(.confirm)
+        )
+        XCTAssertEqual(
+            WindowSwitcherKeyClassifier.event(
+                keyCode: 126,
+                flags: [.maskCommand],
+                unicode: nil,
+                sessionIsActive: true
+            ),
+            .command(.navigateWindow(.up))
+        )
+        XCTAssertEqual(
+            WindowSwitcherKeyClassifier.event(
+                keyCode: 125,
+                flags: [.maskCommand],
+                unicode: nil,
+                sessionIsActive: true
+            ),
+            .command(.navigateWindow(.down))
+        )
+        XCTAssertTrue(
+            WindowSwitcherKeyClassifier.shouldClaim(
+                keyCode: 125,
+                flags: [.maskCommand],
+                unicode: nil,
+                sessionIsActive: true
+            )
         )
     }
 
@@ -455,7 +528,7 @@ final class WindowSwitcherTests: XCTestCase {
     }
 
     @MainActor
-    func testRepeatedBeginDuringWindowCloseReleasesInputSession() async throws {
+    func testRepeatedBeginDuringWindowClosePreservesInputSession() async throws {
         let window = window(id: 11)
         let snapshot = WindowSwitcherSnapshot(
             applications: [
@@ -464,11 +537,13 @@ final class WindowSwitcherTests: XCTestCase {
             currentApplicationID: 1
         )
         let monitor = WindowSwitcherEventMonitor()
+        let closer = SlowWindowSwitcherCloser()
+        let activator = ImmediateWindowSwitcherActivator()
         let controller = WindowSwitcherController(
             monitor: monitor,
             catalogProvider: StubWindowSwitcherCatalog(snapshot: snapshot),
-            activator: ImmediateWindowSwitcherActivator(),
-            windowCloser: SlowWindowSwitcherCloser(),
+            activator: activator,
+            windowCloser: closer,
             windowCapturer: UnavailableWindowCapturer(),
             isInteractionSuppressed: { false }
         )
@@ -476,14 +551,18 @@ final class WindowSwitcherTests: XCTestCase {
         controller.handle(.begin(.applications, reverse: false))
         let didStartClosing = await waitUntil {
             controller.closeWindow(window)
-            return !controller.isActive
+            return closer.didStart
         }
         XCTAssertTrue(didStartClosing)
+        XCTAssertTrue(controller.isActive)
+        XCTAssertFalse(activator.didActivate)
+        controller.handle(.command(.confirm))
+        XCTAssertTrue(controller.isActive)
 
         monitor.setSessionActive(true)
         controller.handle(.begin(.windows, reverse: false))
 
-        XCTAssertFalse(monitor.isSessionActive)
+        XCTAssertTrue(monitor.isSessionActive)
         controller.cancel()
     }
 
@@ -551,11 +630,13 @@ private final class StubWindowSwitcherCatalog: WindowSwitcherCatalogProviding {
 
 @MainActor
 private final class ImmediateWindowSwitcherActivator: WindowSwitcherActivating {
-    func activate(_ target: WindowSwitcherTarget) async throws {}
+    private(set) var didActivate = false
+    func activate(_ target: WindowSwitcherTarget) async throws { didActivate = true }
 }
 
 @MainActor
 private final class SlowWindowSwitcherCloser: WindowSwitcherWindowClosing {
+    private(set) var didStart = false
     func close(
         windowID: CGWindowID,
         processIdentifier: pid_t,
@@ -563,6 +644,7 @@ private final class SlowWindowSwitcherCloser: WindowSwitcherWindowClosing {
         title: String?,
         frame: CGRect
     ) async throws {
+        didStart = true
         try await Task.sleep(for: .seconds(10))
     }
 }

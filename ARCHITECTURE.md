@@ -32,6 +32,7 @@
 - `CarbonGlobalShortcutRegistrar` 使用 `RegisterEventHotKey` 独占注册，返回不透明 token，支持单项注销和全部注销。
 - `ShortcutBindingStore` 负责版本 8 配置及旧版本迁移。
 - `ShortcutBindingRuntime` 是唯一注册协调层：负责录入期间暂停、单项替换、失败回滚、总开关、逐项状态和动作分发。
+- `ShortcutConflictCheckerWindowController` 复用系统级录入拦截，随后扫描运行中应用的 AX 菜单树；`ShortcutOccupancyProbe` 用临时 Carbon 注册补充无法归属的系统级占用检测。
 - `ApplicationShortcutHandler` 管理系统文件选择器记录的应用目标，执行启动、后台激活、前台隐藏和并发启动合并。
 - 键盘、菜单和鼠标手势共享动作可用性；目标模块关闭时不执行动作。
 
@@ -99,10 +100,10 @@ macOS 不保证剪贴板来源身份可信。来源标记和前台应用只用�
 
 - `WindowSwitcherEventMonitor` 在主运行循环安装 HID 键盘事件 tap，只接管 `⌘Tab`、`⌘` 加反引号键及会话中的窗口导航键；会话结束、睡眠、模块关闭或退出时取消选择并关闭面板。
 - `WindowSwitcherCatalogProvider` 使用 `WindowCaptureService` 的前后台窗口顺序和当前屏幕范围构建应用分组。当前桌面普通窗口按应用分组，无窗口常规应用仍保留。
-- `WindowSwitcherSession` 是纯状态机，分别保存所选应用与窗口。`⌘Tab` 进入应用模式，直接 `⌘` 加反引号键进入当前应用窗口模式；排序在会话建立时冻结。
+- `WindowSwitcherSession` 是纯状态机，分别保存所选应用、窗口和当前网格列数。`⌘Tab` 进入应用模式，直接 `⌘` 加反引号键进入当前应用窗口模式；上下键按列数跨行移动；排序在会话建立时冻结。
 - `WindowSwitcherController` 协调快速按下松键、连按、Shift 反向、Esc、截图与快捷键录入互斥，以及模块启停。快速确认不等待缩略图。
 - `WindowSwitcherPanelController` 使用不抢焦点的全屏 `NSPanel`；macOS 26 及以上使用 `NSGlassEffectView`，旧系统使用 HUD 模糊材质。应用热区和窗口卡片可直接点击，点击结果通过同一会话命令更新或确认选择。
-- `WindowSwitcherActivator` 使用公开 Accessibility API，在激活前按目标窗口 ID 对应的标题和 frame 定位 AX 窗口，再激活应用并聚焦、提升该窗口；无法精确定位时不退回错误窗口。
+- `WindowSwitcherActivator` 使用公开 Accessibility API，在激活前按目标窗口 ID 对应的标题和 frame 定位 AX 窗口，进程重启时按 bundle ID 重新定位；激活应用后再尽力聚焦、提升窗口，无法精确定位时不退回错误窗口。
 
 窗口切换使用辅助功能权限和输入监控权限，并由屏幕录制权限提供缩略图。真实系统键抢占、权限撤销和指定窗口激活仍需人工验收。
 

@@ -87,11 +87,14 @@ final class WorkflowRefinementTests: XCTestCase {
     }
 
     func testOCRSelectionLinksUTF16TextRangesToImageLinesInBothLayouts() {
-        let lines = [RecognizedTextLine(text: "中文😀", box: CGRect(x: 0.1, y: 0.7, width: 0.3, height: 0.1)),
+        let emojiBox = CGRect(x: 0.3, y: 0.7, width: 0.1, height: 0.1)
+        let lines = [RecognizedTextLine(text: "中文😀", box: CGRect(x: 0.1, y: 0.7, width: 0.3, height: 0.1),
+                                        glyphs: [.init(range: NSRange(location: 2, length: 2), box: emojiBox)]),
                      RecognizedTextLine(text: "Error 42", box: CGRect(x: 0.1, y: 0.5, width: 0.4, height: 0.1))]
         for layout in RecognizedTextLayout.allCases {
             let document = RecognizedTextDocument(lines: lines, layout: layout)
             XCTAssertEqual(document.ranges[0], NSRange(location: 0, length: 4))
+            XCTAssertEqual(document.boxes(intersecting: NSRange(location: 2, length: 2)), [emojiBox])
             XCTAssertEqual(document.indexes(intersecting: NSRange(location: 2, length: 2)), [0])
             XCTAssertEqual(document.indexes(intersecting: NSRange(location: 5, length: 5)), [1])
             let both = document.range(for: [0, 1])

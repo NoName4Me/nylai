@@ -12,6 +12,7 @@ enum NylaiIcon: String, CaseIterable {
     case text
     case step
     case stepFilled
+    case redact
     case mosaic
     case mosaicStroke
     case blur
@@ -48,7 +49,8 @@ enum NylaiIcon: String, CaseIterable {
         case .text: L10n.shared.string("文字")
         case .step: L10n.shared.string("步骤")
         case .stepFilled: L10n.shared.string("填充步骤")
-        case .mosaic: L10n.shared.string("打码")
+        case .redact: L10n.shared.string("打码")
+        case .mosaic: L10n.shared.string("马赛克")
         case .mosaicStroke: L10n.shared.string("马赛克涂抹")
         case .blur: L10n.shared.string("模糊")
         case .cornerRounded: L10n.shared.string("圆角")

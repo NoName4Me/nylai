@@ -10,12 +10,15 @@ struct SettingsView: View {
     var clipboardHistoryStore: ClipboardHistoryStore?
     var clipboardMonitor: ClipboardMonitor?
     var clipboardLoadError: String?
+    var openShortcutConflictChecker: () -> Void
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var screenRecordingGranted = false
     @State private var accessibilityGranted = false
     @State private var inputMonitoringGranted = false
     @State private var finderExtensionEnabled = FIFinderSyncController.isExtensionEnabled
+    @State private var disabledFinderActions = Set<String>()
+    @State private var finderMenuSettingsError: String?
     @State private var showSettingsError = false
     @State private var missingSettingsPage = "屏幕录制"
     @State private var selectedSection = SettingsSection.modules
@@ -109,6 +112,8 @@ struct SettingsView: View {
             cancelRecording()
             syncClipboardDrafts()
         }
+        .onChange(of: preferences.screenshotHistoryAvailable) { shortcutRuntime.refreshActionAvailability() }
+        .onChange(of: preferences.screenshotCollageEnabled) { shortcutRuntime.refreshActionAvailability() }
         .onChange(of: visibleSections) { _, sections in
             guard !sections.contains(selectedSection) else { return }
             selectedSection = .modules
@@ -204,24 +209,9 @@ struct SettingsView: View {
                 .padding(.bottom, 7)
 
             VStack(spacing: 3) {
-                sidebarItem(.modules)
-                if moduleStateController.isEnabled(.screenshot) {
-                    sidebarItem(.screenshot)
+                ForEach(visibleSections, id: \.self) { section in
+                    sidebarItem(section)
                 }
-                if moduleStateController.isEnabled(.globalShortcuts) {
-                    sidebarItem(.shortcuts)
-                }
-                if moduleStateController.isEnabled(.mouseGestures) {
-                    sidebarItem(.gestures)
-                }
-                if moduleStateController.isEnabled(.clipboard) {
-                    sidebarItem(.clipboard)
-                }
-                if moduleStateController.isEnabled(.systemMonitor) {
-                    sidebarItem(.systemMonitor)
-                }
-                sidebarItem(.general)
-                sidebarItem(.permissions)
             }
             .reportMenuPullFrame(.sidebar)
             .padding(.horizontal, 10)
@@ -250,14 +240,26 @@ struct SettingsView: View {
     }
 
     private var pageHeader: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(selectedSection.title)
-                .font(.system(size: 22, weight: .semibold))
-            Text(selectedSection.subtitle)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(selectedSection.title)
+                    .font(.system(size: 22, weight: .semibold))
+                Text(selectedSection.subtitle)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if selectedSection == .shortcuts {
+                Button(action: openShortcutConflictChecker) {
+                    Label("检测冲突", systemImage: "magnifyingglass")
+                        .fixedSize()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .help("检查当前快捷键被哪些运行中的应用菜单占用")
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 28)
         .padding(.top, 24)
         .padding(.bottom, 16)
@@ -270,6 +272,8 @@ struct SettingsView: View {
             modulesPage
         case .screenshot:
             screenshotPage
+        case .finderEnhancements:
+            finderMenuSettings
         case .shortcuts:
             shortcutsPage
         case .gestures:
@@ -371,6 +375,68 @@ struct SettingsView: View {
                     moduleRow(module, isLast: index == NylaiModuleID.allCases.count - 1)
                 }
             }
+        }
+    }
+
+    private var finderMenuSettings: some View {
+        typealias Action = FinderEnhancementRequest.Action
+        let menus: [(title: String, actions: Set<Action>)] = [
+            (L10n.shared.string("新建 Microsoft Office 文档"), [.newWord, .newExcel, .newPowerPoint]),
+            (L10n.shared.string("新建 WPS 文档"), [.newWPSWriter, .newWPSSpreadsheet, .newWPSPresentation]),
+            (L10n.shared.string("新建文本文件"), [.newFile]),
+            (L10n.shared.string("复制路径"), [.copyPath]),
+            (L10n.shared.string("在此打开终端"), [.terminal]),
+        ]
+        return VStack(alignment: .leading, spacing: 9) {
+            sectionTitle("访达右键菜单")
+            SettingsCard {
+                ForEach(Array(menus.enumerated()), id: \.offset) { index, menu in
+                    let keys = Set(menu.actions.map(\.rawValue))
+                    HStack {
+                        Text(menu.title).font(.system(size: 13, weight: .medium))
+                        Spacer()
+                        Toggle(menu.title, isOn: Binding(
+                            get: { !keys.isSubset(of: disabledFinderActions) },
+                            set: { setFinderMenuActions(keys, enabled: $0) }
+                        ))
+                        .labelsHidden()
+                        .compactSettingsSwitch()
+                    }
+                    .padding(14)
+                    if index < menus.count - 1 {
+                        Divider().padding(.horizontal, 14)
+                    }
+                }
+            }
+            if let finderMenuSettingsError {
+                Text(finderMenuSettingsError).foregroundStyle(theme.danger)
+            }
+            if !finderExtensionEnabled {
+                Text("系统扩展尚未启用，访达右键菜单暂不显示。")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(theme.warning)
+            }
+            Button(finderExtensionEnabled ? "管理扩展" : "启用扩展") {
+                FIFinderSyncController.showExtensionManagementInterface()
+            }
+            .controlSize(.small)
+        }
+        .onAppear {
+            disabledFinderActions = FinderEnhancementAvailability.disabledActions()
+            finderMenuSettingsError = nil
+        }
+    }
+
+    private func setFinderMenuActions(_ actions: Set<String>, enabled: Bool) {
+        let updated = enabled
+            ? disabledFinderActions.subtracting(actions)
+            : disabledFinderActions.union(actions)
+        do {
+            try FinderEnhancementAvailability.saveDisabledActions(updated)
+            disabledFinderActions = updated
+            finderMenuSettingsError = nil
+        } catch {
+            finderMenuSettingsError = L10n.shared.string("无法保存访达菜单设置。")
         }
     }
 
@@ -919,6 +985,18 @@ struct SettingsView: View {
 
     private var screenshotPage: some View {
         VStack(alignment: .leading, spacing: 9) {
+            sectionTitle("截图功能")
+            SettingsCard {
+                screenshotFeatureRow(
+                    "最近截图", detail: "查看、复制和管理已记录的截图。",
+                    isOn: $preferences.screenshotHistoryAvailable
+                )
+                Divider().padding(.horizontal, 14)
+                screenshotFeatureRow(
+                    "自由拼图", detail: "将多张图片放在同一画布上，自由排列后导出。",
+                    isOn: $preferences.screenshotCollageEnabled
+                )
+            }
             sectionTitle("历史")
             SettingsCard {
                 HStack(spacing: 12) {
@@ -936,10 +1014,27 @@ struct SettingsView: View {
                         .labelsHidden()
                         .compactSettingsSwitch()
                         .accessibilityLabel("记录最近截图")
+                        .disabled(!preferences.screenshotHistoryAvailable)
                 }
                 .padding(14)
             }
         }
+    }
+
+    private func screenshotFeatureRow(
+        _ title: LocalizedStringKey, detail: LocalizedStringKey, isOn: Binding<Bool>
+    ) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            Toggle(title, isOn: isOn)
+                .labelsHidden()
+                .compactSettingsSwitch()
+        }
+        .padding(14)
     }
 
     private var permissionsPage: some View {
@@ -1698,6 +1793,7 @@ struct SettingsView: View {
 private enum SettingsSection: Hashable {
     case modules
     case screenshot
+    case finderEnhancements
     case general
     case permissions
     case shortcuts
@@ -1711,6 +1807,8 @@ private enum SettingsSection: Hashable {
             L10n.shared.string("功能")
         case .screenshot:
             L10n.shared.string("截图")
+        case .finderEnhancements:
+            L10n.shared.string("访达增强")
         case .shortcuts:
             L10n.shared.string("快捷键")
         case .gestures:
@@ -1735,6 +1833,8 @@ private enum SettingsSection: Hashable {
             )
         case .screenshot:
             L10n.shared.string("管理最近截图的记录方式。")
+        case .finderEnhancements:
+            L10n.shared.string("选择访达右键菜单中显示的项目。")
         case .shortcuts:
             L10n.shared.string("为截图等内置功能或常用应用分配快捷键。")
         case .gestures:
@@ -1759,6 +1859,8 @@ private enum SettingsSection: Hashable {
             "square.grid.2x2"
         case .screenshot:
             "viewfinder"
+        case .finderEnhancements:
+            "finder"
         case .shortcuts:
             "keyboard"
         case .gestures:
@@ -1786,7 +1888,9 @@ private enum SettingsSection: Hashable {
             self = .clipboard
         case .systemMonitor:
             self = .systemMonitor
-        case .finderEnhancements, .windowSwitcher:
+        case .finderEnhancements:
+            self = .finderEnhancements
+        case .windowSwitcher:
             return nil
         }
     }
@@ -1798,7 +1902,7 @@ private extension NylaiModuleID {
         case .screenshot:
             "viewfinder"
         case .finderEnhancements:
-            "folder"
+            "finder"
         case .globalShortcuts:
             "keyboard"
         case .mouseGestures:

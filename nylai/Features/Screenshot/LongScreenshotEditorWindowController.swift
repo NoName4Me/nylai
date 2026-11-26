@@ -118,6 +118,11 @@ final class LongScreenshotEditorModel {
         canvasDidChange()
     }
 
+    func updateAnnotationGeometry(_ annotation: ScreenshotAnnotation) {
+        try? session.updateAnnotationGeometry(annotation)
+        canvasDidChange()
+    }
+
     func updateAnnotation(
         _ id: UUID,
         rect: PixelRect,
@@ -518,6 +523,9 @@ final class LongScreenshotEditorWindowController: NSWindowController {
         }
         overlayView.onArrowGeometryChanged = { [weak self] annotation in
             self?.model.updateArrowGeometry(annotation)
+        }
+        overlayView.onAnnotationGeometryChanged = { [weak self] annotation in
+            self?.model.updateAnnotationGeometry(annotation)
         }
         overlayView.onAnnotationSelected = { [weak self] id in
             self?.model.selectAnnotation(id)

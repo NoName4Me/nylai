@@ -1,9 +1,15 @@
 import AppKit
 
+struct RecognizedTextGlyph: Equatable, Sendable {
+    let range: NSRange
+    let box: CGRect
+}
+
 struct RecognizedTextLine: Identifiable, Equatable, Sendable {
     var id = UUID()
     let text: String
     let box: CGRect
+    var glyphs: [RecognizedTextGlyph] = []
 }
 
 struct RecognizedTextDocument {
@@ -28,6 +34,17 @@ struct RecognizedTextDocument {
     func indexes(intersecting selection: NSRange) -> Set<Int> {
         guard selection.location != NSNotFound, selection.length > 0 else { return [] }
         return Set(ranges.indices.filter { NSIntersectionRange(ranges[$0], selection).length > 0 })
+    }
+
+    func boxes(intersecting selection: NSRange) -> [CGRect] {
+        indexes(intersecting: selection).sorted().flatMap { index in
+            let line = lines[index]
+            let lineRange = ranges[index]
+            let overlap = NSIntersectionRange(lineRange, selection)
+            if overlap == lineRange { return [line.box] }
+            let local = NSRange(location: overlap.location - lineRange.location, length: overlap.length)
+            return line.glyphs.filter { NSIntersectionRange($0.range, local).length > 0 }.map(\.box)
+        }
     }
 
     func range(for indexes: Set<Int>) -> NSRange? {
@@ -61,7 +78,7 @@ final class ScreenshotTextReviewController: NSWindowController, NSWindowDelegate
     private let copySelection = NSButton()
 
     init(image: CGImage, lines: [RecognizedTextLine], layout: RecognizedTextLayout) {
-        imageView = RecognizedImageView(image: image, lines: lines)
+        imageView = RecognizedImageView(image: image, lines: lines, layout: layout)
         recognizedDocument = RecognizedTextDocument(lines: lines, layout: layout)
         let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) })?.visibleFrame
             ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
@@ -157,25 +174,26 @@ final class ScreenshotTextReviewController: NSWindowController, NSWindowDelegate
             footer.bottomAnchor.constraint(equalTo: right.bottomAnchor, constant: -12), footer.heightAnchor.constraint(equalToConstant: 30),
         ])
         split.setPosition(520, ofDividerAt: 0)
-        imageView.onSelect = { [weak self] indexes in
-            guard let self, let range = recognizedDocument.range(for: indexes) else { return }
+        imageView.onSelect = { [weak self] range in
+            guard let self else { return }
             textView.setSelectedRange(range)
             textView.scrollRangeToVisible(range)
             copySelection.isEnabled = range.length > 0
-            imageView.selectedIndexes = recognizedDocument.indexes(intersecting: range)
+            imageView.selectedBoxes = recognizedDocument.boxes(intersecting: range)
             window?.makeFirstResponder(textView)
         }
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {
-        imageView.selectedIndexes = recognizedDocument.indexes(intersecting: textView.selectedRange())
+        imageView.selectedBoxes = recognizedDocument.boxes(intersecting: textView.selectedRange())
         copySelection.isEnabled = textView.selectedRange().length > 0
     }
 
     @objc private func formatChanged() {
         recognizedDocument = RecognizedTextDocument(lines: recognizedDocument.lines, layout: format.selectedSegment == 0 ? .lines : .paragraph)
         textView.string = recognizedDocument.text
-        imageView.selectedIndexes = []
+        imageView.updateDocument(recognizedDocument)
+        imageView.selectedBoxes = []
         copySelection.isEnabled = false
     }
 
@@ -203,13 +221,20 @@ private final class TextReviewPanel: NSPanel {
 private final class RecognizedImageView: NSView {
     let image: CGImage
     let lines: [RecognizedTextLine]
-    var selectedIndexes: Set<Int> = [] { didSet { needsDisplay = true } }
-    var onSelect: (Set<Int>) -> Void = { _ in }
-    private var dragStart: CGPoint?
+    var selectedBoxes: [CGRect] = [] { didSet { needsDisplay = true } }
+    var onSelect: (NSRange) -> Void = { _ in }
+    private var document: RecognizedTextDocument
+    private enum DragStart {
+        case text(NSRange)
+        case area(CGPoint)
+    }
+
+    private var dragStart: DragStart?
     private var accessibleLines: [RecognizedLineElement] = []
-    init(image: CGImage, lines: [RecognizedTextLine]) {
+    init(image: CGImage, lines: [RecognizedTextLine], layout: RecognizedTextLayout) {
         self.image = image
         self.lines = lines
+        document = RecognizedTextDocument(lines: lines, layout: layout)
         super.init(frame: .zero)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
@@ -219,7 +244,7 @@ private final class RecognizedImageView: NSView {
             element.setAccessibilityRole(.button)
             element.setAccessibilityLabel(lines[index].text)
             element.setAccessibilityParent(self)
-            element.onPress = { [weak self] in self?.onSelect([index]) }
+            element.onPress = { [weak self] in if let self { self.onSelect(self.document.ranges[index]) } }
             return element
         }
     }
@@ -229,9 +254,12 @@ private final class RecognizedImageView: NSView {
         ScrollPreviewImageFit.rect(imageSize: CGSize(width: image.width, height: image.height), in: bounds.insetBy(dx: 16, dy: 16))
     }
     private func frame(for line: RecognizedTextLine) -> CGRect {
+        frame(for: line.box)
+    }
+    private func frame(for box: CGRect) -> CGRect {
         let fit = imageFrame
-        return CGRect(x: fit.minX + line.box.minX * fit.width, y: fit.minY + line.box.minY * fit.height,
-                      width: line.box.width * fit.width, height: line.box.height * fit.height)
+        return CGRect(x: fit.minX + box.minX * fit.width, y: fit.minY + box.minY * fit.height,
+                      width: box.width * fit.width, height: box.height * fit.height)
     }
     override func accessibilityChildren() -> [Any]? {
         for (index, element) in accessibleLines.enumerated() {
@@ -243,34 +271,64 @@ private final class RecognizedImageView: NSView {
         NSColor.windowBackgroundColor.setFill()
         bounds.fill()
         NSImage(cgImage: image, size: imageFrame.size).draw(in: imageFrame)
-        for (index, line) in lines.enumerated() {
-            let box = frame(for: line).insetBy(dx: -2, dy: -2)
-            if selectedIndexes.contains(index) {
-                NylaiTheme.accent.withAlphaComponent(0.25).setFill()
-                box.fill()
-            }
-            NylaiTheme.accent.withAlphaComponent(selectedIndexes.contains(index) ? 0.9 : 0.25).setStroke()
-            NSBezierPath(rect: box).stroke()
+        NylaiTheme.accent.withAlphaComponent(0.25).setStroke()
+        for line in lines {
+            NSBezierPath(rect: frame(for: line).insetBy(dx: -2, dy: -2)).stroke()
+        }
+        NylaiTheme.accent.withAlphaComponent(0.32).setFill()
+        for box in selectedBoxes {
+            frame(for: box).fill()
         }
     }
+
+    func updateDocument(_ document: RecognizedTextDocument) {
+        self.document = document
+        dragStart = nil
+    }
+
+    private func range(at point: CGPoint) -> NSRange? {
+        guard let index = lines.indices.first(where: {
+            frame(for: lines[$0]).insetBy(dx: -4, dy: -4).contains(point)
+        }) else { return nil }
+        let lineRange = document.ranges[index]
+        guard let glyph = lines[index].glyphs.min(by: {
+            abs(frame(for: $0.box).midX - point.x) < abs(frame(for: $1.box).midX - point.x)
+        }) else { return lineRange }
+        return NSRange(location: lineRange.location + glyph.range.location, length: glyph.range.length)
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        dragStart = point
-        if let index = lines.indices.first(where: { frame(for: lines[$0]).insetBy(dx: -4, dy: -4).contains(point) }) {
-            onSelect([index])
+        if let range = range(at: point) {
+            dragStart = .text(range)
+            onSelect(range)
+        } else {
+            dragStart = .area(point)
         }
     }
+
     override func mouseDragged(with event: NSEvent) {
-        guard let start = dragStart else { return }
+        guard let dragStart else { return }
         let end = convert(event.locationInWindow, from: nil)
-        let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(start.x - end.x), height: abs(start.y - end.y))
-        onSelect(Set(lines.indices.filter { frame(for: lines[$0]).intersects(rect) }))
+        switch dragStart {
+        case .text(let start):
+            if let endRange = range(at: end) {
+                onSelect(NSUnionRange(start, endRange))
+            }
+        case .area(let start):
+            let rect = CGRect(
+                x: min(start.x, end.x), y: min(start.y, end.y),
+                width: abs(start.x - end.x), height: abs(start.y - end.y)
+            )
+            let indexes = Set(lines.indices.filter { frame(for: lines[$0]).intersects(rect) })
+            onSelect(document.range(for: indexes) ?? NSRange(location: 0, length: 0))
+        }
     }
     override func mouseUp(with event: NSEvent) { dragStart = nil }
 }
 
 @MainActor
 private final class RecognizedLineElement: NSAccessibilityElement {
-    var onPress: () -> Void = {}
+    nonisolated(unsafe) var onPress: () -> Void = {}
     override func accessibilityPerformPress() -> Bool { onPress(); return true }
 }

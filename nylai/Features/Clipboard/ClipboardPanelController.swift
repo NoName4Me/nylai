@@ -27,7 +27,6 @@ final class ClipboardPanelModel {
     var confirmsClearHistory = false
     var onClose: () -> Void = {}
     var onCopied: ((UUID) -> Void)?
-    var reveal: CGFloat = 0
     var rowFrames: [UUID: CGRect] = [:]
     let openedAt = Date()
     private let timeFormatter: RelativeDateTimeFormatter = {
@@ -79,7 +78,7 @@ final class ClipboardPanelModel {
     }
 
     var visibleRecords: [ClipboardRecord] {
-        let records = groups == nil ? store.allRecords : store.allRecords.sorted { $0.copiedAt > $1.copiedAt }
+        let records = store.allRecords
         let members = groups?.groups.first { $0.id == selectedGroupID }?.recordIDs
         return records.filter { (selectedGroupID == nil || members?.contains($0.id) == true) && matches($0) }
     }
@@ -438,7 +437,6 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
     private var previewShowTask: Task<Void, Never>?
     private var previewDismissTask: Task<Void, Never>?
     private var copyFeedback: Task<Void, Never>?
-    private var transitionTask: Task<Void, Never>?
     private var toastPanel: NSPanel?
     private var isReleasingKeyboardFocus = false
     private(set) var activeModel: ClipboardPanelModel?
@@ -503,8 +501,6 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
 
     override func close() {
         removeOutsideMonitors()
-        transitionTask?.cancel()
-        transitionTask = nil
         previewShowTask?.cancel()
         previewShowTask = nil
         previewDismissTask?.cancel()
@@ -534,7 +530,6 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
             window.makeKeyAndOrderFront(nil)
             return
         }
-        transitionTask?.cancel()
         dismissPreview()
         let target = NSWorkspace.shared.frontmostApplication.flatMap {
             $0.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : $0
@@ -572,6 +567,7 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
+        panel.appearance = NSApp.appearance
         let hosting = NSHostingView(
             rootView: ClipboardPanelView(model: model, panelHeight: height)
                 .nylaiLocalized()
@@ -592,9 +588,9 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
                 visible: panel.screen?.visibleFrame ?? visible
             )
         }
-        model.onClose = { [weak self, weak panel, weak model] in
-            guard let self, let panel, let model else { return }
-            self.animateClose(panel, model: model)
+        model.onClose = { [weak self, weak model] in
+            guard let self, let model, self.activeModel === model else { return }
+            self.close()
         }
         model.onCopied = { [weak self, weak panel, weak model] id in
             guard let self, let panel, let model else { return }
@@ -611,18 +607,9 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
         }
         window = panel
         panel.ignoresMouseEvents = false
-        let reducesMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        model.reveal = reducesMotion ? 1 : 0
         panel.orderFrontRegardless()
         panel.makeKey()
         installOutsideMonitors()
-        if !reducesMotion {
-            transitionTask = Task { @MainActor [weak model] in
-                try? await Task.sleep(for: .milliseconds(16))
-                guard !Task.isCancelled, let model else { return }
-                withAnimation(.easeOut(duration: 0.22)) { model.reveal = 1 }
-            }
-        }
     }
 
     private func removeOutsideMonitors() {
@@ -670,25 +657,6 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
                width: row.width, height: row.height)
     }
 
-    private func animateClose(_ panel: NSPanel, model: ClipboardPanelModel) {
-        guard !panel.ignoresMouseEvents else { return }
-        transitionTask?.cancel()
-        dismissPreview()
-        releaseKeyboardFocus(keepingVisible: true)
-        if model.reveal == 0 || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            close()
-            return
-        }
-        panel.ignoresMouseEvents = true
-        withAnimation(.easeIn(duration: 0.16)) { model.reveal = 0 }
-        transitionTask = Task { @MainActor [weak self, weak panel] in
-            try? await Task.sleep(for: .milliseconds(160))
-            guard !Task.isCancelled, let self, self.window === panel else { return }
-            self.transitionTask = nil
-            self.close()
-        }
-    }
-
     private func releaseKeyboardFocus(keepingVisible: Bool) {
         guard let panel = window else { return }
         isReleasingKeyboardFocus = true
@@ -722,6 +690,7 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
         toast.ignoresMouseEvents = true
         toast.isOpaque = false
         toast.backgroundColor = .clear
+        toast.appearance = NSApp.appearance
         toast.level = .floating
         toast.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         toast.contentView = host
@@ -839,6 +808,7 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
         preview.isOpaque = false
         preview.backgroundColor = .clear
         preview.hasShadow = true
+        preview.appearance = NSApp.appearance
         preview.hidesOnDeactivate = false
         preview.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         let host = NSHostingController(
