@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import Observation
 
 enum BoardTool: String, CaseIterable, Identifiable {
