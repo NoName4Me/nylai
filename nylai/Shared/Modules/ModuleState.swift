@@ -10,6 +10,7 @@ enum NylaiModuleID: String, CaseIterable, Codable, Equatable, Sendable {
     case windowSwitcher
     case systemMonitor
     case board
+    case launcher
 
     var title: String {
         switch self {
@@ -25,6 +26,8 @@ enum NylaiModuleID: String, CaseIterable, Codable, Equatable, Sendable {
             L10n.shared.string("剪贴板")
         case .windowSwitcher:
             L10n.shared.string("窗口切换")
+        case .launcher:
+            L10n.shared.string("Launcher")
         case .board:
             L10n.shared.string("无限画布")
         case .systemMonitor:
@@ -46,6 +49,8 @@ enum NylaiModuleID: String, CaseIterable, Codable, Equatable, Sendable {
             L10n.shared.string("记录、搜索并复用复制的文本与图片。")
         case .windowSwitcher:
             L10n.shared.string("按应用分组预览窗口，并用 Command 快速切换。")
+        case .launcher:
+            L10n.shared.string("快速启动应用、搜索文件和本地内容、执行快捷操作。")
         case .board:
             L10n.shared.string("随手记录便签、图片与涂鸦，自动保存在本地。")
         case .systemMonitor:
@@ -108,6 +113,8 @@ final class ModuleStateController {
             preferences.systemMonitorEnabled
         case .board:
             preferences.boardEnabled
+        case .launcher:
+            preferences.launcherEnabled
         }
     }
 
@@ -131,7 +138,7 @@ final class ModuleStateController {
             }
             return .available
         case .screenshot, .finderEnhancements, .mouseGestures, .clipboard,
-             .windowSwitcher, .systemMonitor, .board:
+             .windowSwitcher, .systemMonitor, .board, .launcher:
             return .available
         }
     }
@@ -159,10 +166,12 @@ final class ModuleStateController {
             preferences.systemMonitorEnabled = enabled
         case .board:
             preferences.boardEnabled = enabled
+        case .launcher:
+            preferences.launcherEnabled = enabled
         }
         reportedStatuses[module] = nil
         onLifecycleChange?(module, enabled)
-        if module == .screenshot || module == .clipboard || module == .board {
+        if module == .screenshot || module == .clipboard || module == .board || module == .launcher {
             shortcutRuntime.refreshActionAvailability()
         }
     }

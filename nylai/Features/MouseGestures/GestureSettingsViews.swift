@@ -279,6 +279,7 @@ struct GestureRuleEditorView: View {
         .clipboardHistory,
         .openBoard,
         .quickCapture,
+        .openLauncher,
     ]
 
     init(

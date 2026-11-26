@@ -483,6 +483,8 @@ final class ShortcutBindingRuntime {
             L10n.shared.string("无限画布")
         case .quickCapture:
             L10n.shared.string("快速记录")
+        case .openLauncher:
+            L10n.shared.string("Launcher")
         case .application(let target):
             target.bundleIdentifier
         }

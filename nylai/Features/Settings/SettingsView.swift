@@ -478,6 +478,10 @@ struct SettingsView: View {
                     }
                 }
                 Spacer(minLength: 12)
+                if module == .launcher, status != .off {
+                    Button("打开 Launcher") { NotificationCenter.default.post(name: .nylaiOpenLauncher, object: nil) }
+                        .controlSize(.small)
+                }
                 if module == .board, status != .off {
                     Button("打开画布") { NotificationCenter.default.post(name: .nylaiOpenBoard, object: nil) }
                         .controlSize(.small)
@@ -1894,7 +1898,7 @@ private enum SettingsSection: Hashable {
             self = .systemMonitor
         case .finderEnhancements:
             self = .finderEnhancements
-        case .windowSwitcher, .board:
+        case .windowSwitcher, .board, .launcher:
             return nil
         }
     }
@@ -1913,6 +1917,8 @@ private extension NylaiModuleID {
             "hand.draw"
         case .clipboard:
             "doc.on.clipboard"
+        case .launcher:
+            "magnifyingglass"
         case .board:
             "note.text"
         case .windowSwitcher:
@@ -2286,7 +2292,7 @@ private extension ShortcutBinding {
     var isInternal: Bool {
         switch action {
         case .openSettings, .captureMainDisplay, .captureInteractive,
-             .screenshotHistory, .openCollage, .scrollCapture, .clipboardHistory, .openBoard, .quickCapture:
+             .screenshotHistory, .openCollage, .scrollCapture, .clipboardHistory, .openBoard, .quickCapture, .openLauncher:
             true
         case .application:
             false
@@ -2346,6 +2352,8 @@ private extension ShortcutAction {
             "note.text"
         case .quickCapture:
             "square.and.pencil"
+        case .openLauncher:
+            "magnifyingglass"
         case .application:
             "macwindow"
         }

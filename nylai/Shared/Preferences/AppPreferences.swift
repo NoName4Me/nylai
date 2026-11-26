@@ -148,6 +148,10 @@ final class AppPreferences {
         }
     }
 
+    var launcherEnabled: Bool {
+        didSet { defaults.set(launcherEnabled, forKey: "module.launcher.enabled") }
+    }
+
     var boardEnabled: Bool {
         didSet { defaults.set(boardEnabled, forKey: "module.board.enabled") }
     }
@@ -202,6 +206,7 @@ final class AppPreferences {
         windowSwitcherEnabled = defaults.object(
             forKey: Self.windowSwitcherEnabledKey
         ) as? Bool ?? false
+        launcherEnabled = defaults.bool(forKey: "module.launcher.enabled")
         boardEnabled = defaults.bool(forKey: "module.board.enabled")
         systemMonitorEnabled = defaults.bool(forKey: Self.systemMonitorEnabledKey)
         let storedMetrics = defaults.stringArray(forKey: "monitor.metrics").map {

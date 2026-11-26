@@ -145,7 +145,7 @@ final class ShortcutBindingRuntimeTests: XCTestCase {
                 case .captureInteractive, .captureMainDisplay, .screenshotHistory,
                      .openCollage, .scrollCapture:
                     screenshotAvailable
-                case .clipboardHistory, .openSettings, .openBoard, .quickCapture, .application:
+                case .clipboardHistory, .openSettings, .openBoard, .quickCapture, .openLauncher, .application:
                     true
                 }
             }

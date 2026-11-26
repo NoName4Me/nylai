@@ -18,6 +18,7 @@ final class StatusBarController: NSObject {
     private let openSettings: () -> Void
     private let openBoard: () -> Void
     private let quickCapture: () -> Void
+    private let openLauncher: () -> Void
     private let isInteractionLocked: () -> Bool
     private var localMonitor: Any?
     private var globalMonitor: Any?
@@ -27,12 +28,14 @@ final class StatusBarController: NSObject {
         openSettings: @escaping () -> Void,
         openBoard: @escaping () -> Void = {},
         quickCapture: @escaping () -> Void = {},
+        openLauncher: @escaping () -> Void = {},
         isInteractionLocked: @escaping () -> Bool
     ) {
         self.preferences = preferences
         self.openSettings = openSettings
         self.openBoard = openBoard
         self.quickCapture = quickCapture
+        self.openLauncher = openLauncher
         self.isInteractionLocked = isInteractionLocked
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -180,12 +183,18 @@ final class StatusBarController: NSObject {
 
     @objc private func showBoard() { openBoard() }
     @objc private func showCapture() { quickCapture() }
+    @objc private func showLauncher() { openLauncher() }
 
     @objc private func clicked() {
         if let event = NSApp.currentEvent, event.type == .rightMouseUp,
            let button = statusItem.button {
             closeMonitor()
             let menu = NSMenu()
+            if preferences.launcherEnabled && !isInteractionLocked() {
+                let launcher = menu.addItem(withTitle: L10n.shared.string("Launcher…"), action: #selector(showLauncher), keyEquivalent: "")
+                launcher.target = self
+                menu.addItem(.separator())
+            }
             if preferences.boardEnabled && !isInteractionLocked() {
                 let board = menu.addItem(withTitle: L10n.shared.string("无限画布…"), action: #selector(showBoard), keyEquivalent: "")
                 board.target = self

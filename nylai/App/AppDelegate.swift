@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var clipboardMenuItem: NSMenuItem?
     private var boardMenuItems: [NSMenuItem] = []
     private var boardController: BoardWindowController?
+    private var launcherController: LauncherWindowController?
+    private var launcherMenuItem: NSMenuItem?
     private var scrollCaptureController: ScrollCaptureController?
     private var didStartWindowSwitcherAfterLaunch = false
     private var screenshotReopenGuardTask: Task<Void, Never>?
@@ -58,11 +60,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
         NotificationCenter.default.addObserver(self, selector: #selector(openBoard), name: .nylaiOpenBoard, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(openLauncher), name: .nylaiOpenLauncher, object: nil)
         statusBarController = StatusBarController(
             preferences: preferences,
             openSettings: { [weak self] in self?.showSettings() },
             openBoard: { [weak self] in self?.openBoard() },
             quickCapture: { [weak self] in self?.quickCapture() },
+            openLauncher: { [weak self] in self?.openLauncher() },
             isInteractionLocked: { [weak self] in
                 self?.isScreenshotInteractionActive ?? false
             }
@@ -94,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         FinderRightClickTarget.stopObserving()
         statusBarController?.shutdown()
+        launcherController?.close()
         boardController?.close()
         shortcutRuntime.stop()
         mouseGestureController?.stop()
@@ -146,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenshotHistoryWindowController?.refreshLocalization()
         collageWindowController?.refreshLocalization()
         boardController?.refreshLocalization()
+        launcherController?.close()
         clipboardPanelController?.refreshLocalization()
         mouseGestureController?.refreshLocalization()
         windowSwitcherController?.refreshLocalization()
@@ -281,6 +287,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ensureBoardController().quickCapture()
     }
 
+    private func ensureLauncherController() -> LauncherWindowController {
+        if let launcherController { return launcherController }
+        let config = LauncherPreferences()
+        let sources = LauncherSources(preferences: config,
+            isEnabled: { [weak self] module in self?.moduleStateController.isEnabled(module) ?? false },
+            isActionAvailable: { [weak self] action in self?.isActionAvailable(action) ?? false },
+            perform: { [weak self] action in self?.perform(action) },
+            clipboard: { [weak self] in
+                guard let self, self.preferences.clipboardEnabled else { return nil }
+                return self.ensureClipboardHistoryStore()
+            },
+            board: { [weak self] in
+                guard let self, self.preferences.boardEnabled else { return nil }
+                return self.ensureBoardController()
+            },
+            screenshots: screenshotHistoryStore,
+            pinImage: { [weak self] image in self?.pinnedImageManager.pin(image) }
+        )
+        let controller = LauncherWindowController(preferences: config, sources: sources)
+        launcherController = controller
+        if let error = config.loadError { moduleStateController.setRuntimeStatus(.failed(error), for: .launcher) }
+        return controller
+    }
+
+    @objc private func openLauncher() {
+        guard moduleStateController.isEnabled(.launcher), !isScreenshotInteractionActive else { return }
+        ensureLauncherController().toggle()
+    }
+
     private func perform(_ action: ShortcutAction) {
         guard isActionAvailable(action) else { return }
         if isScreenshotInteractionActive {
@@ -288,7 +323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .captureMainDisplay, .captureInteractive:
                 captureScreenshot()
             case .openSettings, .screenshotHistory, .openCollage, .scrollCapture,
-                 .clipboardHistory, .openBoard, .quickCapture, .application:
+                 .clipboardHistory, .openBoard, .quickCapture, .openLauncher, .application:
                 break
             }
             return
@@ -310,6 +345,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openBoard()
         case .quickCapture:
             quickCapture()
+        case .openLauncher:
+            openLauncher()
         case .application(let target):
             Task { [weak self] in
                 await self?.applicationShortcutHandler.trigger(target)
@@ -338,10 +375,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             moduleStateController.isEnabled(.clipboard)
         case .openBoard, .quickCapture:
             moduleStateController.isEnabled(.board)
+        case .openLauncher:
+            moduleStateController.isEnabled(.launcher)
         }
     }
 
     private func applyLifecycleChange(module: NylaiModuleID, enabled: Bool) {
+        launcherController?.close()
         switch module {
         case .screenshot where !enabled:
             screenshotTask?.cancel()
@@ -377,6 +417,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 windowSwitcherController?.stop()
             }
+        case .launcher:
+            if !enabled { launcherController = nil }
         case .board:
             if !enabled { boardController?.close(); boardController = nil }
             configureClipboardBoardAction()
@@ -385,7 +427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .screenshot, .globalShortcuts:
             break
         }
-        if (module == .screenshot || module == .clipboard || module == .board),
+        if (module == .screenshot || module == .clipboard || module == .board || module == .launcher),
            moduleStateController.isEnabled(.mouseGestures) {
             mouseGestureController?.refreshActionAvailability()
         }
@@ -702,6 +744,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let captureItem = applicationMenu.addItem(withTitle: L10n.shared.string("快速记录…"), action: #selector(quickCapture), keyEquivalent: "")
         captureItem.target = self
         boardMenuItems = [boardItem, captureItem]
+        let launcher = applicationMenu.addItem(withTitle: L10n.shared.string("Launcher…"), action: #selector(openLauncher), keyEquivalent: "")
+        launcher.target = self
+        launcherMenuItem = launcher
         let settingsItem = applicationMenu.addItem(
             withTitle: L10n.shared.string("设置…"),
             action: #selector(showSettings),
@@ -780,6 +825,8 @@ extension AppDelegate: NSMenuDelegate {
             item.isHidden = !moduleStateController.isEnabled(.board)
             item.isEnabled = !isScreenshotInteractionActive
         }
+        launcherMenuItem?.isHidden = !moduleStateController.isEnabled(.launcher)
+        launcherMenuItem?.isEnabled = !isScreenshotInteractionActive
         settingsMenuItem?.isEnabled = !isScreenshotInteractionActive
     }
 }
@@ -787,4 +834,5 @@ extension AppDelegate: NSMenuDelegate {
 
 extension Notification.Name {
     static let nylaiOpenBoard = Notification.Name("nylaiOpenBoard")
+    static let nylaiOpenLauncher = Notification.Name("nylaiOpenLauncher")
 }
