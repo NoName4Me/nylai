@@ -1,0 +1,24 @@
+name: Verify macOS
+on:
+  push:
+    branches:
+      - feat/board-launcher
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Debug tests
+        run: |
+          xcodebuild -project nylai.xcodeproj -scheme nylai -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' test \
+            CODE_SIGN_IDENTITY='-' CODE_SIGNING_REQUIRED=NO
+      - name: Release build
+        run: |
+          xcodebuild -project nylai.xcodeproj -scheme nylai -configuration Release \
+            -destination 'platform=macOS,arch=arm64' build \
+            CODE_SIGN_IDENTITY='-' CODE_SIGNING_REQUIRED=NO
