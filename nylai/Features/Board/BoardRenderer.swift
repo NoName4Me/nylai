@@ -27,26 +27,24 @@ enum BoardRenderer {
         case .pen, .marker, .line, .arrow:
             let points = item.points.map { CGPoint(x: frame.minX + $0.x * frame.width,
                                                    y: frame.minY + $0.y * frame.height) }
-            guard let first = points.first, let last = points.last else { return }
-            let path = NSBezierPath()
-            path.lineWidth = max(0.8, item.strokeWidth * scale * (item.kind == .marker ? 4 : 1))
-            path.lineCapStyle = .round
-            path.lineJoinStyle = .round
-            item.color.ink.withAlphaComponent(item.kind == .marker ? 0.3 : 1).setStroke()
-            path.move(to: first)
-            if points.count == 1 { path.line(to: CGPoint(x: first.x + 0.1, y: first.y + 0.1)) }
-            else { for point in points.dropFirst() { path.line(to: point) } }
+            guard let last = points.last, let cg = NSGraphicsContext.current?.cgContext else { return }
+            let path = CGMutablePath()
+            AnnotationGeometry.appendPolyline(points, to: path)
+            let width = max(0.8, item.strokeWidth * scale * (item.kind == .marker ? 4 : 1))
             if item.kind == .arrow, points.count >= 2 {
                 let previous = points[points.count - 2]
                 let angle = atan2(last.y - previous.y, last.x - previous.x)
-                let length = max(9 * scale, path.lineWidth * 4)
-                path.move(to: CGPoint(x: last.x - length * cos(angle - .pi / 6),
-                                      y: last.y - length * sin(angle - .pi / 6)))
-                path.line(to: last)
-                path.line(to: CGPoint(x: last.x - length * cos(angle + .pi / 6),
-                                      y: last.y - length * sin(angle + .pi / 6)))
+                let length = max(9 * scale, width * 4)
+                path.move(to: CGPoint(x: last.x - length * cos(angle - .pi / 6), y: last.y - length * sin(angle - .pi / 6)))
+                path.addLine(to: last)
+                path.addLine(to: CGPoint(x: last.x - length * cos(angle + .pi / 6), y: last.y - length * sin(angle + .pi / 6)))
             }
-            path.stroke()
+            cg.addPath(path)
+            cg.setLineWidth(width)
+            cg.setLineCap(.round)
+            cg.setLineJoin(.round)
+            cg.setStrokeColor(item.color.ink.withAlphaComponent(item.kind == .marker ? 0.3 : 1).cgColor)
+            cg.strokePath()
         }
     }
 

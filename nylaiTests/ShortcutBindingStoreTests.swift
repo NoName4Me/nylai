@@ -44,9 +44,23 @@ final class ShortcutBindingStoreTests: XCTestCase {
         let result = try fixture.store.load()
         XCTAssertEqual(result.version, ShortcutBindingConfiguration.currentVersion)
         XCTAssertEqual(result.bindings.first, old.bindings.first)
-        XCTAssertNil(result.bindings.first { $0.action == .openLauncher }?.shortcut)
+        XCTAssertFalse(result.bindings.contains { $0.action == .openLauncher })
         XCTAssertTrue(result.bindings.contains { $0.action == .openBoard })
         XCTAssertFalse(result.bindings.contains { $0.action == .quickCapture })
+    }
+
+    func testVersionTenRemovesObsoleteActions() throws {
+        let fixture = try StoreFixture()
+        defer { fixture.remove() }
+        try fixture.createParentDirectory()
+        var old = ShortcutBindingConfiguration.defaults
+        old.version = 10
+        old.bindings += [
+            ShortcutBinding(id: .quickCapture, action: .quickCapture, shortcut: nil, isEnabled: true),
+            ShortcutBinding(id: .launcher, action: .openLauncher, shortcut: ShortcutKey(keyCode: UInt32(kVK_Space), modifiers: [.command]), isEnabled: true)
+        ]
+        try JSONEncoder().encode(old).write(to: fixture.fileURL)
+        XCTAssertEqual(try fixture.store.load(), .defaults)
     }
 
     func testVersionOneMigratesInteractiveCaptureWithoutReplacingExistingBindings() throws {

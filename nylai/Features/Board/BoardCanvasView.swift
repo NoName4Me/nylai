@@ -34,6 +34,7 @@ final class BoardCanvasView: NSView {
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
     var viewport: BoardViewport { session.board.viewport }
 
     init(session: BoardSession) {

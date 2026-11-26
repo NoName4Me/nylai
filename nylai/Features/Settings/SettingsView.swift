@@ -479,6 +479,11 @@ struct SettingsView: View {
                 }
                 Spacer(minLength: 12)
                 if module == .launcher, status != .off {
+                    Text("⌘␣").font(.system(size: 13)).foregroundStyle(.secondary)
+                    if case .failed = status {
+                        Button("授权 / 重试") { NotificationCenter.default.post(name: .nylaiRetryLauncherHotkey, object: nil) }
+                            .controlSize(.small)
+                    }
                     Button("打开 Launcher") { NotificationCenter.default.post(name: .nylaiOpenLauncher, object: nil) }
                         .controlSize(.small)
                 }

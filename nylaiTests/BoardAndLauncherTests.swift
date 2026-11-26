@@ -33,6 +33,29 @@ final class BoardAndLauncherTests: XCTestCase {
     }
 
     @MainActor
+    func testCollapsedNotePersistsAndRestoresHeight() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = BoardStore(directory: directory)
+        let board = store.active.id
+        let id = store.addText("hello", boardID: board, at: CGPoint(x: -40, y: -30))
+        let original = try XCTUnwrap(store.active.items.first)
+        store.toggleNoteCollapse(boardID: board, itemID: id)
+        XCTAssertEqual(store.active.items.first?.frame.height, 36)
+        let restored = BoardStore(directory: directory)
+        XCTAssertEqual(restored.active.items.first?.expandedHeight, original.frame.height)
+        restored.toggleNoteCollapse(boardID: board, itemID: id)
+        XCTAssertEqual(restored.active.items.first?.frame, original.frame)
+        XCTAssertNil(restored.active.items.first?.expandedHeight)
+        XCTAssertEqual(restored.active.items.first?.text, "hello")
+        let session = BoardSession(store: restored)
+        session.resetZoom()
+        XCTAssertEqual(restored.active.viewport.zoom, 1)
+        XCTAssertEqual(restored.active.viewport.center, CGPoint(x: original.frame.midX, y: original.frame.midY))
+        restored.flush()
+    }
+
+    @MainActor
     func testCorruptBoardDataIsNotOverwritten() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

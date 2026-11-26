@@ -124,6 +124,7 @@ struct BoardLibrary: Codable, Equatable {
                         return f.minX.isFinite && f.minY.isFinite && f.maxX.isFinite && f.maxY.isFinite
                             && f.width > 0 && f.height > 0
                             && item.strokeWidth.isFinite && item.strokeWidth > 0
+                            && (item.expandedHeight.map { $0.isFinite && $0 > 0 } ?? true)
                             && item.points.allSatisfy { $0.x.isFinite && $0.y.isFinite }
                             && (item.kind != .image || item.asset != nil)
                     }

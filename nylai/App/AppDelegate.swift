@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         NotificationCenter.default.addObserver(self, selector: #selector(openBoard), name: .nylaiOpenBoard, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(openLauncher), name: .nylaiOpenLauncher, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(retryLauncherHotkey), name: .nylaiRetryLauncherHotkey, object: nil)
         statusBarController = StatusBarController(
             preferences: preferences,
             openSettings: { [weak self] in self?.showSettings() },
@@ -285,6 +286,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ensureBoardController().present()
     }
 
+
+    @objc private func retryLauncherHotkey() {
+        guard preferences.launcherEnabled else { return }
+        startLauncherHotkey(requestPermission: true)
+        if !AccessibilityPermission.isGranted { _ = AccessibilityPermission.openSystemSettings() }
+        else if !InputMonitoringPermission.isGranted { _ = InputMonitoringPermission.openSystemSettings() }
+    }
 
     private func startLauncherHotkey(requestPermission: Bool) {
         launcherHotkey.canClaim = { [weak self] in
@@ -860,4 +868,5 @@ extension AppDelegate: NSMenuDelegate {
 extension Notification.Name {
     static let nylaiOpenBoard = Notification.Name("nylaiOpenBoard")
     static let nylaiOpenLauncher = Notification.Name("nylaiOpenLauncher")
+    static let nylaiRetryLauncherHotkey = Notification.Name("nylaiRetryLauncherHotkey")
 }

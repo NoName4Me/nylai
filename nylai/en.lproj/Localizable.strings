@@ -712,3 +712,32 @@
 "打开系统键盘设置" = "Open Keyboard Settings";
 
 "固定快捷键 ⌘␣。启用 Launcher 后接管 Spotlight 快捷键，关闭后恢复系统行为。" = "Fixed shortcut: ⌘␣. Launcher intercepts Spotlight while enabled; disabling restores system behavior.";
+
+"黄色" = "Yellow";
+"绿色" = "Green";
+"蓝色" = "Blue";
+"粉色" = "Pink";
+"紫色" = "Purple";
+"灰色" = "Gray";
+"透明" = "Transparent";
+"圆形" = "Circle";
+"三角形" = "Triangle";
+"菱形" = "Diamond";
+"星形" = "Star";
+"图形" = "Shapes";
+"画布快捷键" = "Board Shortcuts";
+"100% 并居中" = "Reset to 100% and Center";
+"␣ + 拖动" = "␣ + Drag";
+"⌘ + 滚动 / 捏合" = "⌘ + Scroll / Pinch";
+"缩放" = "Zoom";
+"⇧ + 点击" = "⇧ + Click";
+"复制 / 粘贴" = "Copy / Paste";
+"撤销 / 重做" = "Undo / Redo";
+"编组 / 取消编组" = "Group / Ungroup";
+"移动 / 加速移动" = "Move / Move Faster";
+"⌥ + 拖动" = "⌥ + Drag";
+"临时关闭吸附" = "Temporarily Disable Snapping";
+"取消选择" = "Deselect";
+"双击" = "Double-click";
+"新建 / 编辑便签或预览图片" = "Create / Edit Note or Preview Image";
+"授权 / 重试" = "Grant Access / Retry";
