@@ -3,7 +3,9 @@ import UniformTypeIdentifiers
 import Observation
 
 enum BoardTool: String, CaseIterable, Identifiable {
-    case select, hand, note, pen, marker, eraser, line, arrow, rectangle, ellipse
+    case select, hand, note, pen, marker, eraser, line, arrow, rectangle, ellipse, triangle, diamond, star
+    static let shapes: [Self] = [.rectangle, .ellipse, .triangle, .diamond, .star]
+    var isShape: Bool { Self.shapes.contains(self) }
     var id: String { rawValue }
     var symbol: String {
         switch self {
@@ -17,6 +19,9 @@ enum BoardTool: String, CaseIterable, Identifiable {
         case .arrow: "arrow.up.right"
         case .rectangle: "rectangle"
         case .ellipse: "circle"
+        case .triangle: "triangle"
+        case .diamond: "diamond"
+        case .star: "star"
         }
     }
     var title: String {
@@ -30,7 +35,10 @@ enum BoardTool: String, CaseIterable, Identifiable {
         case .line: L10n.shared.string("直线")
         case .arrow: L10n.shared.string("箭头")
         case .rectangle: L10n.shared.string("矩形")
-        case .ellipse: L10n.shared.string("椭圆")
+        case .ellipse: L10n.shared.string("圆形")
+        case .triangle: L10n.shared.string("三角形")
+        case .diamond: L10n.shared.string("菱形")
+        case .star: L10n.shared.string("星形")
         }
     }
     var kind: BoardKind? { BoardKind(rawValue: rawValue) }
@@ -41,7 +49,8 @@ enum BoardTool: String, CaseIterable, Identifiable {
 final class BoardSession {
     let store: BoardStore
     var selection: Set<UUID> = []
-    var tool: BoardTool = .select
+    var tool: BoardTool = .select { didSet { if tool.isShape { lastShape = tool } } }
+    var lastShape: BoardTool = .rectangle
     var color: BoardColor = .yellow
     var strokeWidth: CGFloat = 3
     var snap = true
@@ -69,6 +78,13 @@ final class BoardSession {
         store.viewport(view, boardID: board.id)
     }
 
+    func resetZoom() {
+        let bounds = board.items.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+        var view = BoardViewport()
+        if !bounds.isNull { view.center = CGPoint(x: bounds.midX, y: bounds.midY) }
+        store.viewport(view, boardID: board.id)
+    }
+
     func fit() {
         let bounds = board.items.map(\.frame).reduce(CGRect.null) { $0.union($1) }
         var view = BoardViewport()
@@ -89,7 +105,7 @@ final class BoardSession {
     func addNote(at point: CGPoint? = nil) {
         let center = board.viewport.center
         let id = store.addText("", boardID: board.id,
-            at: point ?? CGPoint(x: center.x - 120, y: center.y - 80), color: color)
+            at: point ?? CGPoint(x: center.x - 120, y: center.y - 80), color: .yellow)
         selection = [id]
         editingID = id
         tool = .select

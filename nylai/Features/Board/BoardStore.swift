@@ -2,13 +2,24 @@ import AppKit
 import Observation
 
 enum BoardKind: String, Codable, CaseIterable {
-    case note, image, pen, marker, line, arrow, rectangle, ellipse
+    case note, image, pen, marker, line, arrow, rectangle, ellipse, triangle, diamond, star
     var isStroke: Bool { self == .pen || self == .marker || self == .line || self == .arrow }
 }
 
 enum BoardColor: String, Codable, CaseIterable, Identifiable {
     case yellow, green, blue, pink, purple, gray, clear
     var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .yellow: L10n.shared.string("黄色")
+        case .green: L10n.shared.string("绿色")
+        case .blue: L10n.shared.string("蓝色")
+        case .pink: L10n.shared.string("粉色")
+        case .purple: L10n.shared.string("紫色")
+        case .gray: L10n.shared.string("灰色")
+        case .clear: L10n.shared.string("透明")
+        }
+    }
     var paper: NSColor {
         switch self {
         case .yellow: NSColor(calibratedRed: 1, green: 0.94, blue: 0.73, alpha: 1)
@@ -45,6 +56,9 @@ struct BoardItem: Codable, Equatable, Identifiable {
     var locked = false
     var group: UUID?
     var recognizedText = ""
+    // Optional keeps existing saved boards decodable.
+    var expandedHeight: CGFloat?
+    var isCollapsed: Bool { kind == .note && expandedHeight != nil }
 
     var searchableText: String { text + " " + recognizedText }
 }
@@ -311,6 +325,20 @@ final class BoardStore {
                              text: text, color: color)
         editBoard(boardID) { $0.items.append(item) }
         return item.id
+    }
+
+    func toggleNoteCollapse(boardID: UUID, itemID: UUID) {
+        editBoard(boardID) { board in
+            guard let i = board.items.firstIndex(where: { $0.id == itemID }),
+                  board.items[i].kind == .note, !board.items[i].locked else { return }
+            if let height = board.items[i].expandedHeight {
+                board.items[i].frame.size.height = height
+                board.items[i].expandedHeight = nil
+            } else {
+                board.items[i].expandedHeight = board.items[i].frame.height
+                board.items[i].frame.size.height = 36
+            }
+        }
     }
 
     func toggleTodo(boardID: UUID, itemID: UUID, line: Int) {

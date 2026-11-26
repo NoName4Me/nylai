@@ -2,20 +2,13 @@ import AppKit
 
 @MainActor
 enum BoardRenderer {
-    static func draw(_ item: BoardItem, in frame: CGRect, scale: CGFloat, store: BoardStore) {
+    static func draw(_ item: BoardItem, in frame: CGRect, scale: CGFloat, store: BoardStore, showsNoteControls: Bool = false) {
         let context = NSGraphicsContext.current
         context?.saveGraphicsState()
         defer { context?.restoreGraphicsState() }
         switch item.kind {
         case .note:
-            if item.color != .clear {
-                item.color.paper.setFill()
-                NSBezierPath(roundedRect: frame, xRadius: 5 * scale, yRadius: 5 * scale).fill()
-            }
-            let textRect = frame.insetBy(dx: 12 * scale, dy: 10 * scale)
-            NSBezierPath(rect: frame).addClip()
-            let text = noteText(item.text, scale: scale, darkInk: item.color != .clear)
-            text.draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading])
+            drawNote(item, frame: frame, scale: scale, showsControls: showsNoteControls)
         case .image:
             if let asset = item.asset, let image = store.image(asset) {
                 image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
@@ -24,11 +17,13 @@ enum BoardRenderer {
                 NSBezierPath(rect: frame).fill()
                 (L10n.shared.string("图片不可用") as NSString).draw(at: frame.origin, withAttributes: [.foregroundColor: NSColor.labelColor])
             }
-        case .rectangle, .ellipse:
-            item.color.ink.setStroke()
-            let path = item.kind == .rectangle ? NSBezierPath(rect: frame) : NSBezierPath(ovalIn: frame)
-            path.lineWidth = max(0.8, item.strokeWidth * scale)
-            path.stroke()
+        case .rectangle, .ellipse, .triangle, .diamond, .star:
+            guard let shape = AnnotationShape(rawValue: item.kind.rawValue), let cg = NSGraphicsContext.current?.cgContext else { return }
+            cg.addPath(AnnotationGeometry.shape(shape, in: frame))
+            cg.setStrokeColor(item.color.ink.cgColor)
+            cg.setLineWidth(max(0.8, item.strokeWidth * scale))
+            cg.setLineJoin(.round)
+            cg.strokePath()
         case .pen, .marker, .line, .arrow:
             let points = item.points.map { CGPoint(x: frame.minX + $0.x * frame.width,
                                                    y: frame.minY + $0.y * frame.height) }
@@ -52,6 +47,75 @@ enum BoardRenderer {
                                       y: last.y - length * sin(angle + .pi / 6)))
             }
             path.stroke()
+        }
+    }
+
+    static func noteColorRect(_ frame: CGRect, scale: CGFloat = 1) -> CGRect {
+        CGRect(x: frame.minX + 8 * scale, y: frame.minY + 7 * scale, width: 20 * scale, height: 20 * scale)
+    }
+    static func noteCollapseRect(_ frame: CGRect, scale: CGFloat = 1) -> CGRect {
+        CGRect(x: frame.maxX - 29 * scale, y: frame.minY + 7 * scale, width: 22 * scale, height: 22 * scale)
+    }
+
+    private static func drawNote(_ item: BoardItem, frame: CGRect, scale: CGFloat, showsControls: Bool) {
+        let colored = item.color != .clear
+        if colored {
+            let fold = item.isCollapsed ? 0 : min(13 * scale, frame.width / 5, frame.height / 5)
+            let paper = NSBezierPath()
+            paper.move(to: frame.origin)
+            paper.line(to: CGPoint(x: frame.maxX, y: frame.minY))
+            paper.line(to: CGPoint(x: frame.maxX, y: frame.maxY - fold))
+            paper.line(to: CGPoint(x: frame.maxX - fold, y: frame.maxY))
+            paper.line(to: CGPoint(x: frame.minX, y: frame.maxY))
+            paper.close()
+            NSGraphicsContext.saveGraphicsState()
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.black.withAlphaComponent(0.16)
+            shadow.shadowBlurRadius = 5 * scale
+            shadow.shadowOffset = CGSize(width: scale, height: -2 * scale)
+            shadow.set()
+            item.color.paper.setFill()
+            paper.fill()
+            NSGraphicsContext.restoreGraphicsState()
+            if fold > 0 {
+                let corner = NSBezierPath()
+                corner.move(to: CGPoint(x: frame.maxX - fold, y: frame.maxY - fold))
+                corner.line(to: CGPoint(x: frame.maxX, y: frame.maxY - fold))
+                corner.line(to: CGPoint(x: frame.maxX - fold, y: frame.maxY))
+                corner.close()
+                item.color.ink.withAlphaComponent(0.18).setFill()
+                corner.fill()
+            }
+        }
+        NSBezierPath(rect: frame).addClip()
+        let ink = colored ? NSColor(calibratedWhite: 0.22, alpha: 1) : NSColor.labelColor
+        if showsControls && frame.width >= 50 * scale {
+            let circle = noteColorRect(frame, scale: scale).insetBy(dx: 4 * scale, dy: 4 * scale)
+            item.color.ink.withAlphaComponent(0.85).setFill()
+            NSBezierPath(ovalIn: circle).fill()
+            let control = noteCollapseRect(frame, scale: scale)
+            let delta: CGFloat = item.isCollapsed ? 3 * scale : -3 * scale
+            let arrow = NSBezierPath()
+            arrow.move(to: CGPoint(x: control.midX - 4 * scale, y: control.midY - delta))
+            arrow.line(to: CGPoint(x: control.midX, y: control.midY + delta))
+            arrow.line(to: CGPoint(x: control.midX + 4 * scale, y: control.midY - delta))
+            ink.withAlphaComponent(0.7).setStroke()
+            arrow.lineWidth = 1.4 * scale
+            arrow.lineCapStyle = .round
+            arrow.lineJoinStyle = .round
+            arrow.stroke()
+        }
+        if item.isCollapsed {
+            let text = item.text.components(separatedBy: "\n").first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) ?? L10n.shared.string("便签")
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byTruncatingTail
+            let inset = showsControls ? 32 * scale : 12 * scale
+            let area = CGRect(x: frame.minX + inset, y: frame.minY + 10 * scale, width: max(1, frame.width - 2 * inset), height: 20 * scale)
+            (text as NSString).draw(in: area, withAttributes: [.font: NSFont.systemFont(ofSize: 13 * scale), .foregroundColor: ink, .paragraphStyle: paragraph])
+        } else {
+            let top = 32 * scale
+            let area = CGRect(x: frame.minX + 12 * scale, y: frame.minY + top, width: max(1, frame.width - 24 * scale), height: max(1, frame.height - top - 10 * scale))
+            noteText(item.text, scale: scale, darkInk: colored).draw(with: area, options: [.usesLineFragmentOrigin, .usesFontLeading])
         }
     }
 
@@ -118,8 +182,8 @@ enum BoardRenderer {
     }
 
     static func todoLine(in item: BoardItem, at point: CGPoint) -> Int? {
-        guard item.kind == .note, !item.locked else { return nil }
-        let area = item.frame.insetBy(dx: 12, dy: 10)
+        guard item.kind == .note, !item.locked, !item.isCollapsed else { return nil }
+        let area = CGRect(x: item.frame.minX + 12, y: item.frame.minY + 32, width: max(1, item.frame.width - 24), height: max(1, item.frame.height - 42))
         guard area.contains(point), point.x <= area.minX + 20 else { return nil }
         let lines = item.text.components(separatedBy: "\n")
         var y = area.minY

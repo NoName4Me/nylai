@@ -13,11 +13,14 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
         if let itemID { session.focus(itemID) }
         if window == nil {
             let value = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1000, height: 720),
-                                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                  backing: .buffered, defer: false)
-            value.minSize = CGSize(width: 560, height: 420)
+            value.minSize = CGSize(width: 660, height: 420)
             value.isReleasedWhenClosed = false
-            value.title = L10n.shared.string("无限画布")
+            value.title = ""
+            value.titleVisibility = .hidden
+            value.titlebarAppearsTransparent = true
+            value.isMovableByWindowBackground = true
             value.delegate = self
             value.center()
             value.setFrameAutosaveName("nylai.board")
@@ -97,7 +100,6 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
     }
 
     func refreshLocalization() {
-        window?.title = L10n.shared.string("无限画布")
         for panel in notes.values { panel.title = L10n.shared.string("便签") }
     }
     func windowWillClose(_ notification: Notification) { store.flush() }
@@ -111,6 +113,7 @@ struct BoardWorkspace: View {
     @State private var naming = false
     @State private var creating = false
     @State private var confirmsDelete = false
+    @State private var shortcutsShown = false
 
     private var board: BoardDocument { session.board }
     private var matches: [BoardItem] {
@@ -152,7 +155,8 @@ struct BoardWorkspace: View {
                 toolbar.padding(.bottom, 14)
             }
         }
-        .frame(minWidth: 560, minHeight: 420)
+        .frame(minWidth: 660, minHeight: 420)
+        .ignoresSafeArea(.container, edges: .top)
         .sheet(isPresented: Binding(get: { session.editingID != nil }, set: { if !$0 { session.editingID = nil } })) {
             if let id = session.editingID, let item = board.items.first(where: { $0.id == id }) {
                 BoardNoteEditor(text: item.text) { text in
@@ -190,7 +194,14 @@ struct BoardWorkspace: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        ZStack {
+            HStack {
+                Spacer()
+                Button(action: float) { Image(systemName: session.floating ? "pin.fill" : "pin") }.help("置顶画布")
+                Button { session.export() } label: { Image(systemName: "square.and.arrow.up") }.help("导出 PNG")
+                Button { shortcutsShown.toggle() } label: { Image(systemName: "keyboard") }.help("画布快捷键")
+                    .popover(isPresented: $shortcutsShown) { shortcutHelp }
+            }.buttonStyle(.borderless).padding(.horizontal, 14)
             Menu {
                 ForEach(session.store.library.boards) { document in
                     Button {
@@ -208,21 +219,29 @@ struct BoardWorkspace: View {
                 Button("删除画布", role: .destructive) { confirmsDelete = true }
                     .disabled(session.store.library.boards.count <= 1)
             } label: {
-                Label(board.title, systemImage: "rectangle.on.rectangle")
-                    .font(.system(size: 13, weight: .medium))
-            }.fixedSize()
-            Spacer(minLength: 6)
-            TextField("搜索当前画布", text: $query)
-                .textFieldStyle(.roundedBorder).frame(maxWidth: 220)
-            Button(action: float) { Image(systemName: session.floating ? "pin.fill" : "pin") }
-                .help("置顶画布")
-            Button { session.export() } label: { Image(systemName: "square.and.arrow.up") }.help("导出 PNG")
-        }.padding(12)
+                Text(board.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+            }.menuStyle(.borderlessButton).frame(maxWidth: 200)
+        }.frame(height: 42)
+        .overlay(alignment: .leading) {
+            TextField("搜索当前画布", text: $query).textFieldStyle(.roundedBorder).frame(width: 145).padding(.leading, 84)
+        }
     }
 
     private var toolbar: some View {
-        HStack(spacing: 5) {
-            ForEach(BoardTool.allCases) { tool in
+        VStack(spacing: 6) {
+            if session.tool.isShape {
+                HStack(spacing: 5) {
+                    ForEach(BoardTool.shapes) { shape in
+                        Button { session.tool = shape } label: {
+                            Image(systemName: shape.symbol).frame(width: 30, height: 27)
+                                .background(session.tool == shape ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                        }.buttonStyle(.plain).help(shape.title)
+                    }
+                }.padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+                    .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.12)) }
+            }
+            HStack(spacing: 5) {
+            ForEach(BoardTool.allCases.filter { !$0.isShape }) { tool in
                 Button {
                     session.tool = tool
                 } label: {
@@ -232,11 +251,15 @@ struct BoardWorkspace: View {
                                     in: RoundedRectangle(cornerRadius: 5))
                 }.buttonStyle(.plain).help(tool.title)
             }
+            Button { session.tool = session.lastShape } label: {
+                Image(systemName: session.lastShape.symbol).frame(width: 23, height: 25)
+                    .background(session.tool.isShape ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
+            }.buttonStyle(.plain).help("图形")
             Divider().frame(height: 22)
             Menu {
                 ForEach(BoardColor.allCases) { color in
-                    Button { session.color = color; session.mutateSelected { $0.color = color } } label: {
-                        Label(color.rawValue, systemImage: session.color == color ? "checkmark.circle.fill" : "circle.fill")
+                    Button { session.color = color; session.mutateSelected { if $0.kind != .note { $0.color = color } } } label: {
+                        Label(color.title, systemImage: session.color == color ? "checkmark.circle.fill" : "circle.fill")
                     }
                 }
                 Button("细") { session.strokeWidth = 2 }
@@ -265,14 +288,30 @@ struct BoardWorkspace: View {
             Button { session.store.redo() } label: { Image(systemName: "arrow.uturn.forward") }
                 .disabled(session.store.redoStack.isEmpty).help("重做")
             Button { session.zoom(0.8) } label: { Image(systemName: "minus") }
-            Button { session.fit() } label: { Text("\(Int(board.viewport.zoom * 100))%").monospacedDigit().font(.caption) }
-                .help("适应全部")
+            Button { session.resetZoom() } label: { Text("\(Int(board.viewport.zoom * 100))%").monospacedDigit().font(.caption) }
+                .help("100% 并居中")
             Button { session.zoom(1.25) } label: { Image(systemName: "plus") }
+            Button { session.fit() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }.help("适应全部")
         }
         .buttonStyle(.borderless)
         .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
         .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.12)) }
         .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+        }
+    }
+
+    private var shortcutHelp: some View {
+        let rows = [("␣ + 拖动", "平移"), ("⌘ + 滚动 / 捏合", "缩放"), ("⌘0", "100% 并居中"), ("⌘⇧0", "适应全部"), ("⌘+ / ⌘−", "缩放"), ("⇧ + 点击", "多选"), ("⌘A", "全选"), ("⌘C / ⌘V", "复制 / 粘贴"), ("⌘Z / ⌘⇧Z", "撤销 / 重做"), ("⌘G / ⌘⇧G", "编组 / 取消编组"), ("← ↑ ↓ → / ⇧", "移动 / 加速移动"), ("⌥ + 拖动", "临时关闭吸附"), ("⌫ / ⌦", "删除"), ("⎋", "取消选择"), ("双击", "新建 / 编辑便签或预览图片")]
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("画布快捷键").font(.headline)
+            ForEach(rows.indices, id: \.self) { index in
+                HStack(spacing: 18) {
+                    Text(L10n.shared.string(rows[index].1)).font(.callout)
+                    Spacer()
+                    Text(L10n.shared.string(rows[index].0)).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
+                }
+            }
+        }.padding(16).frame(width: 360)
     }
 }
 

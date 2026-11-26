@@ -30,6 +30,7 @@ final class BoardCanvasView: NSView {
     private var marquee: CGRect?
     private var stroke: [CGPoint] = []
     private var spaceDown = false
+    private var colorNoteID: UUID?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -57,7 +58,7 @@ final class BoardCanvasView: NSView {
             let shown = preview.first { $0.id == item.id } ?? item
             let frame = viewport.rect(shown.frame, in: bounds.size)
             guard frame.intersects(dirtyRect.insetBy(dx: -20, dy: -20)) else { continue }
-            BoardRenderer.draw(shown, in: frame, scale: viewport.zoom, store: session.store)
+            BoardRenderer.draw(shown, in: frame, scale: viewport.zoom, store: session.store, showsNoteControls: true)
         }
         for item in preview where !items.contains(where: { $0.id == item.id }) {
             BoardRenderer.draw(item, in: viewport.rect(item.frame, in: bounds.size), scale: viewport.zoom, store: session.store)
@@ -70,7 +71,7 @@ final class BoardCanvasView: NSView {
             outline.lineWidth = 1.2
             if item.locked { outline.setLineDash([4, 3], count: 2, phase: 0) }
             outline.stroke()
-            if session.selection.count == 1 && !item.locked {
+            if session.selection.count == 1 && !item.locked && !item.isCollapsed {
                 NSColor.controlAccentColor.setFill()
                 NSBezierPath(roundedRect: handle(frame), xRadius: 2, yRadius: 2).fill()
             }
@@ -135,12 +136,18 @@ final class BoardCanvasView: NSView {
             drag = .stroke(start: p, kind: kind)
             return
         }
-        if let item = session.selected.first, session.selection.count == 1, !item.locked,
+        if let item = session.selected.first, session.selection.count == 1, !item.locked, !item.isCollapsed,
            handle(viewport.rect(item.frame, in: bounds.size)).insetBy(dx: -5, dy: -5).contains(screen) {
             drag = .resize(start: p, item: item)
             return
         }
         if let item = hit(p) {
+            if item.kind == .note, !item.locked, event.clickCount == 1, !event.modifierFlags.contains(.shift) {
+                if BoardRenderer.noteColorRect(item.frame).contains(p) { showNoteColors(item, event: event); return }
+                if BoardRenderer.noteCollapseRect(item.frame).contains(p) {
+                    session.store.toggleNoteCollapse(boardID: session.board.id, itemID: item.id); return
+                }
+            }
             if event.clickCount == 1, !event.modifierFlags.contains(.shift), let line = BoardRenderer.todoLine(in: item, at: p) {
                 session.store.toggleTodo(boardID: session.board.id, itemID: item.id, line: line)
                 return
@@ -171,6 +178,36 @@ final class BoardCanvasView: NSView {
         needsDisplay = true
     }
 
+    private func showNoteColors(_ item: BoardItem, event: NSEvent) {
+        colorNoteID = item.id
+        let menu = NSMenu()
+        for color in BoardColor.allCases {
+            let entry = menu.addItem(withTitle: color.title, action: #selector(changeNoteColor(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = color.rawValue
+            entry.state = item.color == color ? .on : .off
+            let image = NSImage(size: CGSize(width: 15, height: 15))
+            image.lockFocus()
+            (color == .clear ? NSColor.controlBackgroundColor : color.paper).setFill()
+            NSBezierPath(ovalIn: CGRect(x: 1, y: 1, width: 13, height: 13)).fill()
+            NSColor.separatorColor.setStroke()
+            NSBezierPath(ovalIn: CGRect(x: 1, y: 1, width: 13, height: 13)).stroke()
+            image.unlockFocus()
+            entry.image = image
+        }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+        colorNoteID = nil
+    }
+
+    @objc private func changeNoteColor(_ sender: NSMenuItem) {
+        guard let id = colorNoteID, let raw = sender.representedObject as? String,
+              let color = BoardColor(rawValue: raw) else { return }
+        session.store.editBoard(session.board.id) { board in
+            guard let i = board.items.firstIndex(where: { $0.id == id && !$0.locked }) else { return }
+            board.items[i].color = color
+        }
+    }
+
     override func mouseDragged(with event: NSEvent) {
         guard let drag else { return }
         let screen = point(event), p = world(screen)
@@ -193,9 +230,9 @@ final class BoardCanvasView: NSView {
             preview = items.map { item in var copy = item; copy.frame = item.frame.offsetBy(dx: dx, dy: dy); return copy }
         case .resize(let start, let item):
             var copy = item
-            let width = max(18, item.frame.width + p.x - start.x)
+            let width = max(item.kind == .note ? 100 : 18, item.frame.width + p.x - start.x)
             let height = item.kind == .image || event.modifierFlags.contains(.shift)
-                ? width * item.frame.height / item.frame.width : max(18, item.frame.height + p.y - start.y)
+                ? width * item.frame.height / item.frame.width : max(item.kind == .note ? 64 : 18, item.frame.height + p.y - start.y)
             copy.frame.size = CGSize(width: width, height: height)
             preview = [copy]
         case .marquee(let start, let previous):
@@ -295,7 +332,9 @@ final class BoardCanvasView: NSView {
             case "a": selectAll(nil); return
             case "z": if event.modifierFlags.contains(.shift) { session.store.redo() } else { session.store.undo() }; return
             case "g": if event.modifierFlags.contains(.shift) { session.ungroup() } else { session.group() }; return
-            case "0": session.fit(); return
+            case "0": if event.modifierFlags.contains(.shift) { session.fit() } else { session.resetZoom() }; return
+            case "+", "=": session.zoom(1.25); return
+            case "-": session.zoom(0.8); return
             default: break
             }
         }

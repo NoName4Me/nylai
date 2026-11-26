@@ -79,7 +79,7 @@ enum ScreenshotAnnotationPath {
         switch annotation.kind {
         case .rectangle:
             if annotation.style.resolvedCornerStyle == .sharp {
-                path.addRect(boundingRect)
+                path.addPath(AnnotationGeometry.shape(.rectangle, in: boundingRect))
             } else {
                 let radius = rectangleCornerRadius(
                     for: annotation,
@@ -94,7 +94,7 @@ enum ScreenshotAnnotationPath {
                 ))
             }
         case .ellipse:
-            path.addEllipse(in: boundingRect)
+            path.addPath(AnnotationGeometry.shape(.ellipse, in: boundingRect))
         case .line:
             if annotation.points.count >= 2 {
                 appendPolyline(
@@ -153,14 +153,7 @@ enum ScreenshotAnnotationPath {
         let mapped = points.map {
             endpoint($0, annotation: annotation, in: boundingRect)
         }
-        guard let first = mapped.first else { return }
-        path.move(to: first)
-        for point in mapped.dropFirst() {
-            path.addLine(to: point)
-        }
-        if mapped.count == 1 {
-            path.addLine(to: CGPoint(x: first.x + 0.01, y: first.y))
-        }
+        AnnotationGeometry.appendPolyline(mapped, to: path)
     }
 
     private static func rectangleCornerRadius(
