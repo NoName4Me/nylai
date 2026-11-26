@@ -3,11 +3,15 @@ import Observation
 
 enum BoardKind: String, Codable, CaseIterable {
     case note, image, pen, marker, line, arrow, rectangle, ellipse, triangle, diamond, star
+    var isLine: Bool { self == .line || self == .arrow }
+    var isShape: Bool { [.rectangle, .ellipse, .triangle, .diamond, .star].contains(self) }
+    var isAnnotation: Bool { isShape || isStroke }
     var isStroke: Bool { self == .pen || self == .marker || self == .line || self == .arrow }
 }
 
 enum BoardColor: String, Codable, CaseIterable, Identifiable {
-    case yellow, green, blue, pink, purple, gray, clear
+    case yellow, green, blue, pink, purple, gray, clear, red, orange, black, white
+    static let drawingColors: [Self] = [.black, .white, .red, .orange, .yellow, .green, .blue, .purple]
     static let noteColors: [Self] = [.yellow, .green, .blue, .pink, .purple, .gray]
     var id: String { rawValue }
     var title: String {
@@ -19,6 +23,10 @@ enum BoardColor: String, Codable, CaseIterable, Identifiable {
         case .purple: L10n.shared.string("紫色")
         case .gray: L10n.shared.string("灰色")
         case .clear: L10n.shared.string("透明")
+        case .red: L10n.shared.string("红色")
+        case .orange: L10n.shared.string("橙色")
+        case .black: L10n.shared.string("黑色")
+        case .white: L10n.shared.string("白色")
         }
     }
     var paper: NSColor {
@@ -30,11 +38,16 @@ enum BoardColor: String, Codable, CaseIterable, Identifiable {
         case .purple: NSColor(calibratedRed: 0.91, green: 0.86, blue: 0.98, alpha: 1)
         case .gray: NSColor(calibratedWhite: 0.91, alpha: 1)
         case .clear: .clear
+        case .red, .orange, .black, .white: self.ink
         }
     }
     var ink: NSColor {
         switch self {
-        case .yellow: .systemOrange
+        case .yellow: .systemYellow
+        case .red: .systemRed
+        case .orange: .systemOrange
+        case .black: .black
+        case .white: .white
         case .green: .systemGreen
         case .blue: .systemBlue
         case .pink: .systemRed
@@ -62,6 +75,12 @@ struct BoardItem: Codable, Equatable, Identifiable {
     // Optional fields keep version-1 documents readable. Legacy marker items retain their appearance.
     var dashed: Bool?
     var translucent: Bool?
+    var rotation: CGFloat?
+    var cornerRadius: CGFloat?
+    var filled: Bool?
+    var angle: CGFloat { rotation ?? 0 }
+    var radius: CGFloat { min(max(0, cornerRadius ?? 0), min(frame.width, frame.height) / 2) }
+    var rotatedBounds: CGRect { frame.applying(BoardGeometry.transform(frame, angle: angle)) }
     var effectiveStrokeWidth: CGFloat { strokeWidth * (kind == .marker ? 4 : 1) }
     var strokeOpacity: CGFloat { kind == .marker ? 0.3 : (translucent == true ? 0.35 : 1) }
     var isCollapsed: Bool { kind == .note && expandedHeight != nil }
@@ -130,6 +149,8 @@ struct BoardLibrary: Codable, Equatable {
                         return f.minX.isFinite && f.minY.isFinite && f.maxX.isFinite && f.maxY.isFinite
                             && f.width > 0 && f.height > 0
                             && item.strokeWidth.isFinite && item.strokeWidth > 0
+                            && (item.rotation?.isFinite ?? true)
+                            && (item.cornerRadius.map { $0.isFinite && $0 >= 0 } ?? true)
                             && (item.expandedHeight.map { $0.isFinite && $0 > 0 } ?? true)
                             && item.points.allSatisfy { $0.x.isFinite && $0.y.isFinite }
                             && (item.kind != .image || item.asset != nil)

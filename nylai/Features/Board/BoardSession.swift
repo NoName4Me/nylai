@@ -7,6 +7,13 @@ enum BoardTool: String, CaseIterable, Identifiable {
     static let shapes: [Self] = [.rectangle, .ellipse, .triangle, .diamond, .star]
     var isShape: Bool { Self.shapes.contains(self) }
     var showsDrawingStyle: Bool { isShape || self == .pen || self == .line || self == .arrow }
+    var shortcut: String {
+        switch self {
+        case .select: "V"; case .hand: "H"; case .note: "N"; case .pen: "B"; case .eraser: "E"
+        case .line: "L"; case .arrow: "A"; case .rectangle: "R"; case .ellipse: "O"
+        case .triangle: "T"; case .diamond: "D"; case .star: "S"
+        }
+    }
     var id: String { rawValue }
     var symbol: String {
         switch self {
@@ -50,7 +57,11 @@ final class BoardSession {
     var selection: Set<UUID> = []
     var tool: BoardTool = .select { didSet { if tool.isShape { lastShape = tool } } }
     var lastShape: BoardTool = .rectangle
-    var color: BoardColor = .clear
+    var color: BoardColor = .black
+    var filled = false
+    var showsToolShortcuts = false
+    var toolbarCollapsed = false
+    var focusCanvas: (() -> Void)?
     var strokeWidth: CGFloat = 4
     var dashed = false
     var translucent = false
@@ -84,7 +95,7 @@ final class BoardSession {
 
     func resetZoom() {
         finishEditing()
-        let bounds = board.items.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+        let bounds = board.items.map(\.rotatedBounds).reduce(CGRect.null) { $0.union($1) }
         var view = BoardViewport()
         if !bounds.isNull { view.center = CGPoint(x: bounds.midX, y: bounds.midY) }
         store.viewport(view, boardID: board.id)
@@ -92,7 +103,7 @@ final class BoardSession {
 
     func fit() {
         finishEditing()
-        let bounds = board.items.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+        let bounds = board.items.map(\.rotatedBounds).reduce(CGRect.null) { $0.union($1) }
         var view = BoardViewport()
         if !bounds.isNull {
             view.center = CGPoint(x: bounds.midX, y: bounds.midY)
@@ -142,6 +153,25 @@ final class BoardSession {
     func chooseTool(_ value: BoardTool) {
         finishEditing()
         tool = value
+        toolbarCollapsed = false
+        focusCanvas?()
+    }
+
+    func clearBoard() {
+        finishEditing()
+        guard !board.items.isEmpty else { return }
+        store.editBoard(board.id) { $0.items.removeAll() }
+        selection = []
+    }
+
+    func confirmClear() {
+        guard !board.items.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.shared.string("清空当前画布？")
+        alert.informativeText = L10n.shared.string("将移除所有对象，可撤销此操作。")
+        alert.addButton(withTitle: L10n.shared.string("清空"))
+        alert.addButton(withTitle: L10n.shared.string("取消"))
+        if alert.runModal() == .alertFirstButtonReturn { clearBoard() }
     }
 
     func undo() { finishEditing(); store.undo() }

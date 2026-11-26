@@ -6,12 +6,15 @@ enum BoardRenderer {
         let context = NSGraphicsContext.current
         context?.saveGraphicsState()
         defer { context?.restoreGraphicsState() }
+        if item.kind.isAnnotation, item.angle != 0 {
+            context?.cgContext.concatenate(BoardGeometry.transform(frame, angle: item.angle))
+        }
         switch item.kind {
         case .note:
             drawNote(item, frame: frame, scale: scale, showsControls: showsNoteControls, hidesText: hidesNoteText)
         case .image:
             if let asset = item.asset, let image = store.image(asset) {
-                image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                image.draw(in: BoardGeometry.imageRect(frame, imageSize: image.size), from: CGRect(origin: .zero, size: image.size), operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             } else {
                 NSColor.quaternaryLabelColor.setFill()
                 NSBezierPath(rect: frame).fill()
@@ -19,13 +22,18 @@ enum BoardRenderer {
             }
         case .rectangle, .ellipse, .triangle, .diamond, .star:
             guard let shape = AnnotationShape(rawValue: item.kind.rawValue), let cg = NSGraphicsContext.current?.cgContext else { return }
-            cg.addPath(AnnotationGeometry.shape(shape, in: frame))
+            if item.kind == .rectangle && item.radius > 0 {
+                cg.addPath(CGPath(roundedRect: frame, cornerWidth: item.radius * scale, cornerHeight: item.radius * scale, transform: nil))
+            } else { cg.addPath(AnnotationGeometry.shape(shape, in: frame)) }
             cg.setStrokeColor(item.color.ink.withAlphaComponent(item.strokeOpacity).cgColor)
             let width = max(0.8, item.effectiveStrokeWidth * scale)
             cg.setLineWidth(width)
             if item.dashed == true { cg.setLineDash(phase: 0, lengths: [width * 3, width * 2]) }
             cg.setLineJoin(.round)
-            cg.strokePath()
+            if item.filled == true {
+                cg.setFillColor(item.color.ink.withAlphaComponent(item.strokeOpacity).cgColor)
+                cg.drawPath(using: .fillStroke)
+            } else { cg.strokePath() }
         case .pen, .marker, .line, .arrow:
             let points = item.points.map { CGPoint(x: frame.minX + $0.x * frame.width,
                                                    y: frame.minY + $0.y * frame.height) }
@@ -202,7 +210,7 @@ enum BoardRenderer {
     }
 
     static func export(_ items: [BoardItem], store: BoardStore) -> NSImage? {
-        let bounds = items.map(\.frame).reduce(CGRect.null) { $0.union($1) }.insetBy(dx: -20, dy: -20)
+        let bounds = items.map(\.rotatedBounds).reduce(CGRect.null) { $0.union($1) }.insetBy(dx: -20, dy: -20)
         guard !bounds.isNull, bounds.width.isFinite, bounds.height.isFinite,
               bounds.width > 0, bounds.height > 0,
               bounds.width <= 12_000, bounds.height <= 12_000,
