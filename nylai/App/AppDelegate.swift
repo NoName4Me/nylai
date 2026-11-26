@@ -40,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var screenshotMenuItems: [NSMenuItem] = []
     private var settingsMenuItem: NSMenuItem?
     private var clipboardMenuItem: NSMenuItem?
+    private var boardMenuItems: [NSMenuItem] = []
+    private var boardController: BoardWindowController?
     private var scrollCaptureController: ScrollCaptureController?
     private var didStartWindowSwitcherAfterLaunch = false
     private var screenshotReopenGuardTask: Task<Void, Never>?
@@ -55,9 +57,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .nylaiLanguageDidChange,
             object: nil
         )
+        NotificationCenter.default.addObserver(self, selector: #selector(openBoard), name: .nylaiOpenBoard, object: nil)
         statusBarController = StatusBarController(
             preferences: preferences,
             openSettings: { [weak self] in self?.showSettings() },
+            openBoard: { [weak self] in self?.openBoard() },
+            quickCapture: { [weak self] in self?.quickCapture() },
             isInteractionLocked: { [weak self] in
                 self?.isScreenshotInteractionActive ?? false
             }
@@ -89,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         FinderRightClickTarget.stopObserving()
         statusBarController?.shutdown()
+        boardController?.close()
         shortcutRuntime.stop()
         mouseGestureController?.stop()
         windowSwitcherController?.stop()
@@ -139,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBarController?.refreshLocalization()
         screenshotHistoryWindowController?.refreshLocalization()
         collageWindowController?.refreshLocalization()
+        boardController?.refreshLocalization()
         clipboardPanelController?.refreshLocalization()
         mouseGestureController?.refreshLocalization()
         windowSwitcherController?.refreshLocalization()
@@ -254,6 +261,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ensureCollageWindowController().present(adding: image)
     }
 
+    private func ensureBoardController() -> BoardWindowController {
+        if let boardController { return boardController }
+        let controller = BoardWindowController()
+        boardController = controller
+        if let error = controller.store.loadError {
+            moduleStateController.setRuntimeStatus(.failed(error), for: .board)
+        }
+        return controller
+    }
+
+    @objc private func openBoard() {
+        guard moduleStateController.isEnabled(.board), !isScreenshotInteractionActive else { return }
+        ensureBoardController().present()
+    }
+
+    @objc private func quickCapture() {
+        guard moduleStateController.isEnabled(.board), !isScreenshotInteractionActive else { return }
+        ensureBoardController().quickCapture()
+    }
+
     private func perform(_ action: ShortcutAction) {
         guard isActionAvailable(action) else { return }
         if isScreenshotInteractionActive {
@@ -261,7 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .captureMainDisplay, .captureInteractive:
                 captureScreenshot()
             case .openSettings, .screenshotHistory, .openCollage, .scrollCapture,
-                 .clipboardHistory, .application:
+                 .clipboardHistory, .openBoard, .quickCapture, .application:
                 break
             }
             return
@@ -279,6 +306,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             captureScreenshot()
         case .clipboardHistory:
             showClipboardHistory()
+        case .openBoard:
+            openBoard()
+        case .quickCapture:
+            quickCapture()
         case .application(let target):
             Task { [weak self] in
                 await self?.applicationShortcutHandler.trigger(target)
@@ -305,6 +336,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             moduleStateController.isEnabled(.screenshot)
         case .clipboardHistory:
             moduleStateController.isEnabled(.clipboard)
+        case .openBoard, .quickCapture:
+            moduleStateController.isEnabled(.board)
         }
     }
 
@@ -344,12 +377,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 windowSwitcherController?.stop()
             }
+        case .board:
+            if !enabled { boardController?.close(); boardController = nil }
         case .systemMonitor:
             statusBarController?.closeMonitor()
         case .screenshot, .globalShortcuts:
             break
         }
-        if (module == .screenshot || module == .clipboard),
+        if (module == .screenshot || module == .clipboard || module == .board),
            moduleStateController.isEnabled(.mouseGestures) {
             mouseGestureController?.refreshActionAvailability()
         }
@@ -643,6 +678,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: ""
         )
         clipboardItem.target = self
+        let boardItem = applicationMenu.addItem(withTitle: L10n.shared.string("无限画布…"), action: #selector(openBoard), keyEquivalent: "")
+        boardItem.target = self
+        let captureItem = applicationMenu.addItem(withTitle: L10n.shared.string("快速记录…"), action: #selector(quickCapture), keyEquivalent: "")
+        captureItem.target = self
+        boardMenuItems = [boardItem, captureItem]
         let settingsItem = applicationMenu.addItem(
             withTitle: L10n.shared.string("设置…"),
             action: #selector(showSettings),
@@ -717,6 +757,15 @@ extension AppDelegate: NSMenuDelegate {
         }
         clipboardMenuItem?.isEnabled = moduleStateController.isEnabled(.clipboard)
             && !isScreenshotInteractionActive
+        for item in boardMenuItems {
+            item.isHidden = !moduleStateController.isEnabled(.board)
+            item.isEnabled = !isScreenshotInteractionActive
+        }
         settingsMenuItem?.isEnabled = !isScreenshotInteractionActive
     }
+}
+
+
+extension Notification.Name {
+    static let nylaiOpenBoard = Notification.Name("nylaiOpenBoard")
 }

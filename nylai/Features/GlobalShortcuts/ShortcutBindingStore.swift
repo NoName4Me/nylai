@@ -68,7 +68,7 @@ struct ShortcutBindingStore: Sendable {
             } catch {
                 throw ShortcutBindingStoreError.corruptedData
             }
-        case 3, 4, 5, 6:
+        case 3, 4, 5, 6, 8:
             do {
                 let decoded = try JSONDecoder().decode(ShortcutBindingConfiguration.self, from: data)
                 let configuration = Self.addingBuiltInActions(to: decoded)
@@ -243,6 +243,11 @@ struct ShortcutBindingStore: Sendable {
                 shortcut: nil,
                 isEnabled: true
             ))
+        }
+        for binding in ShortcutBindingConfiguration.defaults.bindings where binding.id == .board || binding.id == .quickCapture {
+            if !bindings.contains(where: { $0.id == binding.id || $0.action == binding.action }) {
+                bindings.append(binding)
+            }
         }
         return ShortcutBindingConfiguration(
             version: ShortcutBindingConfiguration.currentVersion,

@@ -12,7 +12,7 @@ final class ShortcutBindingStoreTests: XCTestCase {
         XCTAssertEqual(configuration, .defaults)
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.fileURL.path))
         XCTAssertEqual(try fixture.store.load(), .defaults)
-        XCTAssertEqual(configuration.bindings.count, 6)
+        XCTAssertEqual(configuration.bindings.count, 8)
         XCTAssertEqual(configuration.bindings[0].id, .openSettings)
         XCTAssertNil(configuration.bindings[0].shortcut)
         XCTAssertEqual(configuration.bindings[1].id, .captureInteractive)
@@ -60,7 +60,7 @@ final class ShortcutBindingStoreTests: XCTestCase {
         let migrated = try fixture.store.load()
 
         XCTAssertEqual(migrated.version, ShortcutBindingConfiguration.currentVersion)
-        XCTAssertEqual(migrated.bindings.count, 6)
+        XCTAssertEqual(migrated.bindings.count, 8)
         XCTAssertEqual(migrated.bindings[0], versionOne.bindings[0])
         XCTAssertEqual(migrated.bindings[1].id, .captureInteractive)
         XCTAssertEqual(migrated.bindings[1].action, .captureInteractive)
@@ -121,7 +121,7 @@ final class ShortcutBindingStoreTests: XCTestCase {
         let migrated = try fixture.store.load()
 
         XCTAssertEqual(migrated.version, ShortcutBindingConfiguration.currentVersion)
-        XCTAssertEqual(migrated.bindings.count, 7)
+        XCTAssertEqual(migrated.bindings.count, 9)
         XCTAssertEqual(migrated.bindings[0].id, .openSettings)
         XCTAssertEqual(migrated.bindings[1].id, .captureInteractive)
         XCTAssertEqual(migrated.bindings[1].shortcut, legacyShortcut)
@@ -166,7 +166,7 @@ final class ShortcutBindingStoreTests: XCTestCase {
 
         let migrated = try fixture.store.load()
 
-        XCTAssertEqual(migrated.bindings.count, 6)
+        XCTAssertEqual(migrated.bindings.count, 8)
         XCTAssertEqual(migrated.bindings[1].id, .captureInteractive)
         XCTAssertEqual(migrated.bindings[1].shortcut, explicitShortcut)
         XCTAssertFalse(migrated.bindings[1].isEnabled)
@@ -199,7 +199,7 @@ final class ShortcutBindingStoreTests: XCTestCase {
 
         XCTAssertEqual(migrated.version, ShortcutBindingConfiguration.currentVersion)
         XCTAssertFalse(migrated.isEnabled)
-        XCTAssertEqual(migrated.bindings.count, 6)
+        XCTAssertEqual(migrated.bindings.count, 8)
         XCTAssertEqual(migrated.bindings[1].id, .captureInteractive)
         XCTAssertNil(migrated.bindings[1].shortcut)
         XCTAssertEqual(migrated.bindings[2].id, .screenshotHistory)
@@ -228,7 +228,7 @@ final class ShortcutBindingStoreTests: XCTestCase {
         let migrated = try fixture.store.load()
 
         XCTAssertEqual(migrated.version, ShortcutBindingConfiguration.currentVersion)
-        XCTAssertEqual(migrated.bindings.count, 6)
+        XCTAssertEqual(migrated.bindings.count, 8)
         XCTAssertEqual(migrated.bindings[3].id, .collage)
         XCTAssertEqual(migrated.bindings[3].action, .openCollage)
         XCTAssertNil(migrated.bindings[3].shortcut)
@@ -253,7 +253,7 @@ final class ShortcutBindingStoreTests: XCTestCase {
 
         XCTAssertEqual(migrated.version, ShortcutBindingConfiguration.currentVersion)
         XCTAssertFalse(migrated.isEnabled)
-        XCTAssertEqual(migrated.bindings.count, 6)
+        XCTAssertEqual(migrated.bindings.count, 8)
         XCTAssertEqual(migrated.bindings[4].id, .scrollCapture)
         XCTAssertEqual(migrated.bindings[4].action, .scrollCapture)
         XCTAssertNil(migrated.bindings[4].shortcut)
@@ -274,8 +274,8 @@ final class ShortcutBindingStoreTests: XCTestCase {
         let migrated = try fixture.store.load()
 
         XCTAssertEqual(migrated.version, ShortcutBindingConfiguration.currentVersion)
-        XCTAssertEqual(migrated.bindings.count, 6)
-        XCTAssertEqual(migrated.bindings.last?.id, .clipboardHistory)
+        XCTAssertEqual(migrated.bindings.count, 8)
+        XCTAssertEqual(migrated.bindings[5].id, .clipboardHistory)
         XCTAssertNil(migrated.bindings.last?.shortcut)
     }
 
@@ -285,6 +285,7 @@ final class ShortcutBindingStoreTests: XCTestCase {
         try fixture.createParentDirectory()
         var versionSeven = ShortcutBindingConfiguration.defaults
         versionSeven.version = 7
+        versionSeven.bindings = Array(versionSeven.bindings.prefix(6))
         versionSeven.isEnabled = true
         versionSeven.bindings[0].shortcut = ShortcutKey(
             keyCode: UInt32(kVK_ANSI_N),

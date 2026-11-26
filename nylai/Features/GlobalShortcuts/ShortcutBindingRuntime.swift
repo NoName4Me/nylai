@@ -479,6 +479,10 @@ final class ShortcutBindingRuntime {
             L10n.shared.string("滚动截图")
         case .clipboardHistory:
             L10n.shared.string("剪贴板历史")
+        case .openBoard:
+            L10n.shared.string("无限画布")
+        case .quickCapture:
+            L10n.shared.string("快速记录")
         case .application(let target):
             target.bundleIdentifier
         }

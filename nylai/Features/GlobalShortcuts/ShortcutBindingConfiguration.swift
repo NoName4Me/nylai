@@ -56,6 +56,8 @@ struct ShortcutBindingID: Codable, Equatable, Hashable, Sendable {
     static let collage = ShortcutBindingID(rawValue: "internal.collage")
     static let scrollCapture = ShortcutBindingID(rawValue: "internal.scroll-capture")
     static let clipboardHistory = ShortcutBindingID(rawValue: "internal.clipboard-history")
+    static let board = ShortcutBindingID(rawValue: "internal.board")
+    static let quickCapture = ShortcutBindingID(rawValue: "internal.quick-capture")
 
     let rawValue: String
 
@@ -95,6 +97,8 @@ enum ShortcutAction: Equatable, Sendable {
     case openCollage
     case scrollCapture
     case clipboardHistory
+    case openBoard
+    case quickCapture
     case application(ApplicationShortcutTarget)
 }
 
@@ -107,6 +111,8 @@ extension ShortcutAction: Codable {
         case openCollage
         case scrollCapture
         case clipboardHistory
+        case openBoard
+        case quickCapture
         case application
     }
 
@@ -132,6 +138,10 @@ extension ShortcutAction: Codable {
             self = .scrollCapture
         case .clipboardHistory:
             self = .clipboardHistory
+        case .openBoard:
+            self = .openBoard
+        case .quickCapture:
+            self = .quickCapture
         case .application:
             self = .application(try container.decode(ApplicationShortcutTarget.self, forKey: .application))
         }
@@ -154,6 +164,10 @@ extension ShortcutAction: Codable {
             try container.encode(Kind.scrollCapture, forKey: .kind)
         case .clipboardHistory:
             try container.encode(Kind.clipboardHistory, forKey: .kind)
+        case .openBoard:
+            try container.encode(Kind.openBoard, forKey: .kind)
+        case .quickCapture:
+            try container.encode(Kind.quickCapture, forKey: .kind)
         case .application(let target):
             try container.encode(Kind.application, forKey: .kind)
             try container.encode(target, forKey: .application)
@@ -178,7 +192,7 @@ extension ShortcutBinding {
 }
 
 struct ShortcutBindingConfiguration: Codable, Equatable, Sendable {
-    static let currentVersion = 8
+    static let currentVersion = 9
 
     var version: Int
     var isEnabled: Bool
@@ -227,6 +241,8 @@ struct ShortcutBindingConfiguration: Codable, Equatable, Sendable {
                 shortcut: nil,
                 isEnabled: true
             ),
+            ShortcutBinding(id: .board, action: .openBoard, shortcut: nil, isEnabled: true),
+            ShortcutBinding(id: .quickCapture, action: .quickCapture, shortcut: nil, isEnabled: true),
         ]
     )
 }

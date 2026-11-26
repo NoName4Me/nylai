@@ -478,6 +478,10 @@ struct SettingsView: View {
                     }
                 }
                 Spacer(minLength: 12)
+                if module == .board, status != .off {
+                    Button("打开画布") { NotificationCenter.default.post(name: .nylaiOpenBoard, object: nil) }
+                        .controlSize(.small)
+                }
                 if module == .finderEnhancements, status != .off {
                     Button(finderExtensionEnabled ? "管理扩展" : "启用扩展") {
                         FIFinderSyncController.showExtensionManagementInterface()
@@ -1890,7 +1894,7 @@ private enum SettingsSection: Hashable {
             self = .systemMonitor
         case .finderEnhancements:
             self = .finderEnhancements
-        case .windowSwitcher:
+        case .windowSwitcher, .board:
             return nil
         }
     }
@@ -1909,6 +1913,8 @@ private extension NylaiModuleID {
             "hand.draw"
         case .clipboard:
             "doc.on.clipboard"
+        case .board:
+            "note.text"
         case .windowSwitcher:
             "rectangle.on.rectangle"
         case .systemMonitor:
@@ -2280,7 +2286,7 @@ private extension ShortcutBinding {
     var isInternal: Bool {
         switch action {
         case .openSettings, .captureMainDisplay, .captureInteractive,
-             .screenshotHistory, .openCollage, .scrollCapture, .clipboardHistory:
+             .screenshotHistory, .openCollage, .scrollCapture, .clipboardHistory, .openBoard, .quickCapture:
             true
         case .application:
             false
@@ -2336,6 +2342,10 @@ private extension ShortcutAction {
             "rectangle.portrait.and.arrow.forward"
         case .clipboardHistory:
             "doc.on.clipboard"
+        case .openBoard:
+            "note.text"
+        case .quickCapture:
+            "square.and.pencil"
         case .application:
             "macwindow"
         }

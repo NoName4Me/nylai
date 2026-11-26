@@ -132,6 +132,8 @@ final class ModuleStateTests: XCTestCase {
                 switch action {
                 case .clipboardHistory:
                     box.controller?.isEnabled(.clipboard) ?? false
+                case .openBoard, .quickCapture:
+                    box.controller?.isEnabled(.board) ?? false
                 case .openSettings, .application:
                     true
                 case .captureMainDisplay, .captureInteractive, .screenshotHistory,
