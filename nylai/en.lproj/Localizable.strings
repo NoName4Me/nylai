@@ -710,3 +710,5 @@
 "仅本地读取；默认关闭。标签页可能触发系统自动化授权，Safari 历史和其他受保护目录可能需要完全磁盘访问。浏览器数据不写入 Launcher 索引。" = "Local read-only access, off by default. Tabs may require Automation permission; Safari history or protected folders may require Full Disk Access. Browser data is not saved in the Launcher index.";
 "默认 ⌘Space。若与 Spotlight 冲突，请在 macOS 系统设置 → 键盘 → 键盘快捷键 → Spotlight 中关闭冲突项，或在 Nylai 快捷键设置中选择其他组合键。" = "Default: ⌘Space. If Spotlight conflicts, disable its shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight, or choose another shortcut in Nylai.";
 "打开系统键盘设置" = "Open Keyboard Settings";
+
+"固定快捷键 ⌘␣。启用 Launcher 后接管 Spotlight 快捷键，关闭后恢复系统行为。" = "Fixed shortcut: ⌘␣. Launcher intercepts Spotlight while enabled; disabling restores system behavior.";

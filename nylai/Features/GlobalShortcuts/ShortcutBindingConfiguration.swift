@@ -199,7 +199,7 @@ extension ShortcutBinding {
 }
 
 struct ShortcutBindingConfiguration: Codable, Equatable, Sendable {
-    static let currentVersion = 10
+    static let currentVersion = 11
 
     var version: Int
     var isEnabled: Bool
@@ -249,9 +249,6 @@ struct ShortcutBindingConfiguration: Codable, Equatable, Sendable {
                 isEnabled: true
             ),
             ShortcutBinding(id: .board, action: .openBoard, shortcut: nil, isEnabled: true),
-            ShortcutBinding(id: .quickCapture, action: .quickCapture, shortcut: nil, isEnabled: true),
-            ShortcutBinding(id: .launcher, action: .openLauncher,
-                shortcut: ShortcutKey(keyCode: UInt32(kVK_Space), modifiers: [.command]), isEnabled: true),
         ]
     )
 }

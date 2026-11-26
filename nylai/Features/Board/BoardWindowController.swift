@@ -6,7 +6,6 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
     let store = BoardStore()
     private lazy var session = BoardSession(store: store)
     private var window: NSWindow?
-    private var captureWindow: NSPanel?
     private var notes: [UUID: NSPanel] = [:]
 
     func present(boardID: UUID? = nil, itemID: UUID? = nil) {
@@ -41,36 +40,6 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
         case .image(let image):
             return store.addImage(NSImage(cgImage: image, size: .zero), boardID: id, at: point)
         }
-    }
-
-    func quickCapture() {
-        if let captureWindow, captureWindow.isVisible { captureWindow.makeKeyAndOrderFront(nil); return }
-        let panel = NSPanel(contentRect: CGRect(x: 0, y: 0, width: 420, height: 280),
-                            styleMask: [.titled, .closable, .resizable, .utilityWindow],
-                            backing: .buffered, defer: false)
-        panel.title = L10n.shared.string("快速记录")
-        panel.isReleasedWhenClosed = false
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.center()
-        panel.contentView = NSHostingView(rootView: BoardQuickCapture(store: store,
-            save: { [weak self] text, id in if self?.add(.text(text), boardID: id) == true { self?.captureWindow?.orderOut(nil) } },
-            paste: { [weak self] id in
-                guard let self else { return }
-                if let images = NSPasteboard.general.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage], !images.isEmpty {
-                    var saved = true
-                    for image in images {
-                        if !self.store.addImage(image, boardID: id, at: self.store.nextCapturePoint(in: id)) { saved = false; break }
-                    }
-                    if saved { self.captureWindow?.orderOut(nil) }
-                    else { NSAlert(error: BoardStoreError.invalidImage).runModal() }
-                } else if let text = NSPasteboard.general.string(forType: .string), !text.isEmpty {
-                    if self.add(.text(text), boardID: id) { self.captureWindow?.orderOut(nil) }
-                }
-            }).nylaiLocalized())
-        captureWindow = panel
-        panel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     func chooseDestination(for contents: [ClipboardContent]) {
@@ -122,15 +91,13 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
     func close() {
         store.stop()
         window?.close()
-        captureWindow?.close()
         for panel in notes.values { panel.close() }
         notes.removeAll()
-        window = nil; captureWindow = nil
+        window = nil
     }
 
     func refreshLocalization() {
         window?.title = L10n.shared.string("无限画布")
-        captureWindow?.title = L10n.shared.string("快速记录")
         for panel in notes.values { panel.title = L10n.shared.string("便签") }
     }
     func windowWillClose(_ notification: Notification) { store.flush() }
@@ -392,27 +359,3 @@ private struct BoardPinnedNote: View {
     }
 }
 
-private struct BoardQuickCapture: View {
-    let store: BoardStore
-    let save: (String, UUID) -> Void
-    let paste: (UUID) -> Void
-    @State private var text = ""
-    @State private var boardID: UUID?
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            TextEditor(text: $text).focused($focused)
-                .font(.system(size: 14)).border(Color.secondary.opacity(0.18))
-            HStack {
-                Picker("画布", selection: $boardID) {
-                    ForEach(store.library.boards) { board in Text(board.title).tag(Optional(board.id)) }
-                }
-                Button("粘贴图文") { paste(boardID ?? store.library.defaultID) }
-                Button("保存") { save(text, boardID ?? store.library.defaultID) }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }.padding(12).onAppear { boardID = store.library.defaultID; focused = true }
-    }
-}

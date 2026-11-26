@@ -164,7 +164,7 @@ final class ModuleStateTests: XCTestCase {
         try controller.setEnabled(true, for: .clipboard)
         XCTAssertEqual(registrar.activeCount, 1)
         try controller.setEnabled(true, for: .launcher)
-        XCTAssertEqual(registrar.activeCount, 2)
+        XCTAssertEqual(registrar.activeCount, 1)
         try controller.setEnabled(false, for: .launcher)
         XCTAssertEqual(registrar.activeCount, 1)
     }

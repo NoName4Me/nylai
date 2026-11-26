@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var boardMenuItems: [NSMenuItem] = []
     private var boardController: BoardWindowController?
     private var launcherController: LauncherWindowController?
+    private let launcherHotkey = LauncherHotkeyMonitor()
     private var launcherMenuItem: NSMenuItem?
     private var scrollCaptureController: ScrollCaptureController?
     private var didStartWindowSwitcherAfterLaunch = false
@@ -65,13 +66,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             preferences: preferences,
             openSettings: { [weak self] in self?.showSettings() },
             openBoard: { [weak self] in self?.openBoard() },
-            quickCapture: { [weak self] in self?.quickCapture() },
             openLauncher: { [weak self] in self?.openLauncher() },
             isInteractionLocked: { [weak self] in
                 self?.isScreenshotInteractionActive ?? false
             }
         )
         shortcutRuntime.start()
+        if preferences.launcherEnabled { startLauncherHotkey(requestPermission: false) }
         if moduleStateController.isEnabled(.mouseGestures) {
             ensureMouseGestureController().start(requestPermission: false)
         }
@@ -98,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         FinderRightClickTarget.stopObserving()
         statusBarController?.shutdown()
+        launcherHotkey.stop()
         launcherController?.close()
         boardController?.close()
         shortcutRuntime.stop()
@@ -161,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         refreshFinderEnhancementRuntime()
+        if preferences.launcherEnabled, !launcherHotkey.isRunning { startLauncherHotkey(requestPermission: false) }
         guard !didStartWindowSwitcherAfterLaunch,
               moduleStateController.isEnabled(.windowSwitcher),
               windowSwitcherController != nil else {
@@ -282,9 +285,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ensureBoardController().present()
     }
 
-    @objc private func quickCapture() {
-        guard moduleStateController.isEnabled(.board), !isScreenshotInteractionActive else { return }
-        ensureBoardController().quickCapture()
+
+    private func startLauncherHotkey(requestPermission: Bool) {
+        launcherHotkey.canClaim = { [weak self] in
+            guard let self else { return false }
+            return self.preferences.launcherEnabled && !self.isScreenshotInteractionActive
+                && !self.shortcutRuntime.isRecording && self.windowSwitcherController?.isActive != true
+        }
+        launcherHotkey.onTrigger = { [weak self] in self?.openLauncher() }
+        if !AccessibilityPermission.isGranted {
+            if requestPermission { AccessibilityPermission.requestIfNeeded() }
+            moduleStateController.setRuntimeStatus(.failed(WindowSwitcherError.accessibilityPermissionRequired.localizedDescription), for: .launcher)
+            return
+        }
+        if !InputMonitoringPermission.isGranted {
+            if requestPermission { InputMonitoringPermission.requestIfNeeded() }
+            moduleStateController.setRuntimeStatus(.failed(WindowSwitcherError.inputMonitoringPermissionRequired.localizedDescription), for: .launcher)
+            return
+        }
+        do {
+            try launcherHotkey.start()
+            moduleStateController.setRuntimeStatus(.running, for: .launcher)
+        } catch {
+            moduleStateController.setRuntimeStatus(.failed(error.localizedDescription), for: .launcher)
+        }
     }
 
     private func ensureLauncherController() -> LauncherWindowController {
@@ -344,7 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .openBoard:
             openBoard()
         case .quickCapture:
-            quickCapture()
+            break // Legacy gesture configuration; action removed.
         case .openLauncher:
             openLauncher()
         case .application(let target):
@@ -373,8 +397,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             moduleStateController.isEnabled(.screenshot)
         case .clipboardHistory:
             moduleStateController.isEnabled(.clipboard)
-        case .openBoard, .quickCapture:
+        case .openBoard:
             moduleStateController.isEnabled(.board)
+        case .quickCapture:
+            false
         case .openLauncher:
             moduleStateController.isEnabled(.launcher)
         }
@@ -418,7 +444,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 windowSwitcherController?.stop()
             }
         case .launcher:
-            if !enabled { launcherController = nil }
+            if enabled { startLauncherHotkey(requestPermission: true) }
+            else { launcherHotkey.stop(); launcherController = nil }
         case .board:
             if !enabled { boardController?.close(); boardController = nil }
             configureClipboardBoardAction()
@@ -741,9 +768,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipboardItem.target = self
         let boardItem = applicationMenu.addItem(withTitle: L10n.shared.string("无限画布…"), action: #selector(openBoard), keyEquivalent: "")
         boardItem.target = self
-        let captureItem = applicationMenu.addItem(withTitle: L10n.shared.string("快速记录…"), action: #selector(quickCapture), keyEquivalent: "")
-        captureItem.target = self
-        boardMenuItems = [boardItem, captureItem]
+        boardMenuItems = [boardItem]
         let launcher = applicationMenu.addItem(withTitle: L10n.shared.string("Launcher…"), action: #selector(openLauncher), keyEquivalent: "")
         launcher.target = self
         launcherMenuItem = launcher

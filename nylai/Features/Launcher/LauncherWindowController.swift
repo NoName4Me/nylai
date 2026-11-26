@@ -378,11 +378,8 @@ private struct LauncherSettingsView: View {
                     Text("仅本地读取；默认关闭。标签页可能触发系统自动化授权，Safari 历史和其他受保护目录可能需要完全磁盘访问。浏览器数据不写入 Launcher 索引。").font(.caption).foregroundStyle(.secondary)
                     Divider()
                     Text("快捷键").font(.headline)
-                    Text("默认 ⌘Space。若与 Spotlight 冲突，请在 macOS 系统设置 → 键盘 → 键盘快捷键 → Spotlight 中关闭冲突项，或在 Nylai 快捷键设置中选择其他组合键。")
+                    Text("固定快捷键 ⌘␣。启用 Launcher 后接管 Spotlight 快捷键，关闭后恢复系统行为。")
                         .font(.caption).foregroundStyle(.secondary)
-                    Button("打开系统键盘设置") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") { NSWorkspace.shared.open(url) }
-                    }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             if let error = preferences.error ?? preferences.loadError {

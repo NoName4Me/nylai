@@ -174,8 +174,7 @@ final class LauncherSources {
             ("screenshots", .screenshotHistory, "image recent 截图历史"),
             ("collage", .openCollage, "collage 图片拼接"),
             ("clipboard", .clipboardHistory, "clipboard paste 剪贴板"),
-            ("board", .openBoard, "board canvas 白板"),
-            ("quick-note", .quickCapture, "note capture 记录")
+            ("board", .openBoard, "board canvas 白板")
         ]
         return list.compactMap { key, command, words in
             guard isActionAvailable(command) else { return nil }

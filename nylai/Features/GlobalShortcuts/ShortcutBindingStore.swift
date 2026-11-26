@@ -68,7 +68,7 @@ struct ShortcutBindingStore: Sendable {
             } catch {
                 throw ShortcutBindingStoreError.corruptedData
             }
-        case 3, 4, 5, 6, 8, 9:
+        case 3, 4, 5, 6, 8, 9, 10:
             do {
                 let decoded = try JSONDecoder().decode(ShortcutBindingConfiguration.self, from: data)
                 let configuration = Self.addingBuiltInActions(to: decoded)
@@ -244,7 +244,8 @@ struct ShortcutBindingStore: Sendable {
                 isEnabled: true
             ))
         }
-        for binding in ShortcutBindingConfiguration.defaults.bindings where [.board, .quickCapture, .launcher].contains(binding.id) {
+        bindings.removeAll { $0.id == .quickCapture || $0.id == .launcher || $0.action == .quickCapture || $0.action == .openLauncher }
+        for binding in ShortcutBindingConfiguration.defaults.bindings where binding.id == .board {
             if !bindings.contains(where: { $0.id == binding.id || $0.action == binding.action }) {
                 var migrated = binding
                 if let shortcut = binding.shortcut, bindings.contains(where: { $0.shortcut == shortcut }) { migrated.shortcut = nil }

@@ -438,7 +438,7 @@ struct ShortcutKeycaps: View {
 
 enum ShortcutDisplayFormatter {
     static func isSymbolKey(_ key: String) -> Bool {
-        ["←", "→", "↑", "↓", "↩", "⌤", "⇥", "⇤", "⌫", "⌦", "⎋", "↖", "↘"].contains(key)
+        ["←", "→", "↑", "↓", "↩", "⌤", "⇥", "⇤", "⌫", "⌦", "⎋", "↖", "↘", "␣"].contains(key)
     }
 
     static func string(for shortcut: ShortcutKey) -> String {
@@ -529,7 +529,7 @@ enum ShortcutDisplayFormatter {
     private static let nonLocalizedKeyNameByCode: [UInt32: String] = [
         UInt32(kVK_Return): "↩",
         UInt32(kVK_Tab): "⇥",
-        UInt32(kVK_Space): "Space",
+        UInt32(kVK_Space): "␣",
         UInt32(kVK_Delete): "⌫",
         UInt32(kVK_Escape): "⎋",
         UInt32(kVK_ForwardDelete): "⌦",
