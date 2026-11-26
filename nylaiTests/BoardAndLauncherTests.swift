@@ -99,6 +99,8 @@ final class BoardAndLauncherTests: XCTestCase {
         var item = BoardItem(kind: .arrow, frame: CGRect(x: 0, y: 0, width: 20, height: 20))
         BoardGeometry.setEndpoints(&item, CGPoint(x: 100, y: 50), CGPoint(x: -10, y: 20))
         XCTAssertEqual(BoardGeometry.endpoints(item), [CGPoint(x: 100, y: 50), CGPoint(x: -10, y: 20)])
+        let fit = BoardGeometry.imageRect(CGRect(x: 0, y: 0, width: 200, height: 100), imageSize: CGSize(width: 100, height: 100))
+        XCTAssertEqual(fit, CGRect(x: 50, y: 0, width: 100, height: 100))
     }
 
     @MainActor

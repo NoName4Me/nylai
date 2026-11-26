@@ -22,9 +22,7 @@ enum BoardRenderer {
             }
         case .rectangle, .ellipse, .triangle, .diamond, .star:
             guard let shape = AnnotationShape(rawValue: item.kind.rawValue), let cg = NSGraphicsContext.current?.cgContext else { return }
-            if item.kind == .rectangle && item.radius > 0 {
-                cg.addPath(CGPath(roundedRect: frame, cornerWidth: item.radius * scale, cornerHeight: item.radius * scale, transform: nil))
-            } else { cg.addPath(AnnotationGeometry.shape(shape, in: frame)) }
+            cg.addPath(AnnotationGeometry.shape(shape, in: frame, cornerRadius: item.radius * scale))
             cg.setStrokeColor(item.color.ink.withAlphaComponent(item.strokeOpacity).cgColor)
             let width = max(0.8, item.effectiveStrokeWidth * scale)
             cg.setLineWidth(width)

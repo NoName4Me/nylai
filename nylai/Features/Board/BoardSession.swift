@@ -61,7 +61,7 @@ final class BoardSession {
     var filled = false
     var showsToolShortcuts = false
     var toolbarCollapsed = false
-    var focusCanvas: (() -> Void)?
+    @ObservationIgnored var focusCanvas: (() -> Void)?
     var strokeWidth: CGFloat = 4
     var dashed = false
     var translucent = false

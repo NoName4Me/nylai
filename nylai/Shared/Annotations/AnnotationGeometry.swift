@@ -6,10 +6,13 @@ enum AnnotationShape: String {
 
 /// Geometry only: each editor owns coordinate transforms, styling and interaction.
 enum AnnotationGeometry {
-    static func shape(_ shape: AnnotationShape, in rect: CGRect) -> CGPath {
+    static func shape(_ shape: AnnotationShape, in rect: CGRect, cornerRadius: CGFloat = 0) -> CGPath {
         let path = CGMutablePath()
         switch shape {
-        case .rectangle: path.addRect(rect)
+        case .rectangle:
+            let radius = min(max(0, cornerRadius), min(rect.width, rect.height) / 2)
+            if radius > 0 { path.addRoundedRect(in: rect, cornerWidth: radius, cornerHeight: radius) }
+            else { path.addRect(rect) }
         case .ellipse: path.addEllipse(in: rect)
         case .triangle, .diamond, .star:
             let vertices: [CGPoint]
@@ -24,10 +27,30 @@ enum AnnotationGeometry {
                 }
             default: vertices = []
             }
-            appendPolyline(vertices.map { CGPoint(x: rect.minX + $0.x * rect.width, y: rect.minY + $0.y * rect.height) }, to: path)
-            path.closeSubpath()
+            let points = vertices.map { CGPoint(x: rect.minX + $0.x * rect.width, y: rect.minY + $0.y * rect.height) }
+            if cornerRadius > 0 { appendRoundedPolygon(points, radius: cornerRadius, to: path) }
+            else { appendPolyline(points, to: path); path.closeSubpath() }
         }
         return path
+    }
+
+    private static func appendRoundedPolygon(_ points: [CGPoint], radius: CGFloat, to path: CGMutablePath) {
+        guard points.count >= 3 else { return }
+        for i in points.indices {
+            let p = points[i]
+            let previous = points[(i + points.count - 1) % points.count]
+            let next = points[(i + 1) % points.count]
+            let a = hypot(previous.x - p.x, previous.y - p.y)
+            let b = hypot(next.x - p.x, next.y - p.y)
+            let distance = min(radius, a * 0.45, b * 0.45)
+            let entry = CGPoint(x: p.x + (previous.x - p.x) * distance / max(0.001, a),
+                                y: p.y + (previous.y - p.y) * distance / max(0.001, a))
+            let exit = CGPoint(x: p.x + (next.x - p.x) * distance / max(0.001, b),
+                               y: p.y + (next.y - p.y) * distance / max(0.001, b))
+            if i == 0 { path.move(to: entry) } else { path.addLine(to: entry) }
+            path.addQuadCurve(to: exit, control: p)
+        }
+        path.closeSubpath()
     }
 
     static func appendPolyline(_ points: [CGPoint], to path: CGMutablePath) {

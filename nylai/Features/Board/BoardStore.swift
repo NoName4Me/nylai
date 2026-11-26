@@ -6,6 +6,7 @@ enum BoardKind: String, Codable, CaseIterable {
     var isLine: Bool { self == .line || self == .arrow }
     var isShape: Bool { [.rectangle, .ellipse, .triangle, .diamond, .star].contains(self) }
     var isAnnotation: Bool { isShape || isStroke }
+    var supportsCornerRadius: Bool { isShape && self != .ellipse }
     var isStroke: Bool { self == .pen || self == .marker || self == .line || self == .arrow }
 }
 

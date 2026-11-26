@@ -168,7 +168,7 @@ final class BoardWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate
         for panel in notes.values { panel.title = L10n.shared.string("便签") }
     }
     func windowWillClose(_ notification: Notification) { session.finishEditing(); store.flush() }
-    func windowDidResignKey(_ notification: Notification) { session.finishEditing() }
+    func windowDidResignKey(_ notification: Notification) { session.finishEditing(); session.showsToolShortcuts = false }
 }
 
 struct BoardWorkspace: View {

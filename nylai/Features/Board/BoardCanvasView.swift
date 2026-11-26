@@ -39,6 +39,7 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
     private var noteEditor: BoardInlineTextView?
     private var noteScroll: NSScrollView?
     private var editorID: UUID?
+    private var menuPoint: CGPoint?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -206,7 +207,7 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
             arc.appendArc(withCenter: h.rotation, radius: 7, startAngle: 35, endAngle: 320)
             arc.lineWidth = 1.6; arc.stroke()
         }
-        if item.kind == .rectangle { drawHandle(h.corner, circle: true) }
+        if item.kind.supportsCornerRadius { drawHandle(h.corner, circle: true) }
     }
 
     private func drawGrid() {
@@ -286,7 +287,7 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
             } else {
                 let h = handles(item)
                 if item.kind.isAnnotation && near(h.rotation, screen) { drag = .rotate(start: p, item: item); return }
-                if item.kind == .rectangle && near(h.corner, screen) { drag = .corner(item: item); return }
+                if item.kind.supportsCornerRadius && near(h.corner, screen) { drag = .corner(item: item); return }
                 if near(h.resize, screen) { drag = .resize(start: p, item: item); return }
             }
         }
@@ -360,7 +361,9 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
     override func rightMouseDown(with event: NSEvent) {
         session.finishEditing(); syncEditor()
         window?.makeFirstResponder(self)
-        let target = hit(world(point(event)))
+        let location = world(point(event))
+        menuPoint = location
+        let target = hit(location)
         if let target { session.select(target, extending: false) } else { session.selection = [] }
         let menu = NSMenu()
         func add(_ title: String, _ selector: Selector, enabled: Bool = true) {
@@ -389,6 +392,7 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
             add("清空画布", #selector(menuClear), enabled: !session.board.items.isEmpty)
         }
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+        menuPoint = nil
     }
     @objc private func menuCopy() { session.copy() }
     @objc private func menuLock() { session.toggleLock() }
@@ -399,8 +403,8 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
     @objc private func menuGroup() { session.group() }
     @objc private func menuUngroup() { session.ungroup() }
     @objc private func menuDelete() { session.delete() }
-    @objc private func menuPaste() { session.paste() }
-    @objc private func menuNote() { session.addNote() }
+    @objc private func menuPaste() { session.paste(at: menuPoint) }
+    @objc private func menuNote() { session.addNote(at: menuPoint); syncEditor() }
     @objc private func menuSelectAll() { selectAll(nil) }
     @objc private func menuFit() { session.fit() }
     @objc private func menuUndo() { session.undo() }
@@ -471,7 +475,9 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
             if kind == .pen || kind == .marker {
                 if let last = stroke.last, hypot(p.x - last.x, p.y - last.y) >= 1 / viewport.zoom { stroke.append(p) }
             } else {
-                stroke = [start, BoardGeometry.constrained(p, from: start, shape: kind.isShape, control: event.modifierFlags.contains(.control), shift: event.modifierFlags.contains(.shift))]
+                var end = BoardGeometry.constrained(p, from: start, shape: kind.isShape, control: event.modifierFlags.contains(.control), shift: event.modifierFlags.contains(.shift))
+                if kind == .triangle && event.modifierFlags.contains(.control) { end.y = start.y + (end.y - start.y) * sqrt(3) / 2 }
+                stroke = [start, end]
             }
             let rect = strokeBounds(stroke)
             let normalized = stroke.map { CGPoint(x: ($0.x - rect.minX) / rect.width, y: ($0.y - rect.minY) / rect.height) }
