@@ -113,34 +113,8 @@ enum LauncherFileSearch {
     static func search(_ query: String, roots: [String]) async -> [URL] {
         guard !query.isEmpty else { return [] }
         async let spotlight = LauncherProcess.output("/usr/bin/mdfind", arguments: ["-0", "-interpret", query], limit: 350_000)
-        let custom = Task.detached(priority: .utility) { () -> [URL] in
-            let normalized = LauncherRank.folded(query)
-            let tokens = normalized.split(whereSeparator: \.isWhitespace)
-            var result: [URL] = []
-            var visited = 0
-            for root in roots.prefix(12) {
-                guard let iterator = FileManager.default.enumerator(at: URL(fileURLWithPath: (root as NSString).expandingTildeInPath),
-                    includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { continue }
-                for case let url as URL in iterator {
-                    if Task.isCancelled || visited >= 30_000 || result.count >= 150 { return result }
-                    visited += 1
-                    if ["node_modules", "vendor", "DerivedData", "build", "dist", ".git"].contains(url.lastPathComponent) {
-                        iterator.skipDescendants(); continue
-                    }
-                    let path = LauncherRank.folded(url.path)
-                    if tokens.allSatisfy({ path.contains($0) }) { result.append(url); continue }
-                    let ext = url.pathExtension.lowercased()
-                    if ["md", "txt", "swift", "ts", "tsx", "js", "json", "py", "go", "rs", "yaml", "yml", "html", "css", "sql"].contains(ext),
-                       let handle = try? FileHandle(forReadingFrom: url) {
-                        let data = try? handle.read(upToCount: 64 * 1024)
-                        try? handle.close()
-                        if let data, let text = String(data: data, encoding: .utf8), tokens.allSatisfy({ LauncherRank.folded(text).contains($0) }) {
-                            result.append(url)
-                        }
-                    }
-                }
-            }
-            return result
+        let custom = Task.detached(priority: .utility) {
+            searchCustomRoots(query, roots: roots)
         }
         let found = await spotlight
         let independent = await withTaskCancellationHandler { await custom.value } onCancel: { custom.cancel() }
@@ -148,5 +122,35 @@ enum LauncherFileSearch {
         let paths = (found ?? "").split(separator: "\0").prefix(350).map { URL(fileURLWithPath: String($0)) }
         var seen = Set<String>()
         return (Array(paths) + independent).filter { seen.insert($0.standardizedFileURL.path).inserted && FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private static func searchCustomRoots(_ query: String, roots: [String]) -> [URL] {
+        let normalized = LauncherRank.folded(query)
+        let tokens = normalized.split(whereSeparator: \.isWhitespace)
+        var result: [URL] = []
+        var visited = 0
+        for root in roots.prefix(12) {
+            guard let iterator = FileManager.default.enumerator(at: URL(fileURLWithPath: (root as NSString).expandingTildeInPath),
+                includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { continue }
+            for case let url as URL in iterator {
+                if Task.isCancelled || visited >= 30_000 || result.count >= 150 { return result }
+                visited += 1
+                if ["node_modules", "vendor", "DerivedData", "build", "dist", ".git"].contains(url.lastPathComponent) {
+                    iterator.skipDescendants(); continue
+                }
+                let path = LauncherRank.folded(url.path)
+                if tokens.allSatisfy({ path.contains($0) }) { result.append(url); continue }
+                let ext = url.pathExtension.lowercased()
+                if ["md", "txt", "swift", "ts", "tsx", "js", "json", "py", "go", "rs", "yaml", "yml", "html", "css", "sql"].contains(ext),
+                   let handle = try? FileHandle(forReadingFrom: url) {
+                    let data = try? handle.read(upToCount: 64 * 1024)
+                    try? handle.close()
+                    if let data, let text = String(data: data, encoding: .utf8), tokens.allSatisfy({ LauncherRank.folded(text).contains($0) }) {
+                        result.append(url)
+                    }
+                }
+            }
+        }
+        return result
     }
 }

@@ -292,7 +292,7 @@ final class BoardCanvasView: NSView {
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "v": session.paste(); return
             case "c": session.copy(); return
-            case "a": session.selection = Set(session.board.items.map(\.id)); return
+            case "a": selectAll(nil); return
             case "z": if event.modifierFlags.contains(.shift) { session.store.redo() } else { session.store.undo() }; return
             case "g": if event.modifierFlags.contains(.shift) { session.ungroup() } else { session.group() }; return
             case "0": session.fit(); return
@@ -321,7 +321,7 @@ final class BoardCanvasView: NSView {
     }
     @objc func paste(_ sender: Any?) { session.paste() }
     @objc func copy(_ sender: Any?) { session.copy() }
-    @objc func selectAll(_ sender: Any?) { session.selection = Set(session.board.items.map(\.id)) }
+    override func selectAll(_ sender: Any?) { session.selection = Set(session.board.items.map(\.id)) }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { .copy }
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {

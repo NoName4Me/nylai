@@ -66,23 +66,25 @@ final class LauncherWindowController: NSObject, NSWindowDelegate {
     private func installMonitor() {
         removeMonitor()
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            MainActor.assumeIsolated {
+            let consumed = MainActor.assumeIsolated {
                 guard let self, event.window === self.panel, self.panel?.isVisible == true,
-                      !self.model.settingsPresented else { return event }
-                if let editor = self.panel?.firstResponder as? NSTextView, editor.hasMarkedText() { return event }
+                      !self.model.settingsPresented else { return false }
+                if let editor = self.panel?.firstResponder as? NSTextView, editor.hasMarkedText() { return false }
                 let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
                 if flags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "k" {
-                    self.model.toggleActions(); return nil
+                    self.model.toggleActions(); return true
                 }
                 switch event.keyCode {
-                case 125: self.model.move(1); return nil
-                case 126: self.model.move(-1); return nil
-                case 48: self.model.cycleScope(reverse: flags.contains(.shift)); return nil
-                case 36, 76: self.model.confirm(); return nil
-                case 53: self.model.escape(); return nil
-                default: return event
+                case 125: self.model.move(1)
+                case 126: self.model.move(-1)
+                case 48: self.model.cycleScope(reverse: flags.contains(.shift))
+                case 36, 76: self.model.confirm()
+                case 53: self.model.escape()
+                default: return false
                 }
+                return true
             }
+            return consumed ? nil : event
         }
     }
 

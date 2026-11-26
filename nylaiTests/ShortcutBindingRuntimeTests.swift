@@ -397,6 +397,9 @@ private func runtimeTestConfiguration() -> ShortcutBindingConfiguration {
         keyCode: UInt32(kVK_F5),
         modifiers: [.control, .option]
     )
+    if let launcherIndex = configuration.bindings.firstIndex(where: { $0.id == .launcher }) {
+        configuration.bindings[launcherIndex].isEnabled = false
+    }
     return configuration
 }
 
