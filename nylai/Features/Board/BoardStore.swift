@@ -135,6 +135,7 @@ final class BoardStore {
     private(set) var redoStack: [BoardLibrary] = []
     @ObservationIgnored private let cache = NSCache<NSUUID, NSImage>()
     @ObservationIgnored private var viewportSave: Task<Void, Never>?
+    @ObservationIgnored private var recognitionTasks: [UUID: Task<Void, Never>] = [:]
 
     init(directory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("nylai/Boards", isDirectory: true)) {
@@ -246,6 +247,13 @@ final class BoardStore {
         do { try persist(library) } catch { self.error = error.localizedDescription }
     }
 
+    func stop() {
+        for task in recognitionTasks.values { task.cancel() }
+        recognitionTasks.removeAll()
+        flush()
+        cache.removeAllObjects()
+    }
+
     private func assetURL(_ id: UUID) -> URL {
         directory.appendingPathComponent("Images", isDirectory: true)
             .appendingPathComponent(id.uuidString + ".png")
@@ -283,10 +291,11 @@ final class BoardStore {
             }
             if !saved { try? FileManager.default.removeItem(at: url); return false }
             let input = ClipboardContent.image(cg)
-            Task { [weak self] in
+            recognitionTasks[item.id] = Task { [weak self] in
+                defer { self?.recognitionTasks.removeValue(forKey: item.id) }
                 guard case .image(let cg) = input else { return }
                 guard let text = try? await ScreenshotTextRecognition.recognize(cg, layout: .lines),
-                      let self, self.document(boardID)?.items.contains(where: { $0.id == item.id }) == true else { return }
+                      !Task.isCancelled, let self, self.document(boardID)?.items.contains(where: { $0.id == item.id }) == true else { return }
                 self.change(undoable: false) { value in
                     guard let b = value.boards.firstIndex(where: { $0.id == boardID }),
                           let i = value.boards[b].items.firstIndex(where: { $0.id == item.id }) else { return }

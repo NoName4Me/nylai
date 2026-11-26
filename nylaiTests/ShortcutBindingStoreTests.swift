@@ -32,6 +32,23 @@ final class ShortcutBindingStoreTests: XCTestCase {
         XCTAssertNil(configuration.bindings[5].shortcut)
     }
 
+    func testVersionEightKeepsExistingCommandSpaceAndAddsNewActions() throws {
+        let fixture = try StoreFixture()
+        defer { fixture.remove() }
+        try fixture.createParentDirectory()
+        var old = ShortcutBindingConfiguration.defaults
+        old.version = 8
+        old.bindings = Array(old.bindings.prefix(6))
+        old.bindings[0].shortcut = ShortcutKey(keyCode: UInt32(kVK_Space), modifiers: [.command])
+        try JSONEncoder().encode(old).write(to: fixture.fileURL)
+        let result = try fixture.store.load()
+        XCTAssertEqual(result.version, ShortcutBindingConfiguration.currentVersion)
+        XCTAssertEqual(result.bindings.first, old.bindings.first)
+        XCTAssertNil(result.bindings.first { $0.action == .openLauncher }?.shortcut)
+        XCTAssertTrue(result.bindings.contains { $0.action == .openBoard })
+        XCTAssertTrue(result.bindings.contains { $0.action == .quickCapture })
+    }
+
     func testVersionOneMigratesInteractiveCaptureWithoutReplacingExistingBindings() throws {
         let fixture = try StoreFixture()
         defer { fixture.remove() }

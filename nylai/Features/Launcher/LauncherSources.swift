@@ -124,7 +124,7 @@ final class LauncherSources {
     }
 
     private func copy(_ text: String, title: String = "复制") -> LauncherAction {
-        action("copy", title, "doc.on.doc", restore: true) {
+        action("copy:\(title)", title, "doc.on.doc", restore: true) {
             try SystemClipboardPasteboard().write(.text(text), sourceBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.noname4me.nylai")
         }
     }

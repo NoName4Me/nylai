@@ -31,6 +31,8 @@ final class ModuleStateTests: XCTestCase {
         XCTAssertFalse(controller.isEnabled(.mouseGestures))
         XCTAssertFalse(controller.isEnabled(.clipboard))
         XCTAssertFalse(controller.isEnabled(.windowSwitcher))
+        XCTAssertFalse(controller.isEnabled(.board))
+        XCTAssertFalse(controller.isEnabled(.launcher))
         XCTAssertEqual(controller.status(for: .globalShortcuts), .available)
 
         try controller.setEnabled(false, for: .globalShortcuts)
@@ -160,6 +162,10 @@ final class ModuleStateTests: XCTestCase {
         XCTAssertEqual(registrar.activeCount, 0)
 
         try controller.setEnabled(true, for: .clipboard)
+        XCTAssertEqual(registrar.activeCount, 1)
+        try controller.setEnabled(true, for: .launcher)
+        XCTAssertEqual(registrar.activeCount, 2)
+        try controller.setEnabled(false, for: .launcher)
         XCTAssertEqual(registrar.activeCount, 1)
     }
 }

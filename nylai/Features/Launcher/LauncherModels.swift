@@ -190,7 +190,7 @@ enum LauncherRank {
     static func romanized(_ value: String) -> (full: String, initials: String) {
         let transformed = value.applyingTransform(.toLatin, reverse: false) ?? value
         let words = folded(transformed).split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-        return (words.joined(), words.compactMap(\.first).map(String.init).joined())
+        return (words.joined(), words.compactMap { $0.first }.map { String($0) }.joined())
     }
 
     static func score(query: String, title: String, keywords: String, subtitle: String, alias: String? = nil) -> Int? {

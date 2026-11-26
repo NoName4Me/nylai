@@ -58,8 +58,12 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
             paste: { [weak self] id in
                 guard let self else { return }
                 if let images = NSPasteboard.general.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage], !images.isEmpty {
-                    for image in images { self.store.addImage(image, boardID: id, at: self.store.nextCapturePoint(in: id)) }
-                    self.captureWindow?.orderOut(nil)
+                    var saved = true
+                    for image in images {
+                        if !self.store.addImage(image, boardID: id, at: self.store.nextCapturePoint(in: id)) { saved = false; break }
+                    }
+                    if saved { self.captureWindow?.orderOut(nil) }
+                    else { NSAlert(error: BoardStoreError.invalidImage).runModal() }
                 } else if let text = NSPasteboard.general.string(forType: .string), !text.isEmpty {
                     if self.add(.text(text), boardID: id) { self.captureWindow?.orderOut(nil) }
                 }
@@ -116,7 +120,7 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
     }
 
     func close() {
-        store.flush()
+        store.stop()
         window?.close()
         captureWindow?.close()
         for panel in notes.values { panel.close() }
@@ -368,6 +372,7 @@ private struct BoardPinnedNote: View {
     let boardID: UUID
     let itemID: UUID
     @State private var editing = false
+    @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         if let item = store.document(boardID)?.items.first(where: { $0.id == itemID }) {
             VStack(alignment: .leading) {
@@ -380,7 +385,7 @@ private struct BoardPinnedNote: View {
                 Button(editing ? "完成" : "编辑") { editing.toggle() }.disabled(item.locked)
             }.padding(10)
                 .background(Color(nsColor: item.color == .clear ? .windowBackgroundColor : item.color.paper))
-                .environment(\.colorScheme, item.color == .clear ? .light : .light)
+                .environment(\.colorScheme, item.color == .clear ? colorScheme : .light)
         } else {
             Text("便签已删除").foregroundStyle(.secondary).padding()
         }
