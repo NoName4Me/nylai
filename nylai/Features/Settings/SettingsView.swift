@@ -456,9 +456,9 @@ struct SettingsView: View {
                     HStack(spacing: 7) {
                         Text(module.title)
                             .font(.system(size: 13, weight: .medium))
-                        Text(status.title)
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(moduleStatusColor(status))
+                        if case .starting = status {
+                            ProgressView().controlSize(.mini)
+                        }
                     }
                     Text(module.summary)
                         .font(.system(size: 11.5))

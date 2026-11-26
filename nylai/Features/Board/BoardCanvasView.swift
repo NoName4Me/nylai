@@ -7,16 +7,18 @@ struct BoardCanvasRepresentable: NSViewRepresentable {
     let board: BoardDocument
     let selection: Set<UUID>
     let tool: BoardTool
+    let editingID: UUID?
 
     func makeNSView(context: Context) -> BoardCanvasView { BoardCanvasView(session: session) }
     func updateNSView(_ view: BoardCanvasView, context: Context) {
         view.needsDisplay = true
+        view.syncEditor()
         view.window?.invalidateCursorRects(for: view)
     }
 }
 
 @MainActor
-final class BoardCanvasView: NSView {
+final class BoardCanvasView: NSView, NSTextViewDelegate {
     let session: BoardSession
     private enum Drag {
         case pan(start: CGPoint, viewport: BoardViewport)
@@ -31,6 +33,9 @@ final class BoardCanvasView: NSView {
     private var stroke: [CGPoint] = []
     private var spaceDown = false
     private var colorNoteID: UUID?
+    private var noteEditor: BoardInlineTextView?
+    private var noteScroll: NSScrollView?
+    private var editorID: UUID?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -48,6 +53,78 @@ final class BoardCanvasView: NSView {
     override func layout() {
         super.layout()
         if session.viewportSize != bounds.size { session.viewportSize = bounds.size }
+        layoutEditor()
+    }
+
+    func syncEditor() {
+        let id = session.editingID
+        if editorID == id { layoutEditor(); return }
+        noteEditor?.onFinish = nil
+        noteEditor?.onResign = nil
+        noteEditor?.delegate = nil
+        if window?.firstResponder === noteEditor { window?.makeFirstResponder(self) }
+        noteScroll?.removeFromSuperview()
+        noteScroll = nil; noteEditor = nil; editorID = nil
+        guard let id, session.board.items.contains(where: { $0.id == id }) else { return }
+        let scroll = NSScrollView(frame: .zero)
+        scroll.borderType = .noBorder
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        let editor = BoardInlineTextView(frame: .zero)
+        editor.isRichText = false
+        editor.importsGraphics = false
+        editor.drawsBackground = false
+        editor.allowsUndo = true
+        editor.isVerticallyResizable = true
+        editor.isHorizontallyResizable = false
+        editor.autoresizingMask = [.width]
+        editor.textContainer?.widthTracksTextView = true
+        editor.textContainer?.lineFragmentPadding = 0
+        editor.textContainerInset = .zero
+        editor.textColor = NSColor(calibratedWhite: 0.16, alpha: 1)
+        editor.insertionPointColor = editor.textColor ?? .black
+        editor.string = session.noteDraft
+        editor.delegate = self
+        editor.onFinish = { [weak self] in self?.finishInlineEdit() }
+        editor.onResign = { [weak self] in
+            guard let self, self.session.editingID == id else { return }
+            self.session.finishEditing()
+        }
+        scroll.documentView = editor
+        editorID = id; noteEditor = editor; noteScroll = scroll
+        addSubview(scroll)
+        layoutEditor()
+        editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+        DispatchQueue.main.async { [weak self, weak editor] in
+            guard let self, let editor, self.editorID == id, self.session.editingID == id else { return }
+            self.window?.makeFirstResponder(editor)
+        }
+    }
+
+    private func layoutEditor() {
+        guard let id = editorID, let editor = noteEditor, let scroll = noteScroll,
+              let item = session.board.items.first(where: { $0.id == id }) else { return }
+        let scale = viewport.zoom
+        let frame = viewport.rect(item.frame, in: bounds.size)
+        scroll.frame = CGRect(x: frame.minX + 12 * scale, y: frame.minY + 32 * scale,
+                              width: max(1, frame.width - 24 * scale), height: max(1, frame.height - 42 * scale))
+        editor.minSize = CGSize(width: 0, height: scroll.contentSize.height)
+        editor.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        if abs((editor.font?.pointSize ?? 0) - 14 * scale) > 0.1 { editor.font = .systemFont(ofSize: 14 * scale) }
+        editor.frame.size.width = scroll.contentSize.width
+        editor.textContainer?.containerSize = CGSize(width: scroll.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+    }
+
+    func textDidChange(_ notification: Notification) {
+        if let editor = noteEditor, notification.object as? NSTextView === editor { session.noteDraft = editor.string }
+    }
+
+    private func finishInlineEdit() {
+        session.finishEditing()
+        window?.makeFirstResponder(self)
+        syncEditor()
+        needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -59,7 +136,7 @@ final class BoardCanvasView: NSView {
             let shown = preview.first { $0.id == item.id } ?? item
             let frame = viewport.rect(shown.frame, in: bounds.size)
             guard frame.intersects(dirtyRect.insetBy(dx: -20, dy: -20)) else { continue }
-            BoardRenderer.draw(shown, in: frame, scale: viewport.zoom, store: session.store, showsNoteControls: true)
+            BoardRenderer.draw(shown, in: frame, scale: viewport.zoom, store: session.store, showsNoteControls: true, hidesNoteText: session.editingID == item.id)
         }
         for item in preview where !items.contains(where: { $0.id == item.id }) {
             BoardRenderer.draw(item, in: viewport.rect(item.frame, in: bounds.size), scale: viewport.zoom, store: session.store)
@@ -114,6 +191,8 @@ final class BoardCanvasView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        session.finishEditing()
+        syncEditor()
         window?.makeFirstResponder(self)
         let screen = point(event)
         let p = world(screen)
@@ -155,7 +234,7 @@ final class BoardCanvasView: NSView {
             }
             session.select(item, extending: event.modifierFlags.contains(.shift))
             if event.clickCount == 2, !item.locked {
-                if item.kind == .note { session.editingID = item.id; return }
+                if item.kind == .note { session.beginEditing(item.id); syncEditor(); return }
                 if let asset = item.asset, let image = session.store.image(asset) {
                     let panel = NSWindow(contentRect: CGRect(origin: .zero, size: CGSize(width: 720, height: 520)),
                         styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
@@ -182,7 +261,7 @@ final class BoardCanvasView: NSView {
     private func showNoteColors(_ item: BoardItem, event: NSEvent) {
         colorNoteID = item.id
         let menu = NSMenu()
-        for color in BoardColor.allCases {
+        for color in BoardColor.noteColors {
             let entry = menu.addItem(withTitle: color.title, action: #selector(changeNoteColor(_:)), keyEquivalent: "")
             entry.target = self
             entry.representedObject = color.rawValue
@@ -251,7 +330,7 @@ final class BoardCanvasView: NSView {
             let normalized = stroke.map { CGPoint(x: ($0.x - rect.minX) / rect.width, y: ($0.y - rect.minY) / rect.height) }
             let id = preview.first?.id ?? UUID()
             preview = [BoardItem(id: id, kind: kind, frame: rect, color: session.color,
-                                 points: normalized, strokeWidth: session.strokeWidth)]
+                                 points: normalized, strokeWidth: session.strokeWidth, dashed: session.dashed, translucent: session.translucent)]
         }
         needsDisplay = true
     }
@@ -271,7 +350,7 @@ final class BoardCanvasView: NSView {
             case .stroke(_, let kind):
                 if preview.isEmpty, let first = stroke.first, kind == .pen || kind == .marker {
                     preview = [BoardItem(kind: kind, frame: CGRect(origin: first, size: CGSize(width: 1, height: 1)),
-                                         color: session.color, points: [.zero], strokeWidth: session.strokeWidth)]
+                                         color: session.color, points: [.zero], strokeWidth: session.strokeWidth, dashed: session.dashed, translucent: session.translucent)]
                 }
                 let items = preview
                 session.store.editBoard(session.board.id) { $0.items.append(contentsOf: items) }
@@ -300,6 +379,7 @@ final class BoardCanvasView: NSView {
     }
 
     override func otherMouseDown(with event: NSEvent) {
+        session.finishEditing(); syncEditor()
         window?.makeFirstResponder(self)
         drag = .pan(start: point(event), viewport: viewport)
     }
@@ -331,7 +411,7 @@ final class BoardCanvasView: NSView {
             case "v": session.paste(); return
             case "c": session.copy(); return
             case "a": selectAll(nil); return
-            case "z": if event.modifierFlags.contains(.shift) { session.store.redo() } else { session.store.undo() }; return
+            case "z": if event.modifierFlags.contains(.shift) { session.redo() } else { session.undo() }; return
             case "g": if event.modifierFlags.contains(.shift) { session.ungroup() } else { session.group() }; return
             case "0": if event.modifierFlags.contains(.shift) { session.fit() } else { session.resetZoom() }; return
             case "+", "=": session.zoom(1.25); return
@@ -367,5 +447,25 @@ final class BoardCanvasView: NSView {
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         session.paste(sender.draggingPasteboard, at: world(convert(sender.draggingLocation, from: nil)))
         return true
+    }
+}
+
+@MainActor
+private final class BoardInlineTextView: NSTextView {
+    var onFinish: (() -> Void)?
+    var onResign: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if !hasMarkedText(), event.keyCode == 53 || (event.keyCode == 36 && event.modifierFlags.contains(.command)) {
+            onFinish?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        if accepted { onResign?() }
+        return accepted
     }
 }

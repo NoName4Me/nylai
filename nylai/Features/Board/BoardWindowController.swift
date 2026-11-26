@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class BoardWindowController: NSObject, NSWindowDelegate {
+final class BoardWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
+    private let titleItemID = NSToolbarItem.Identifier("nylai.board.title")
     let store = BoardStore()
     private lazy var session = BoardSession(store: store)
     private var window: NSWindow?
@@ -13,13 +14,20 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
         if let itemID { session.focus(itemID) }
         if window == nil {
             let value = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1000, height: 720),
-                                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                  backing: .buffered, defer: false)
             value.minSize = CGSize(width: 660, height: 420)
             value.isReleasedWhenClosed = false
             value.title = ""
             value.titleVisibility = .hidden
-            value.titlebarAppearsTransparent = true
+            value.titlebarAppearsTransparent = false
+            let toolbar = NSToolbar(identifier: "nylai.board.toolbar")
+            toolbar.delegate = self
+            toolbar.displayMode = .iconOnly
+            toolbar.allowsUserCustomization = false
+            toolbar.centeredItemIdentifier = titleItemID
+            value.toolbar = toolbar
+            value.toolbarStyle = .unifiedCompact
             value.isMovableByWindowBackground = true
             value.delegate = self
             value.center()
@@ -30,6 +38,62 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
         }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, titleItemID]
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, titleItemID, .flexibleSpace]
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        guard identifier == titleItemID else { return nil }
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = L10n.shared.string("画布")
+        let view = NSHostingView(rootView: BoardTitleMenu(session: session,
+            rename: { [weak self] in self?.requestBoardName(creating: false) },
+            create: { [weak self] in self?.requestBoardName(creating: true) },
+            delete: { [weak self] in self?.confirmDelete() }).nylaiLocalized())
+        view.frame = CGRect(x: 0, y: 0, width: 220, height: 28)
+        item.view = view
+        item.minSize = CGSize(width: 170, height: 28)
+        item.maxSize = CGSize(width: 220, height: 28)
+        return item
+    }
+
+    private func requestBoardName(creating: Bool) {
+        session.finishEditing()
+        let alert = NSAlert()
+        alert.messageText = L10n.shared.string(creating ? "新建画布" : "重命名画布")
+        alert.addButton(withTitle: L10n.shared.string("确定"))
+        alert.addButton(withTitle: L10n.shared.string("取消"))
+        let field = NSTextField(frame: CGRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = creating ? "" : session.board.title
+        field.placeholderString = L10n.shared.string("名称")
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        if creating {
+            session.selection = []
+            store.create(title)
+        } else { store.editBoard(session.board.id) { $0.title = title } }
+    }
+
+    private func confirmDelete() {
+        session.finishEditing()
+        guard store.library.boards.count > 1 else { return }
+        let alert = NSAlert()
+        alert.messageText = L10n.shared.string("删除当前画布？")
+        alert.addButton(withTitle: L10n.shared.string("删除"))
+        alert.addButton(withTitle: L10n.shared.string("取消"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        session.selection = []
+        store.delete(session.board.id)
     }
 
     @discardableResult
@@ -92,6 +156,7 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
     }
 
     func close() {
+        session.finishEditing()
         store.stop()
         window?.close()
         for panel in notes.values { panel.close() }
@@ -102,17 +167,14 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
     func refreshLocalization() {
         for panel in notes.values { panel.title = L10n.shared.string("便签") }
     }
-    func windowWillClose(_ notification: Notification) { store.flush() }
+    func windowWillClose(_ notification: Notification) { session.finishEditing(); store.flush() }
+    func windowDidResignKey(_ notification: Notification) { session.finishEditing() }
 }
 
 struct BoardWorkspace: View {
     @Bindable var session: BoardSession
     let float: () -> Void
     @State private var query = ""
-    @State private var name = ""
-    @State private var naming = false
-    @State private var creating = false
-    @State private var confirmsDelete = false
     @State private var shortcutsShown = false
 
     private var board: BoardDocument { session.board }
@@ -126,7 +188,7 @@ struct BoardWorkspace: View {
             header
             Divider()
             ZStack(alignment: .bottom) {
-                BoardCanvasRepresentable(session: session, board: board, selection: session.selection, tool: session.tool)
+                BoardCanvasRepresentable(session: session, board: board, selection: session.selection, tool: session.tool, editingID: session.editingID)
                     .id(board.id)
                 if board.items.isEmpty {
                     VStack(spacing: 8) {
@@ -156,29 +218,7 @@ struct BoardWorkspace: View {
             }
         }
         .frame(minWidth: 660, minHeight: 420)
-        .ignoresSafeArea(.container, edges: .top)
-        .sheet(isPresented: Binding(get: { session.editingID != nil }, set: { if !$0 { session.editingID = nil } })) {
-            if let id = session.editingID, let item = board.items.first(where: { $0.id == id }) {
-                BoardNoteEditor(text: item.text) { text in
-                    session.store.updateText(text, boardID: board.id, itemID: id)
-                    session.editingID = nil
-                } cancel: { session.editingID = nil }
-                .id(id)
-            }
-        }
-        .alert(creating ? "新建画布" : "重命名画布", isPresented: $naming) {
-            TextField("名称", text: $name)
-            Button("取消", role: .cancel) {}
-            Button("确定") {
-                let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !title.isEmpty else { return }
-                if creating { session.selection = []; session.store.create(title) }
-                else { session.store.editBoard(board.id) { $0.title = title } }
-            }
-        }
-        .confirmationDialog("删除当前画布？", isPresented: $confirmsDelete) {
-            Button("删除", role: .destructive) { session.selection = []; session.store.delete(board.id) }
-        }
+        .onChange(of: board.id) { _, _ in query = "" }
         .alert("画布", isPresented: Binding(get: { session.store.error != nil }, set: { if !$0 { session.store.error = nil } })) {
             Button("确定") { session.store.error = nil }
         } message: { Text(session.store.error ?? "") }
@@ -194,56 +234,21 @@ struct BoardWorkspace: View {
     }
 
     private var header: some View {
-        ZStack {
-            HStack {
-                Spacer()
-                Button(action: float) { Image(systemName: session.floating ? "pin.fill" : "pin") }.help("置顶画布")
-                Button { session.export() } label: { Image(systemName: "square.and.arrow.up") }.help("导出 PNG")
-                Button { shortcutsShown.toggle() } label: { Image(systemName: "keyboard") }.help("画布快捷键")
-                    .popover(isPresented: $shortcutsShown) { shortcutHelp }
-            }.buttonStyle(.borderless).padding(.horizontal, 14)
-            Menu {
-                ForEach(session.store.library.boards) { document in
-                    Button {
-                        session.switchBoard(document.id); query = ""
-                    } label: {
-                        if document.id == board.id { Label(document.title, systemImage: "checkmark") }
-                        else { Text(document.title) }
-                    }
-                }
-                Divider()
-                Button("新建画布") { creating = true; name = ""; naming = true }
-                Button("重命名") { creating = false; name = board.title; naming = true }
-                Button("设为默认画布") { session.store.makeDefault(board.id) }
-                    .disabled(session.store.library.defaultID == board.id)
-                Button("删除画布", role: .destructive) { confirmsDelete = true }
-                    .disabled(session.store.library.boards.count <= 1)
-            } label: {
-                Text(board.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-            }.menuStyle(.borderlessButton).frame(maxWidth: 200)
-        }.frame(height: 42)
-        .overlay(alignment: .leading) {
-            TextField("搜索当前画布", text: $query).textFieldStyle(.roundedBorder).frame(width: 145).padding(.leading, 84)
-        }
+        HStack(spacing: 10) {
+            Spacer()
+            TextField("搜索当前画布", text: $query).textFieldStyle(.roundedBorder).frame(width: 180)
+            Button(action: float) { Image(systemName: session.floating ? "pin.fill" : "pin") }.help("置顶画布")
+            Button { session.export() } label: { Image(systemName: "square.and.arrow.up") }.help("导出 PNG")
+        }.buttonStyle(.borderless).padding(.horizontal, 14).padding(.vertical, 6)
     }
 
     private var toolbar: some View {
         VStack(spacing: 6) {
-            if session.tool.isShape {
-                HStack(spacing: 5) {
-                    ForEach(BoardTool.shapes) { shape in
-                        Button { session.tool = shape } label: {
-                            Image(systemName: shape.symbol).frame(width: 30, height: 27)
-                                .background(session.tool == shape ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
-                        }.buttonStyle(.plain).help(shape.title)
-                    }
-                }.padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
-                    .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.12)) }
-            }
+            if session.tool.showsDrawingStyle { drawingStyleBar }
             HStack(spacing: 5) {
             ForEach(BoardTool.allCases.filter { !$0.isShape }) { tool in
                 Button {
-                    session.tool = tool
+                    session.chooseTool(tool)
                 } label: {
                     Image(systemName: tool.symbol)
                         .frame(width: 23, height: 25)
@@ -251,22 +256,11 @@ struct BoardWorkspace: View {
                                     in: RoundedRectangle(cornerRadius: 5))
                 }.buttonStyle(.plain).help(tool.title)
             }
-            Button { session.tool = session.lastShape } label: {
+            Button { session.chooseTool(session.lastShape) } label: {
                 Image(systemName: session.lastShape.symbol).frame(width: 23, height: 25)
                     .background(session.tool.isShape ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
             }.buttonStyle(.plain).help("图形")
             Divider().frame(height: 22)
-            Menu {
-                ForEach(BoardColor.allCases) { color in
-                    Button { session.color = color; session.mutateSelected { if $0.kind != .note { $0.color = color } } } label: {
-                        Label(color.title, systemImage: session.color == color ? "checkmark.circle.fill" : "circle.fill")
-                    }
-                }
-                Button("细") { session.strokeWidth = 2 }
-                Button("中") { session.strokeWidth = 4 }
-                Button("粗") { session.strokeWidth = 8 }
-            } label: { Circle().fill(Color(nsColor: session.color.paper == .clear ? .labelColor : session.color.ink)).frame(width: 16, height: 16) }
-            .menuStyle(.borderlessButton).fixedSize()
             Menu {
                 Button("粘贴") { session.paste() }
                 Button("复制") { session.copy() }.disabled(session.selection.isEmpty)
@@ -283,15 +277,19 @@ struct BoardWorkspace: View {
             } label: { Image(systemName: "ellipsis.circle") }
                 .menuStyle(.borderlessButton).fixedSize()
             Divider().frame(height: 22)
-            Button { session.store.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+            Button { session.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .disabled(session.store.undoStack.isEmpty).help("撤销")
-            Button { session.store.redo() } label: { Image(systemName: "arrow.uturn.forward") }
+            Button { session.redo() } label: { Image(systemName: "arrow.uturn.forward") }
                 .disabled(session.store.redoStack.isEmpty).help("重做")
             Button { session.zoom(0.8) } label: { Image(systemName: "minus") }
             Button { session.resetZoom() } label: { Text("\(Int(board.viewport.zoom * 100))%").monospacedDigit().font(.caption) }
                 .help("100% 并居中")
             Button { session.zoom(1.25) } label: { Image(systemName: "plus") }
             Button { session.fit() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }.help("适应全部")
+            Divider().frame(height: 22)
+            Button { session.finishEditing(); shortcutsShown.toggle() } label: {
+                Label("快捷键", systemImage: "keyboard").font(.caption)
+            }.help("画布快捷键").popover(isPresented: $shortcutsShown) { shortcutHelp }
         }
         .buttonStyle(.borderless)
         .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
@@ -300,8 +298,49 @@ struct BoardWorkspace: View {
         }
     }
 
+    private var drawingStyleBar: some View {
+        HStack(spacing: 5) {
+            if session.tool.isShape {
+                ForEach(BoardTool.shapes) { shape in
+                    Button { session.chooseTool(shape) } label: {
+                        Image(systemName: shape.symbol).frame(width: 25, height: 26)
+                            .background(session.tool == shape ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                    }.buttonStyle(.plain).help(shape.title)
+                }
+                Divider().frame(height: 20)
+            }
+            ForEach(BoardColor.allCases) { color in
+                Button { session.color = color } label: {
+                    Circle().fill(Color(nsColor: color.ink)).frame(width: 14, height: 14)
+                        .padding(3)
+                        .overlay { Circle().strokeBorder(session.color == color ? Color.accentColor : .clear, lineWidth: 1.5) }
+                }.buttonStyle(.plain).help(color == .clear ? L10n.shared.string("默认墨色") : color.title)
+            }
+            Divider().frame(height: 20)
+            ForEach([CGFloat(2), 4, 8], id: \.self) { width in
+                Button { session.strokeWidth = width } label: {
+                    Capsule().fill(Color.primary).frame(width: 20, height: width)
+                        .frame(width: 26, height: 26)
+                        .background(session.strokeWidth == width ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                }.buttonStyle(.plain).help(width == 2 ? "细" : width == 4 ? "中" : "粗")
+            }
+            Divider().frame(height: 20)
+            Button { session.dashed.toggle() } label: {
+                Image(systemName: session.dashed ? "line.horizontal.3" : "minus")
+                    .frame(width: 26, height: 26)
+                    .background(session.dashed ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
+            }.buttonStyle(.plain).help(session.dashed ? "虚线" : "实线")
+            Button { session.translucent.toggle() } label: {
+                Image(systemName: "circle.lefthalf.filled").frame(width: 26, height: 26)
+                    .background(session.translucent ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
+            }.buttonStyle(.plain).help("半透明")
+        }
+        .padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+        .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.12)) }
+    }
+
     private var shortcutHelp: some View {
-        let rows = [("␣ + 拖动", "平移"), ("⌘ + 滚动 / 捏合", "缩放"), ("⌘0", "100% 并居中"), ("⌘⇧0", "适应全部"), ("⌘+ / ⌘−", "缩放"), ("⇧ + 点击", "多选"), ("⌘A", "全选"), ("⌘C / ⌘V", "复制 / 粘贴"), ("⌘Z / ⌘⇧Z", "撤销 / 重做"), ("⌘G / ⌘⇧G", "编组 / 取消编组"), ("← ↑ ↓ → / ⇧", "移动 / 加速移动"), ("⌥ + 拖动", "临时关闭吸附"), ("⌫ / ⌦", "删除"), ("⎋", "取消选择"), ("双击", "新建 / 编辑便签或预览图片")]
+        let rows = [("␣ + 拖动", "平移"), ("⌘ + 滚动 / 捏合", "缩放"), ("⌘0", "100% 并居中"), ("⌘⇧0", "适应全部"), ("⌘+ / ⌘−", "缩放"), ("⇧ + 点击", "多选"), ("⌘A", "全选"), ("⌘C / ⌘V", "复制 / 粘贴"), ("⌘Z / ⌘⇧Z", "撤销 / 重做"), ("⌘G / ⌘⇧G", "编组 / 取消编组"), ("← ↑ ↓ → / ⇧", "移动 / 加速移动"), ("⌥ + 拖动", "临时关闭吸附"), ("⌫ / ⌦", "删除"), ("⎋", "取消选择 / 完成便签编辑"), ("⌘↩", "完成便签编辑"), ("双击", "新建 / 编辑便签或预览图片")]
         return VStack(alignment: .leading, spacing: 8) {
             Text("画布快捷键").font(.headline)
             ForEach(rows.indices, id: \.self) { index in
@@ -315,32 +354,39 @@ struct BoardWorkspace: View {
     }
 }
 
-private struct BoardNoteEditor: View {
-    @State var text: String
-    let save: (String) -> Void
-    let cancel: () -> Void
-    @State private var preview = false
-    @FocusState private var focused: Bool
+private struct BoardTitleMenu: View {
+    @Bindable var session: BoardSession
+    let rename: () -> Void
+    let create: () -> Void
+    let delete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("编辑便签").font(.headline)
-                Spacer()
-                Toggle("预览", isOn: $preview).toggleStyle(.switch).controlSize(.small)
+        Menu {
+            ForEach(session.store.library.boards) { document in
+                Button {
+                    session.switchBoard(document.id)
+                } label: {
+                    if document.id == session.board.id { Label(document.title, systemImage: "checkmark") }
+                    else { Text(document.title) }
+                }
             }
-            if preview {
-                BoardMarkdownContent(text: text) { text = $0 }
-            } else {
-                TextEditor(text: $text).font(.system(size: 15)).focused($focused)
-            }
-            HStack {
-                Text("Markdown · - [ ] Todo").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("取消", action: cancel).keyboardShortcut(.cancelAction)
-                Button("完成") { save(text) }.keyboardShortcut(.defaultAction)
-            }
-        }.padding(16).frame(width: 460, height: 340).onAppear { focused = true }
+            Divider()
+            Button("新建画布", action: create)
+            Button("重命名", action: rename)
+            Button("设为默认画布") { session.store.makeDefault(session.board.id) }
+                .disabled(session.store.library.defaultID == session.board.id)
+            Button("删除画布", role: .destructive, action: delete)
+                .disabled(session.store.library.boards.count <= 1)
+        } label: {
+            HStack(spacing: 5) {
+                Text(session.board.title).lineLimit(1).font(.system(size: 13, weight: .semibold))
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .medium))
+            }.foregroundStyle(.primary).frame(maxWidth: .infinity)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 220, height: 28)
+        .accessibilityLabel(session.board.title)
     }
 }
 

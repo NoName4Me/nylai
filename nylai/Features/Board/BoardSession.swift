@@ -3,9 +3,10 @@ import UniformTypeIdentifiers
 import Observation
 
 enum BoardTool: String, CaseIterable, Identifiable {
-    case select, hand, note, pen, marker, eraser, line, arrow, rectangle, ellipse, triangle, diamond, star
+    case select, hand, note, pen, eraser, line, arrow, rectangle, ellipse, triangle, diamond, star
     static let shapes: [Self] = [.rectangle, .ellipse, .triangle, .diamond, .star]
     var isShape: Bool { Self.shapes.contains(self) }
+    var showsDrawingStyle: Bool { isShape || self == .pen || self == .line || self == .arrow }
     var id: String { rawValue }
     var symbol: String {
         switch self {
@@ -13,7 +14,6 @@ enum BoardTool: String, CaseIterable, Identifiable {
         case .hand: "hand.draw"
         case .note: "note.text"
         case .pen: "pencil.tip"
-        case .marker: "highlighter"
         case .eraser: "eraser"
         case .line: "line.diagonal"
         case .arrow: "arrow.up.right"
@@ -30,7 +30,6 @@ enum BoardTool: String, CaseIterable, Identifiable {
         case .hand: L10n.shared.string("平移")
         case .note: L10n.shared.string("便签")
         case .pen: L10n.shared.string("画笔")
-        case .marker: L10n.shared.string("马克笔")
         case .eraser: L10n.shared.string("橡皮擦")
         case .line: L10n.shared.string("直线")
         case .arrow: L10n.shared.string("箭头")
@@ -51,10 +50,14 @@ final class BoardSession {
     var selection: Set<UUID> = []
     var tool: BoardTool = .select { didSet { if tool.isShape { lastShape = tool } } }
     var lastShape: BoardTool = .rectangle
-    var color: BoardColor = .yellow
-    var strokeWidth: CGFloat = 3
+    var color: BoardColor = .clear
+    var strokeWidth: CGFloat = 4
+    var dashed = false
+    var translucent = false
     var snap = true
-    var editingID: UUID?
+    private(set) var editingID: UUID?
+    @ObservationIgnored private var editingBoardID: UUID?
+    @ObservationIgnored var noteDraft = ""
     var viewportSize = CGSize(width: 800, height: 600)
     var floating = false
     var onPinNote: ((UUID, UUID) -> Void)?
@@ -64,12 +67,13 @@ final class BoardSession {
     var selected: [BoardItem] { board.items.filter { selection.contains($0.id) } }
 
     func switchBoard(_ id: UUID) {
+        finishEditing()
         selection = []
-        editingID = nil
         store.select(id)
     }
 
     func focus(_ id: UUID) {
+        finishEditing()
         guard let item = board.items.first(where: { $0.id == id }) else { return }
         selection = [id]
         var view = board.viewport
@@ -79,6 +83,7 @@ final class BoardSession {
     }
 
     func resetZoom() {
+        finishEditing()
         let bounds = board.items.map(\.frame).reduce(CGRect.null) { $0.union($1) }
         var view = BoardViewport()
         if !bounds.isNull { view.center = CGPoint(x: bounds.midX, y: bounds.midY) }
@@ -86,6 +91,7 @@ final class BoardSession {
     }
 
     func fit() {
+        finishEditing()
         let bounds = board.items.map(\.frame).reduce(CGRect.null) { $0.union($1) }
         var view = BoardViewport()
         if !bounds.isNull {
@@ -97,19 +103,49 @@ final class BoardSession {
     }
 
     func zoom(_ factor: CGFloat) {
+        finishEditing()
         var view = board.viewport
         view.magnify(factor, at: CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2), in: viewportSize)
         store.viewport(view, boardID: board.id)
     }
 
     func addNote(at point: CGPoint? = nil) {
+        finishEditing()
         let center = board.viewport.center
         let id = store.addText("", boardID: board.id,
             at: point ?? CGPoint(x: center.x - 120, y: center.y - 80), color: .yellow)
-        selection = [id]
-        editingID = id
-        tool = .select
+        beginEditing(id)
     }
+
+    func beginEditing(_ id: UUID) {
+        if editingID == id { return }
+        finishEditing()
+        guard let item = board.items.first(where: { $0.id == id && $0.kind == .note && !$0.locked }) else { return }
+        if item.isCollapsed { store.toggleNoteCollapse(boardID: board.id, itemID: id) }
+        selection = [id]
+        tool = .select
+        if board.viewport.zoom < 0.65 { focus(id) }
+        editingBoardID = board.id
+        noteDraft = item.text
+        editingID = id
+    }
+
+    func finishEditing() {
+        guard let id = editingID, let boardID = editingBoardID else { return }
+        let draft = noteDraft
+        editingID = nil
+        editingBoardID = nil
+        noteDraft = ""
+        store.updateText(draft, boardID: boardID, itemID: id)
+    }
+
+    func chooseTool(_ value: BoardTool) {
+        finishEditing()
+        tool = value
+    }
+
+    func undo() { finishEditing(); store.undo() }
+    func redo() { finishEditing(); store.redo() }
 
     func select(_ item: BoardItem, extending: Bool) {
         let ids = Set(board.items.filter { $0.id == item.id || (item.group != nil && $0.group == item.group) }.map(\.id))
@@ -128,22 +164,26 @@ final class BoardSession {
     }
 
     func delete() {
+        finishEditing()
         let ids = selection
         store.editBoard(board.id) { $0.items.removeAll { ids.contains($0.id) && !$0.locked } }
         selection.formIntersection(Set(board.items.map(\.id)))
     }
 
     func group() {
+        finishEditing()
         guard selected.count > 1, selected.allSatisfy({ !$0.locked }) else { return }
         let id = UUID()
         mutateSelected { $0.group = id }
     }
-    func ungroup() { mutateSelected { $0.group = nil } }
+    func ungroup() { finishEditing(); mutateSelected { $0.group = nil } }
     func toggleLock() {
+        finishEditing()
         let lock = selected.contains { !$0.locked }
         mutateSelected(includeLocked: true) { $0.locked = lock }
     }
     func layer(front: Bool) {
+        finishEditing()
         let ids = selection
         store.editBoard(board.id) { board in
             let moved = board.items.filter { ids.contains($0.id) && !$0.locked }
@@ -153,6 +193,7 @@ final class BoardSession {
     }
 
     func paste(_ pasteboard: NSPasteboard = .general, at point: CGPoint? = nil) {
+        finishEditing()
         let origin = point ?? store.nextCapturePoint(in: board.id)
         if let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage], !images.isEmpty {
             for (i, image) in images.enumerated() {
@@ -165,11 +206,12 @@ final class BoardSession {
                 }
             }
         } else if let text = pasteboard.string(forType: .string), !text.isEmpty {
-            selection = [store.addText(text, boardID: board.id, at: origin, color: color)]
+            selection = [store.addText(text, boardID: board.id, at: origin, color: .yellow)]
         }
     }
 
     func copy() {
+        finishEditing()
         let items = selected
         if items.count == 1, let item = items.first {
             if item.kind == .note {
@@ -187,6 +229,7 @@ final class BoardSession {
     }
 
     func export(copy: Bool = false) {
+        finishEditing()
         let items = selected.isEmpty ? board.items : selected
         guard let image = BoardRenderer.export(items, store: store) else {
             store.error = L10n.shared.string("画布为空或导出尺寸过大。")

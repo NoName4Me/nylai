@@ -2,13 +2,13 @@ import AppKit
 
 @MainActor
 enum BoardRenderer {
-    static func draw(_ item: BoardItem, in frame: CGRect, scale: CGFloat, store: BoardStore, showsNoteControls: Bool = false) {
+    static func draw(_ item: BoardItem, in frame: CGRect, scale: CGFloat, store: BoardStore, showsNoteControls: Bool = false, hidesNoteText: Bool = false) {
         let context = NSGraphicsContext.current
         context?.saveGraphicsState()
         defer { context?.restoreGraphicsState() }
         switch item.kind {
         case .note:
-            drawNote(item, frame: frame, scale: scale, showsControls: showsNoteControls)
+            drawNote(item, frame: frame, scale: scale, showsControls: showsNoteControls, hidesText: hidesNoteText)
         case .image:
             if let asset = item.asset, let image = store.image(asset) {
                 image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
@@ -20,8 +20,10 @@ enum BoardRenderer {
         case .rectangle, .ellipse, .triangle, .diamond, .star:
             guard let shape = AnnotationShape(rawValue: item.kind.rawValue), let cg = NSGraphicsContext.current?.cgContext else { return }
             cg.addPath(AnnotationGeometry.shape(shape, in: frame))
-            cg.setStrokeColor(item.color.ink.cgColor)
-            cg.setLineWidth(max(0.8, item.strokeWidth * scale))
+            cg.setStrokeColor(item.color.ink.withAlphaComponent(item.strokeOpacity).cgColor)
+            let width = max(0.8, item.effectiveStrokeWidth * scale)
+            cg.setLineWidth(width)
+            if item.dashed == true { cg.setLineDash(phase: 0, lengths: [width * 3, width * 2]) }
             cg.setLineJoin(.round)
             cg.strokePath()
         case .pen, .marker, .line, .arrow:
@@ -30,7 +32,7 @@ enum BoardRenderer {
             guard let last = points.last, let cg = NSGraphicsContext.current?.cgContext else { return }
             let path = CGMutablePath()
             AnnotationGeometry.appendPolyline(points, to: path)
-            let width = max(0.8, item.strokeWidth * scale * (item.kind == .marker ? 4 : 1))
+            let width = max(0.8, item.effectiveStrokeWidth * scale)
             if item.kind == .arrow, points.count >= 2 {
                 let previous = points[points.count - 2]
                 let angle = atan2(last.y - previous.y, last.x - previous.x)
@@ -43,7 +45,8 @@ enum BoardRenderer {
             cg.setLineWidth(width)
             cg.setLineCap(.round)
             cg.setLineJoin(.round)
-            cg.setStrokeColor(item.color.ink.withAlphaComponent(item.kind == .marker ? 0.3 : 1).cgColor)
+            cg.setStrokeColor(item.color.ink.withAlphaComponent(item.strokeOpacity).cgColor)
+            if item.dashed == true { cg.setLineDash(phase: 0, lengths: [width * 3, width * 2]) }
             cg.strokePath()
         }
     }
@@ -55,7 +58,7 @@ enum BoardRenderer {
         CGRect(x: frame.maxX - 29 * scale, y: frame.minY + 7 * scale, width: 22 * scale, height: 22 * scale)
     }
 
-    private static func drawNote(_ item: BoardItem, frame: CGRect, scale: CGFloat, showsControls: Bool) {
+    private static func drawNote(_ item: BoardItem, frame: CGRect, scale: CGFloat, showsControls: Bool, hidesText: Bool) {
         let colored = item.color != .clear
         if colored {
             let fold = item.isCollapsed ? 0 : min(13 * scale, frame.width / 5, frame.height / 5)
@@ -103,6 +106,7 @@ enum BoardRenderer {
             arrow.lineJoinStyle = .round
             arrow.stroke()
         }
+        if hidesText { return }
         if item.isCollapsed {
             let text = item.text.components(separatedBy: "\n").first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) ?? L10n.shared.string("便签")
             let paragraph = NSMutableParagraphStyle()

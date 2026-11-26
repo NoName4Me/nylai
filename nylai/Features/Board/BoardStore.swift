@@ -8,6 +8,7 @@ enum BoardKind: String, Codable, CaseIterable {
 
 enum BoardColor: String, Codable, CaseIterable, Identifiable {
     case yellow, green, blue, pink, purple, gray, clear
+    static let noteColors: [Self] = [.yellow, .green, .blue, .pink, .purple, .gray]
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -58,6 +59,11 @@ struct BoardItem: Codable, Equatable, Identifiable {
     var recognizedText = ""
     // Optional keeps existing saved boards decodable.
     var expandedHeight: CGFloat?
+    // Optional fields keep version-1 documents readable. Legacy marker items retain their appearance.
+    var dashed: Bool?
+    var translucent: Bool?
+    var effectiveStrokeWidth: CGFloat { strokeWidth * (kind == .marker ? 4 : 1) }
+    var strokeOpacity: CGFloat { kind == .marker ? 0.3 : (translucent == true ? 0.35 : 1) }
     var isCollapsed: Bool { kind == .note && expandedHeight != nil }
 
     var searchableText: String { text + " " + recognizedText }
@@ -163,6 +169,11 @@ final class BoardStore {
                 let decoded = try JSONDecoder().decode(BoardLibrary.self, from: Data(contentsOf: url))
                 guard decoded.isValid else { throw BoardStoreError.invalidDocument }
                 library = decoded
+                for b in library.boards.indices {
+                    for i in library.boards[b].items.indices where library.boards[b].items[i].kind == .note && library.boards[b].items[i].color == .clear {
+                        library.boards[b].items[i].color = .yellow
+                    }
+                }
             } catch {
                 loadError = error.localizedDescription
             }
@@ -323,7 +334,7 @@ final class BoardStore {
 
     func addText(_ text: String, boardID: UUID, at point: CGPoint, color: BoardColor = .yellow) -> UUID {
         let item = BoardItem(kind: .note, frame: CGRect(origin: point, size: CGSize(width: 240, height: 160)),
-                             text: text, color: color)
+                             text: text, color: color == .clear ? .yellow : color)
         editBoard(boardID) { $0.items.append(item) }
         return item.id
     }
