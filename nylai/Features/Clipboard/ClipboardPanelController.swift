@@ -84,9 +84,19 @@ final class ClipboardPanelModel {
     }
 
     var visibleRecords: [ClipboardRecord] {
-        let records = store.allRecords
-        let members = groups?.groups.first { $0.id == selectedGroupID }?.recordIDs
-        return records.filter { (selectedGroupID == nil || members?.contains($0.id) == true) && matches($0) }
+        guard let selectedGroupID else { return store.allRecords.filter(matches) }
+        guard let group = groups?.groups.first(where: { $0.id == selectedGroupID }) else { return [] }
+        let pins = group.pinnedAt ?? [:]
+        return store.index.records.filter { group.recordIDs.contains($0.id) && matches($0) }.sorted { first, second in
+            let firstPin = pins[first.id], secondPin = pins[second.id]
+            if firstPin != secondPin { return (firstPin ?? .distantPast) > (secondPin ?? .distantPast) }
+            return first.copiedAt > second.copiedAt
+        }
+    }
+
+    func isPinnedInCurrentScope(_ record: ClipboardRecord) -> Bool {
+        guard let selectedGroupID else { return record.isPinned }
+        return groups?.groups.first { $0.id == selectedGroupID }?.pinnedAt?[record.id] != nil
     }
 
     var checkedRecords: [ClipboardRecord] {
@@ -340,7 +350,12 @@ final class ClipboardPanelModel {
 
     func togglePinned(_ record: ClipboardRecord) {
         do {
-            try store.setPinned(!record.isPinned, id: record.id)
+            let pinned = !isPinnedInCurrentScope(record)
+            if let selectedGroupID, let groups {
+                try groups.setPinned(pinned, recordID: record.id, groupID: selectedGroupID, at: Date())
+            } else {
+                try store.setPinned(pinned, id: record.id)
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -357,7 +372,6 @@ final class ClipboardPanelModel {
 
     func clearHistory() {
         do {
-            try groups?.clearAllMemberships()
             try store.clearAll()
             finishClear()
         } catch {
@@ -460,8 +474,7 @@ final class ClipboardPanelController: NSWindowController, NSWindowDelegate {
         self.directPaster = directPaster
         do {
             let legacy = try SnippetStore(fileURL: store.directoryURL.appendingPathComponent("snippets.json"))
-            let categories = try ClipboardGroupsStore(fileURL: store.directoryURL.appendingPathComponent("groups.json"))
-            try categories.migrateLegacyItems(history: store, snippets: legacy)
+            let categories = try store.loadGroups()
             snippets = legacy
             groups = categories
             snippetLoadError = nil

@@ -12,6 +12,7 @@ final class ClipboardHistoryStore {
     private let settingsStore: ClipboardSettingsStore
     private let clock: @MainActor () -> Date
     private let fileWriter: any ShortcutBindingFileWriting
+    private var groups: ClipboardGroupsStore?
     private(set) var index = ClipboardIndex.empty
     private(set) var settings = ClipboardSettings.defaults
 
@@ -60,6 +61,32 @@ final class ClipboardHistoryStore {
 
     var allRecords: [ClipboardRecord] {
         pinnedRecords + ordinaryRecords
+    }
+
+    var groupedRecordCount: Int {
+        let members = groups?.memberIDs ?? []
+        return index.records.count { members.contains($0.id) }
+    }
+
+    func loadGroups() throws -> ClipboardGroupsStore {
+        let groups = try self.groups ?? ClipboardGroupsStore(fileURL: directoryURL.appendingPathComponent("groups.json"))
+        self.groups = groups
+        guard index.migratedGroupPins != true else { return groups }
+        let legacy = try SnippetStore(fileURL: directoryURL.appendingPathComponent("snippets.json"))
+        try groups.migrateLegacyItems(history: self, snippets: legacy)
+        let members = groups.memberIDs
+        var updated = index
+        var pins: [UUID: Date] = [:]
+        for position in updated.records.indices where members.contains(updated.records[position].id) {
+            let record = updated.records[position]
+            pins[record.id] = record.pinnedAt
+            updated.records[position].pinnedAt = nil
+        }
+        // Save scoped pins before clearing the legacy pins so migration can be retried.
+        try groups.migrateGroupPins(pins)
+        updated.migratedGroupPins = true
+        try commit(updated)
+        return groups
     }
 
     @discardableResult
@@ -170,7 +197,7 @@ final class ClipboardHistoryStore {
         try applyCleanupAndCommit(index, now: clock())
     }
 
-    func setPinned(_ pinned: Bool, id: UUID, cleanup: Bool = true) throws {
+    func setPinned(_ pinned: Bool, id: UUID) throws {
         guard let recordIndex = index.records.firstIndex(where: { $0.id == id }) else {
             throw ClipboardStoreError.recordNotFound
         }
@@ -182,8 +209,7 @@ final class ClipboardHistoryStore {
         } else {
             updated.records[recordIndex].pinnedAt = nil
         }
-        if cleanup { try applyCleanupAndCommit(updated, now: clock()) }
-        else { try commit(updated) }
+        try applyCleanupAndCommit(updated, now: clock())
     }
 
     func delete(id: UUID) throws {
@@ -200,17 +226,14 @@ final class ClipboardHistoryStore {
     }
 
     func clearOrdinary() throws {
-        let removed = index.records.filter { !$0.isPinned }
-        var updated = index
-        updated.records.removeAll { !$0.isPinned }
-        try commit(updated)
-        removed.forEach(removeFiles)
+        let members = groups?.memberIDs ?? []
+        let ids = index.records.lazy.filter { !$0.isPinned && !members.contains($0.id) }.map(\.id)
+        try delete(ids: Set(ids))
     }
 
     func clearAll() throws {
-        let removed = index.records
-        try commit(.empty)
-        removed.forEach(removeFiles)
+        try delete(ids: Set(index.records.map(\.id)))
+        try groups?.clearAllMemberships()
     }
 
     func applyCleanupNow() throws {
@@ -272,9 +295,10 @@ final class ClipboardHistoryStore {
         now: Date
     ) throws {
         var updated = candidate
-        let pinned = updated.records.filter(\.isPinned)
+        let members = groups?.memberIDs ?? []
+        let protected = updated.records.filter { $0.isPinned || members.contains($0.id) }
         var ordinary = updated.records
-            .filter { !$0.isPinned }
+            .filter { !$0.isPinned && !members.contains($0.id) }
             .sorted { $0.copiedAt > $1.copiedAt }
 
         if settings.retentionEnabled {
@@ -284,7 +308,7 @@ final class ClipboardHistoryStore {
         if ordinary.count > settings.maximumItems {
             ordinary.removeLast(ordinary.count - settings.maximumItems)
         }
-        updated.records = pinned + ordinary
+        updated.records = protected + ordinary
         let retainedIDs = Set(updated.records.map(\.id))
         let removed = index.records.filter { !retainedIDs.contains($0.id) }
         try commit(updated)

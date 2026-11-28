@@ -175,9 +175,11 @@ struct BoardWorkspace: View {
     @Bindable var session: BoardSession
     let float: () -> Void
     @State private var query = ""
-    @State private var shortcutsShown = false
+    @State private var helpShown = false
+    @State private var helpPinned = false
     @State private var searching = false
     @FocusState private var searchFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var board: BoardDocument { session.board }
     private var matches: [BoardItem] {
@@ -201,24 +203,22 @@ struct BoardWorkspace: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
                 }
-                if searching && !query.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("搜索结果").font(.caption).foregroundStyle(.secondary)
-                        if matches.isEmpty { Text("没有匹配内容").foregroundStyle(.secondary) }
-                        ForEach(matches.prefix(15)) { item in
-                            Button { session.focus(item.id) } label: {
-                                Text(item.searchableText.isEmpty ? L10n.shared.string("图片") : item.searchableText)
-                                    .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-                            }.buttonStyle(.plain)
-                        }
-                    }.padding(12).frame(width: 260).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).padding(.trailing, 16).padding(.bottom, 100)
+                VStack(alignment: .trailing, spacing: 8) {
+                    topActions
+                    if searching && !query.isEmpty { searchResults }
                 }
-                toolbar.padding(.bottom, 14)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(.top, 12)
+                .padding(.trailing, 14)
+                toolbar.padding(.horizontal, 6).padding(.bottom, 14)
             }
         }
         .frame(minWidth: 660, minHeight: 420)
-        .onChange(of: board.id) { _, _ in query = ""; searching = false }
+        .onChange(of: board.id) { _, _ in
+            query = ""
+            searching = false
+            searchFocused = false
+        }
         .alert("画布", isPresented: Binding(get: { session.store.error != nil }, set: { if !$0 { session.store.error = nil } })) {
             Button("确定") { session.store.error = nil }
         } message: { Text(session.store.error ?? "") }
@@ -236,9 +236,7 @@ struct BoardWorkspace: View {
     private func toolButton(_ tool: BoardTool, group: Bool = false) -> some View {
         Button { session.chooseTool(tool) } label: {
             Image(systemName: tool.symbol)
-                .frame(width: 24, height: 26)
-                .background((group ? session.tool.isShape : session.tool == tool) ? Color.accentColor.opacity(0.17) : .clear,
-                            in: RoundedRectangle(cornerRadius: 5))
+                .modifier(BoardToolbarTarget(selected: group ? session.tool.isShape : session.tool == tool))
                 .overlay(alignment: .topTrailing) {
                     if session.showsToolShortcuts {
                         Text(tool.shortcut).font(.system(size: 9, weight: .semibold, design: .monospaced))
@@ -249,22 +247,110 @@ struct BoardWorkspace: View {
         }.buttonStyle(.plain).help(tool.title + " · " + tool.shortcut)
     }
 
+    private func toolbarButton(
+        _ symbol: String, help: LocalizedStringKey, width: CGFloat = 30,
+        selected: Bool = false, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).modifier(BoardToolbarTarget(width: width, selected: selected))
+        }
+        .help(help)
+    }
+
+    private var toolbarSeparator: some View {
+        Divider().frame(height: 18).padding(.horizontal, 3)
+    }
+
+    private func closeSearch() {
+        searching = false
+        searchFocused = false
+        query = ""
+        session.focusCanvas?()
+    }
+
+    private var searchControl: some View {
+        HStack(spacing: 0) {
+            toolbarButton("magnifyingglass", help: "搜索当前画布", selected: searching) {
+                if searching { closeSearch() }
+                else {
+                    session.finishEditing()
+                    searching = true
+                }
+            }
+            BoardSearchFieldReveal(progress: searching ? 1 : 0) {
+                TextField("搜索", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .focused($searchFocused)
+                    .padding(.horizontal, 6)
+                    .opacity(searching ? 1 : 0)
+                    .onSubmit { if let item = matches.first { session.focus(item.id); session.focusCanvas?() } }
+                    .onExitCommand(perform: closeSearch)
+            }
+            .clipped()
+            .allowsHitTesting(searching)
+            .accessibilityHidden(!searching)
+        }
+        .background(Color.primary.opacity(searching ? 0.05 : 0), in: RoundedRectangle(cornerRadius: 9))
+        .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: searching)
+        .onChange(of: searching) { _, active in
+            if active { searchFocused = true }
+        }
+    }
+
+    private var searchResults: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("搜索结果").font(.caption).foregroundStyle(.secondary)
+            if matches.isEmpty { Text("没有匹配内容").foregroundStyle(.secondary) }
+            ForEach(matches.prefix(15)) { item in
+                Button { session.focus(item.id) } label: {
+                    Text(item.searchableText.isEmpty ? L10n.shared.string("图片") : item.searchableText)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .frame(width: 300)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
+    }
+
+    private var topActions: some View {
+        HStack(spacing: 0) {
+            searchControl
+            toolbarSeparator
+            toolbarButton("questionmark.circle", help: "画布帮助", selected: helpShown) {
+                session.finishEditing()
+                if !helpShown { searchFocused = false }
+                helpShown.toggle()
+            }
+            .popover(isPresented: $helpShown, arrowEdge: .top) {
+                boardHelp
+                    .interactiveDismissDisabled(helpPinned)
+            }
+        }
+        .buttonStyle(.plain)
+        .background { toolbarBackground }
+    }
+
     private var toolbar: some View {
         VStack(spacing: 6) {
             if !session.toolbarCollapsed {
-                if session.tool.showsDrawingStyle || session.showsToolShortcuts { drawingStyleBar }
-                HStack(spacing: 4) {
+                if session.tool.showsDrawingStyle || session.showsToolShortcuts || canFillSelectedShapes { drawingStyleBar }
+                HStack(spacing: 0) {
                     ForEach(BoardTool.allCases.filter { !$0.isShape }) { tool in
                         toolButton(tool)
                     }
                     toolButton(session.lastShape, group: true)
-                    Divider().frame(height: 22)
-                    Button { session.undo(); session.focusCanvas?() } label: { Image(systemName: "arrow.uturn.backward") }
-                        .disabled(session.store.undoStack.isEmpty).help("撤销")
-                    Button { session.redo(); session.focusCanvas?() } label: { Image(systemName: "arrow.uturn.forward") }
-                        .disabled(session.store.redoStack.isEmpty).help("重做")
-                    Button { session.confirmClear(); session.focusCanvas?() } label: { Image(systemName: "trash") }
-                        .disabled(board.items.isEmpty).help("清空画布")
+                    toolbarSeparator
+                    toolbarButton("arrow.uturn.backward", help: "撤销") { session.undo(); session.focusCanvas?() }
+                        .disabled(session.store.undoStack.isEmpty)
+                    toolbarButton("arrow.uturn.forward", help: "重做") { session.redo(); session.focusCanvas?() }
+                        .disabled(session.store.redoStack.isEmpty)
+                    toolbarButton("trash", help: "清空画布") { session.confirmClear(); session.focusCanvas?() }
+                        .disabled(board.items.isEmpty)
                     Menu {
                         Button("粘贴") { session.paste() }
                         Button("复制") { session.copy() }.disabled(session.selection.isEmpty)
@@ -281,58 +367,53 @@ struct BoardWorkspace: View {
                         Button("置顶画布", action: float)
                         Button("导出 PNG") { session.export() }
                         Toggle("自动吸附", isOn: $session.snap)
-                    } label: { Image(systemName: "ellipsis.circle") }
-                        .menuStyle(.borderlessButton).fixedSize()
-                    Divider().frame(height: 22)
-                    Button { session.zoom(0.8); session.focusCanvas?() } label: { Image(systemName: "minus") }
-                    Button { session.resetZoom(); session.focusCanvas?() } label: { Text("\(Int(board.viewport.zoom * 100))%").monospacedDigit().font(.caption) }
-                        .help("100% 并居中")
-                    Button { session.zoom(1.25); session.focusCanvas?() } label: { Image(systemName: "plus") }
-                    Button { session.fit(); session.focusCanvas?() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }.help("适应全部")
-                    Divider().frame(height: 22)
-                    HStack(spacing: 3) {
-                        Button {
-                            searching.toggle()
-                            if searching {
-                                session.finishEditing()
-                                searchFocused = true
-                            } else { query = ""; session.focusCanvas?() }
-                        } label: { Image(systemName: "magnifyingglass") }.help("搜索当前画布")
-                        if searching {
-                            TextField("搜索", text: $query).textFieldStyle(.plain).font(.system(size: 12))
-                                .focused($searchFocused).frame(width: 104)
-                                .onSubmit { if let item = matches.first { session.focus(item.id); session.focusCanvas?() } }
-                                .onExitCommand { searching = false; query = ""; session.focusCanvas?() }
-                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle").modifier(BoardToolbarTarget())
                     }
-                    .padding(searching ? 3 : 0)
-                    .background(searching ? Color.primary.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: 5))
-                    Button { session.finishEditing(); shortcutsShown.toggle() } label: { Image(systemName: "questionmark.circle") }
-                        .help("画布快捷键").popover(isPresented: $shortcutsShown) { shortcutHelp }
-                    Divider().frame(height: 22)
-                    Button {
-                        searching = false; query = ""; session.toolbarCollapsed = true
-                        session.focusCanvas?()
-                    } label: { Image(systemName: "chevron.down") }.help("收起工具栏")
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    toolbarSeparator
+                    toolbarButton("minus", help: "缩小") { session.zoom(0.8); session.focusCanvas?() }
+                    Button { session.resetZoom(); session.focusCanvas?() } label: {
+                        Text("\(Int(board.viewport.zoom * 100))%").monospacedDigit().font(.caption)
+                            .modifier(BoardToolbarTarget(width: 40))
+                    }
+                        .help("100% 并居中")
+                    toolbarButton("plus", help: "放大") { session.zoom(1.25); session.focusCanvas?() }
+                    toolbarButton("arrow.up.left.and.arrow.down.right", help: "适应全部") { session.fit(); session.focusCanvas?() }
+                    toolbarSeparator
+                    toolbarButton("chevron.down", help: "收起工具栏") {
+                        closeSearch()
+                        session.toolbarCollapsed = true
+                    }
                 }
-                .buttonStyle(.borderless)
-                .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.12)) }
-                .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+                .background { toolbarBackground }
+                .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: searching)
             } else {
-                Button { session.toolbarCollapsed = false; session.focusCanvas?() } label: {
-                    Image(systemName: "chevron.up").frame(width: 40, height: 23)
-                }.buttonStyle(.plain).background(.regularMaterial, in: Capsule())
-                    .overlay { Capsule().strokeBorder(Color.primary.opacity(0.12)) }.help("展开工具栏")
+                toolbarButton("chevron.up", help: "展开工具栏", width: 40) {
+                    session.toolbarCollapsed = false
+                    session.focusCanvas?()
+                }
+                .background { toolbarBackground }
             }
         }
+        .buttonStyle(.plain)
+    }
+
+    private var toolbarBackground: some View {
+        RoundedRectangle(cornerRadius: 9)
+            .fill(.regularMaterial)
+            .shadow(color: .black.opacity(0.16), radius: 7, y: 3)
+    }
+
+    private var canFillSelectedShapes: Bool {
+        session.tool == .select && !session.editableSelectedShapes.isEmpty
     }
 
     private var drawingStyleBar: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 0) {
             if session.tool.isShape || session.showsToolShortcuts {
                 ForEach(BoardTool.shapes) { shape in toolButton(shape) }
-                if session.tool.showsDrawingStyle { Divider().frame(height: 20) }
+                if session.tool.showsDrawingStyle || canFillSelectedShapes { toolbarSeparator }
             }
             if session.tool.showsDrawingStyle {
                 ForEach(BoardColor.drawingColors) { color in
@@ -341,56 +422,165 @@ struct BoardWorkspace: View {
                             .overlay { Circle().strokeBorder(Color.primary.opacity(0.16), lineWidth: 0.75) }
                             .padding(3)
                             .overlay { Circle().strokeBorder(session.color == color ? Color.accentColor : .clear, lineWidth: 1.5) }
+                            .modifier(BoardToolbarTarget())
                     }.buttonStyle(.plain).help(color.title)
                 }
-                Button { session.translucent.toggle(); session.focusCanvas?() } label: {
-                    Image(systemName: "circle.lefthalf.filled").frame(width: 26, height: 26)
-                        .background(session.translucent ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
-                }.buttonStyle(.plain).help(session.translucent ? "关闭半透明" : "开启半透明")
-                Divider().frame(height: 20)
+                toolbarButton("circle.lefthalf.filled", help: session.translucent ? "关闭半透明" : "开启半透明",
+                              selected: session.translucent) { session.translucent.toggle(); session.focusCanvas?() }
+                toolbarSeparator
                 ForEach([CGFloat(2), 4, 6, 10], id: \.self) { width in
                     Button { session.strokeWidth = width; session.focusCanvas?() } label: {
                         Circle().fill(Color.primary).frame(width: width + 2, height: width + 2)
-                            .frame(width: 24, height: 26)
-                            .background(session.strokeWidth == width ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                            .modifier(BoardToolbarTarget(selected: session.strokeWidth == width))
                     }.buttonStyle(.plain).help("\(Int(width)) pt")
                 }
-                Divider().frame(height: 20)
+                toolbarSeparator
                 Button { session.dashed.toggle(); session.focusCanvas?() } label: {
                     HStack(spacing: 2) {
                         ForEach(0..<3) { _ in Capsule().fill(Color.primary).frame(width: 5, height: 2) }
-                    }.frame(width: 26, height: 26)
-                        .background(session.dashed ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                    }.modifier(BoardToolbarTarget(selected: session.dashed))
                 }.buttonStyle(.plain).help("虚线")
-                if session.tool.isShape {
-                    Button { session.filled.toggle(); session.focusCanvas?() } label: {
-                        Image(systemName: "paintbucket").frame(width: 26, height: 26)
-                            .background(session.filled ? Color.accentColor.opacity(0.17) : .clear, in: RoundedRectangle(cornerRadius: 5))
-                    }.buttonStyle(.plain).help("填充")
+            }
+            if session.tool.isShape || canFillSelectedShapes {
+                let filled = session.tool.isShape ? session.filled : session.selectedShapesAreFilled
+                toolbarButton("square.inset.filled", help: filled ? "取消图形填充" : "填充图形", selected: filled) {
+                    if session.tool.isShape { session.filled.toggle() }
+                    else { session.toggleSelectedShapeFill() }
+                    session.focusCanvas?()
                 }
             }
-        }.padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
-            .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.12)) }
+        }.background { toolbarBackground }
     }
 
-    private var shortcutHelp: some View {
-        let rows = [("␣ + 拖动", "平移"), ("⌘ + 滚动 / 捏合", "缩放"), ("⌘0", "100% 并居中"), ("⌘⇧0", "适应全部"), ("⌘+ / ⌘−", "缩放"), ("⇧ + 点击", "多选"), ("⌘A", "全选"), ("⌘C / ⌘V", "复制 / 粘贴"), ("⌘Z / ⌘⇧Z", "撤销 / 重做"), ("⌘G / ⌘⇧G", "编组 / 取消编组"), ("← ↑ ↓ → / ⇧", "移动 / 加速移动"), ("⌥ + 拖动", "临时关闭吸附"), ("⌫ / ⌦", "删除"), ("⎋", "取消选择 / 完成便签编辑"), ("⌘↩", "完成便签编辑"), ("⌃ + 拖动", "正形 / 45° 约束"), ("⇧ + 拖动线条", "水平 / 垂直"), ("⌥", "显示工具快捷键"), ("双击", "新建 / 编辑便签或预览图片")]
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
-            Text("画布快捷键").font(.headline)
-            ForEach(BoardTool.allCases) { tool in
-                HStack { Text(tool.title).font(.caption); Spacer(); Text(tool.shortcut).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary) }
-            }
-            Divider()
-            ForEach(rows.indices, id: \.self) { index in
-                HStack(spacing: 18) {
-                    Text(L10n.shared.string(rows[index].1)).font(.callout)
-                    Spacer()
-                    Text(L10n.shared.string(rows[index].0)).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
+    private var boardHelp: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("画布帮助").font(.title3.weight(.semibold))
+                    Text("功能与对应的鼠标或键盘操作。固定后可继续在画布上操作。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                Spacer(minLength: 0)
+                Button {
+                    helpPinned.toggle()
+                } label: {
+                    Image(systemName: helpPinned ? "pin.fill" : "pin")
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                        .background(helpPinned ? Color.accentColor.opacity(0.16) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .help(helpPinned ? "取消固定帮助" : "固定帮助")
+                .accessibilityLabel(helpPinned ? "取消固定帮助" : "固定帮助")
             }
-            }.padding(16)
-        }.frame(width: 360, height: 440)
+            .padding(16)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    helpSection("便签", rows: [
+                        ("新建便签", "双击画布空白处"),
+                        ("编辑便签", "双击便签"),
+                        ("选择便签文字", "在便签正文拖动"),
+                        ("移动便签", "拖动便签顶部栏"),
+                        ("折叠或展开", "点击便签右上角箭头"),
+                        ("勾选待办", "点击待办项前的方框")
+                    ])
+                    helpSection("标注与图形", rows: [
+                        ("回到选取模式", "绘制完成后按 Esc"),
+                        ("绘制正方形或正圆", "按住 Control 拖动"),
+                        ("约束线条方向", "按住 Shift 拖动"),
+                        ("切换半透明", "点击半透明按钮"),
+                        ("填充图形", "绘制前或选中图形后点击填充"),
+                        ("删除对象", "选中后按 Delete")
+                    ])
+                    helpSection("画布操作", rows: [
+                        ("平移", "按住空格并拖动"),
+                        ("缩放", "⌘ + 滚动或捏合"),
+                        ("100% 并居中", "⌘0"),
+                        ("适应全部", "⌘⇧0"),
+                        ("多选", "⇧ + 点击"),
+                        ("全选文字或对象", "⌘A"),
+                        ("复制或粘贴", "⌘C / ⌘V"),
+                        ("撤销或重做", "⌘Z / ⌘⇧Z"),
+                        ("编组或取消编组", "⌘G / ⌘⇧G"),
+                        ("移动对象", "方向键，按住 ⇧ 加速"),
+                        ("临时关闭吸附", "⌥ + 拖动")
+                    ])
+                    helpSection("工具快捷键", rows: BoardTool.allCases.map { ($0.title, $0.shortcut) })
+                }
+                .padding(16)
+            }
+        }
+        .frame(width: 430, height: 520)
+    }
+
+    private func helpSection(_ title: String, rows: [(String, String)]) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(L10n.shared.string(title)).font(.headline)
+            helpRow("功能项", "操作方法", header: true)
+            ForEach(rows.indices, id: \.self) { index in
+                helpRow(rows[index].0, rows[index].1)
+            }
+        }
+    }
+
+    private func helpRow(_ title: String, _ action: String, header: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 16) {
+            Text(L10n.shared.string(title))
+                .font(header ? .caption.weight(.semibold) : .callout)
+                .foregroundStyle(header ? .secondary : .primary)
+                .frame(width: 130, alignment: .leading)
+            Spacer()
+            Text(L10n.shared.string(action))
+                .font(header ? .caption.weight(.semibold) : .callout)
+                .foregroundStyle(header ? .secondary : .primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct BoardSearchFieldReveal: Layout {
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = min(108, proposal.width ?? 108) * progress
+        let height = subviews[0].sizeThatFits(.unspecified).height
+        return CGSize(width: max(0, width), height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading,
+                          proposal: ProposedViewSize(width: max(44, bounds.width), height: bounds.height))
+    }
+}
+
+private struct BoardToolbarTarget: ViewModifier {
+    var width: CGFloat = 30
+    var selected = false
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var enabled
+
+    func body(content: Content) -> some View {
+        content
+            .frame(width: width, height: 32)
+            .background {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(selected ? Color.accentColor.opacity(0.17) : .clear)
+            }
+            .background {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(hovering && enabled ? Color.primary.opacity(0.08) : .clear)
+            }
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
     }
 }
 

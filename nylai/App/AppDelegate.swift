@@ -631,6 +631,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipboardLoadAttempted = true
         do {
             let store = try ClipboardHistoryStore()
+            _ = try? store.loadGroups()
             clipboardHistoryStore = store
             clipboardLoadError = nil
             return store

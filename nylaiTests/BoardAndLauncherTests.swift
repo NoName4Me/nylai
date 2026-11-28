@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import nylai
 
@@ -74,6 +75,105 @@ final class BoardAndLauncherTests: XCTestCase {
     }
 
     @MainActor
+    func testNoteBodySelectsDisplayedTextAndOnlyHeaderStartsDragging() throws {
+        let fixture = BoardCanvasFixture()
+        defer { fixture.close() }
+        let boardID = fixture.store.active.id
+        let id = fixture.store.addText("# Alpha Beta", boardID: boardID, at: CGPoint(x: -120, y: -80))
+        let item = try XCTUnwrap(fixture.store.active.items.first)
+        let frame = fixture.canvas.viewport.rect(item.frame, in: fixture.canvas.bounds.size)
+        let body = BoardRenderer.noteBodyRect(frame)
+        let width = ("Alpha" as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 21, weight: .semibold)]).width
+        let start = CGPoint(x: body.minX + 0.5, y: body.minY + 12)
+        let end = CGPoint(x: body.minX + width, y: start.y)
+        try fixture.drag(from: start, to: end)
+        XCTAssertEqual(fixture.store.active.items.first?.frame, item.frame)
+        let clipboard = NSPasteboard.withUniqueName()
+        defer { clipboard.releaseGlobally() }
+        fixture.session.copy(clipboard)
+        XCTAssertEqual(clipboard.string(forType: .string), "Alpha")
+        try fixture.key(.keyDown, code: 124)
+        XCTAssertEqual(fixture.store.active.items.first?.frame, item.frame)
+
+        let header = CGPoint(x: frame.midX, y: frame.minY + 14)
+        try fixture.drag(from: header, to: CGPoint(x: header.x + 38, y: header.y + 21))
+        XCTAssertEqual(fixture.store.active.items.first?.frame, item.frame.offsetBy(dx: 38, dy: 21))
+
+        let movedBodyPoint = CGPoint(x: start.x + 38, y: start.y + 21)
+        fixture.canvas.mouseDown(with: try fixture.mouse(.leftMouseDown, at: movedBodyPoint, clicks: 2))
+        XCTAssertEqual(fixture.session.editingID, id)
+        XCTAssertEqual(fixture.session.noteDraft, "# Alpha Beta")
+    }
+
+    @MainActor
+    func testCanvasDrawsFilledShapesTogglesSelectionAndKeepsSpacePan() throws {
+        let fixture = BoardCanvasFixture()
+        defer { fixture.close() }
+        fixture.session.chooseTool(.ellipse)
+        fixture.session.filled = true
+        try fixture.drag(from: CGPoint(x: 80, y: 80), to: CGPoint(x: 180, y: 170))
+        let ellipse = try XCTUnwrap(fixture.store.active.items.first)
+        XCTAssertEqual(ellipse.kind, .ellipse)
+        XCTAssertEqual(ellipse.filled, true)
+        try fixture.key(.keyDown, code: 53)
+        XCTAssertEqual(fixture.session.tool, .select)
+
+        let rectangle = BoardItem(kind: .rectangle, frame: CGRect(x: 20, y: 10, width: 80, height: 60))
+        fixture.store.editBoard(fixture.store.active.id) { $0.items.append(rectangle) }
+        fixture.session.selection = [ellipse.id, rectangle.id]
+        fixture.session.toggleSelectedShapeFill()
+        XCTAssertTrue(fixture.session.selected.allSatisfy { $0.filled == true })
+        fixture.session.toggleSelectedShapeFill()
+        XCTAssertTrue(fixture.session.selected.allSatisfy { $0.filled == false })
+
+        let center = fixture.canvas.viewport.center
+        try fixture.key(.keyDown, code: 49)
+        try fixture.drag(from: CGPoint(x: 260, y: 160), to: CGPoint(x: 290, y: 180))
+        try fixture.key(.keyUp, code: 49)
+        XCTAssertEqual(fixture.canvas.viewport.center, CGPoint(x: center.x - 30, y: center.y - 20))
+        XCTAssertFalse(BoardTool.allCases.contains { $0.shortcut == "H" })
+    }
+
+    @MainActor
+    func testTranslucentFilledShapeHasNoOpaqueEdge() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = BoardStore(directory: directory)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 100,
+            pixelsHigh: 80,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let context = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: bitmap))
+        let item = BoardItem(
+            kind: .rectangle,
+            frame: CGRect(x: 10, y: 10, width: 80, height: 60),
+            color: .black,
+            strokeWidth: 4,
+            translucent: true,
+            filled: true
+        )
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        NSColor.clear.setFill()
+        NSRect(x: 0, y: 0, width: 100, height: 80).fill()
+        BoardRenderer.draw(item, in: item.frame, scale: 1, store: store)
+        NSGraphicsContext.restoreGraphicsState()
+
+        let center = try XCTUnwrap(bitmap.colorAt(x: 50, y: 40)).alphaComponent
+        let innerEdge = try XCTUnwrap(bitmap.colorAt(x: 11, y: 40)).alphaComponent
+        XCTAssertEqual(center, 0.35, accuracy: 0.03)
+        XCTAssertEqual(innerEdge, center, accuracy: 0.03)
+    }
+
+    @MainActor
     func testDrawingStyleAndLegacyMarkerPersist() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -101,6 +201,17 @@ final class BoardAndLauncherTests: XCTestCase {
         XCTAssertEqual(BoardGeometry.endpoints(item), [CGPoint(x: 100, y: 50), CGPoint(x: -10, y: 20)])
         let fit = BoardGeometry.imageRect(CGRect(x: 0, y: 0, width: 200, height: 100), imageSize: CGSize(width: 100, height: 100))
         XCTAssertEqual(fit, CGRect(x: 50, y: 0, width: 100, height: 100))
+    }
+
+    func testCornerRadiusHandleProjectsDragAlongRectangleDiagonal() {
+        let frame = CGRect(x: 10, y: 20, width: 320, height: 120)
+        let base = BoardGeometry.cornerRadiusHandle(frame, radius: 0)
+        let target = BoardGeometry.cornerRadiusHandle(frame, radius: 24)
+        XCTAssertEqual((frame.maxX - target.x) / frame.width, (frame.maxY - target.y) / frame.height, accuracy: 0.001)
+        XCTAssertEqual(BoardGeometry.draggedCornerRadius(from: base, to: target, in: frame, radius: 0), 24, accuracy: 0.001)
+        XCTAssertEqual(BoardGeometry.cornerRadiusHandle(frame, radius: 60), CGPoint(x: frame.midX, y: frame.midY))
+        let perpendicular = CGPoint(x: target.x + 12, y: target.y - 32)
+        XCTAssertEqual(BoardGeometry.draggedCornerRadius(from: target, to: perpendicular, in: frame, radius: 24), 24, accuracy: 0.001)
     }
 
     @MainActor
@@ -168,5 +279,51 @@ final class BoardAndLauncherTests: XCTestCase {
         XCTAssertTrue(restored.configuration.browserTabs)
         XCTAssertEqual(restored.configuration.usage["app:example"], 1)
         XCTAssertNil(restored.configuration.usage["clip:private"])
+    }
+}
+
+@MainActor
+private final class BoardCanvasFixture {
+    private let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store: BoardStore
+    let session: BoardSession
+    let canvas: BoardCanvasView
+    private let window: NSWindow
+
+    init() {
+        store = BoardStore(directory: directory)
+        session = BoardSession(store: store)
+        session.snap = false
+        canvas = BoardCanvasView(session: session)
+        window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 660, height: 420), styleMask: [.titled],
+                          backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = canvas
+    }
+
+    func close() {
+        session.finishEditing()
+        store.flush()
+        window.close()
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    func mouse(_ type: NSEvent.EventType, at point: CGPoint, clicks: Int = 1) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.mouseEvent(with: type, location: canvas.convert(point, to: nil), modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+            eventNumber: 0, clickCount: clicks, pressure: type == .leftMouseUp ? 0 : 1))
+    }
+
+    func drag(from start: CGPoint, to end: CGPoint) throws {
+        canvas.mouseDown(with: try mouse(.leftMouseDown, at: start))
+        canvas.mouseDragged(with: try mouse(.leftMouseDragged, at: end))
+        canvas.mouseUp(with: try mouse(.leftMouseUp, at: end))
+    }
+
+    func key(_ type: NSEvent.EventType, code: UInt16) throws {
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+            characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code))
+        if type == .keyDown { canvas.keyDown(with: event) } else { canvas.keyUp(with: event) }
     }
 }

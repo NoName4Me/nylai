@@ -11,7 +11,7 @@ final class ClipboardTests: XCTestCase {
         let fixture = try ClipboardFixture()
         defer { fixture.remove() }
         let store = try XCTUnwrap(fixture.store)
-        let groups = try ClipboardGroupsStore(fileURL: fixture.root.appending(path: "groups.json"))
+        let groups = try store.loadGroups()
         try groups.save(ClipboardGroup(name: "工作", color: .green))
         try groups.save(ClipboardGroup(name: "学习", color: .purple))
         let model = ClipboardPanelModel(
@@ -64,7 +64,7 @@ final class ClipboardTests: XCTestCase {
         let fixture = try ClipboardFixture()
         defer { fixture.remove() }
         let store = try XCTUnwrap(fixture.store)
-        let groups = try ClipboardGroupsStore(fileURL: fixture.root.appending(path: "groups.json"))
+        let groups = try store.loadGroups()
         var work = ClipboardGroup(name: "工作", color: .green)
         var personal = ClipboardGroup(name: "生活", color: .purple)
         try groups.save(work)
@@ -102,11 +102,12 @@ final class ClipboardTests: XCTestCase {
         let fixture = try ClipboardFixture()
         defer { fixture.remove() }
         let store = try XCTUnwrap(fixture.store)
-        let groups = try ClipboardGroupsStore(fileURL: fixture.root.appending(path: "groups.json"))
+        let groups = try store.loadGroups()
         let group = ClipboardGroup(name: "工作", color: .green)
         try groups.save(group)
         let record = try XCTUnwrap(addText("grouped", fixture: fixture, store: store))
         try groups.setMembership([record.id], groupID: group.id, included: true, history: store)
+        try groups.setPinned(true, recordID: record.id, groupID: group.id, at: fixture.now)
         let model = ClipboardPanelModel(
             store: store,
             pasteboard: FakeClipboardPasteboard(),
@@ -118,6 +119,90 @@ final class ClipboardTests: XCTestCase {
 
         XCTAssertTrue(store.index.records.isEmpty)
         XCTAssertEqual(groups.groups.first?.recordIDs, [])
+        XCTAssertNil(groups.groups.first?.pinnedAt)
+    }
+
+    func testGroupPinsStayLocalAndMovingRecordsKeepsOneGroup() throws {
+        let fixture = try ClipboardFixture()
+        defer { fixture.remove() }
+        let store = try XCTUnwrap(fixture.store)
+        let groups = try store.loadGroups()
+        let work = ClipboardGroup(name: "工作")
+        let study = ClipboardGroup(name: "学习")
+        try groups.save(work)
+        try groups.save(study)
+        let older = try XCTUnwrap(addText("older", fixture: fixture, store: store))
+        fixture.now += 60
+        let newer = try XCTUnwrap(addText("newer", fixture: fixture, store: store))
+        try groups.setMembership([older.id, newer.id], groupID: work.id, included: true, history: store)
+        let model = ClipboardPanelModel(store: store, pasteboard: FakeClipboardPasteboard(), targetApplication: nil, groups: groups)
+
+        model.selectedGroupID = work.id
+        model.togglePinned(older)
+        XCTAssertTrue(model.isPinnedInCurrentScope(older))
+        XCTAssertEqual(model.visibleRecords.map(\.id), [older.id, newer.id])
+        model.selectedGroupID = nil
+        XCTAssertFalse(model.isPinnedInCurrentScope(older))
+        XCTAssertEqual(model.visibleRecords.map(\.id), [newer.id, older.id])
+        model.togglePinned(newer)
+        XCTAssertEqual(store.groupedRecordCount, 2)
+        let globallyPinned = try XCTUnwrap(store.pinnedRecords.first)
+        model.selectedGroupID = work.id
+        XCTAssertFalse(model.isPinnedInCurrentScope(globallyPinned))
+        model.togglePinned(older)
+        try store.clearOrdinary()
+        XCTAssertEqual(model.visibleRecords.map(\.id), [newer.id, older.id])
+        XCTAssertFalse(model.isPinnedInCurrentScope(older))
+
+        model.togglePinned(globallyPinned)
+        model.assign([newer.id], to: study)
+        XCTAssertEqual(model.visibleRecords.map(\.id), [older.id])
+        XCTAssertNil(groups.groups.first { $0.id == work.id }?.pinnedAt?[newer.id])
+        model.selectedGroupID = study.id
+        XCTAssertFalse(model.isPinnedInCurrentScope(globallyPinned))
+        XCTAssertEqual(model.visibleRecords.map(\.id), [newer.id])
+        model.selectedGroupID = nil
+        XCTAssertEqual(model.visibleRecords.map(\.id), [newer.id, older.id])
+        XCTAssertEqual(store.pinnedRecords.map(\.id), [newer.id])
+
+        let reopened = try fixture.makeStore()
+        let reopenedGroups = try reopened.loadGroups()
+        XCTAssertEqual(reopenedGroups.group(for: newer.id)?.id, study.id)
+        XCTAssertEqual(reopened.pinnedRecords.map(\.id), [newer.id])
+    }
+
+    func testLegacyGroupPinsMigrateToFirstGroupAndSurviveCleanup() throws {
+        struct LegacyArchive: Encodable {
+            let version = 1
+            let migratedLegacyItems = true
+            let groups: [ClipboardGroup]
+            let names: [UUID: String] = [:]
+        }
+        let fixture = try ClipboardFixture()
+        defer { fixture.remove() }
+        let store = try XCTUnwrap(fixture.store)
+        let grouped = try XCTUnwrap(addText("grouped", fixture: fixture, store: store))
+        try store.setPinned(true, id: grouped.id)
+        let global = try XCTUnwrap(addText("global", fixture: fixture, store: store))
+        try store.setPinned(true, id: global.id)
+        let first = ClipboardGroup(name: "工作", recordIDs: [grouped.id])
+        let second = ClipboardGroup(name: "学习", recordIDs: [grouped.id])
+        try JSONEncoder().encode(LegacyArchive(groups: [first, second]))
+            .write(to: fixture.directory.appendingPathComponent("groups.json"))
+
+        let groups = try store.loadGroups()
+        XCTAssertEqual(groups.group(for: grouped.id)?.id, first.id)
+        XCTAssertEqual(groups.groups[1].recordIDs, [])
+        XCTAssertEqual(groups.groups[0].pinnedAt?[grouped.id], fixture.now)
+        XCTAssertEqual(store.pinnedRecords.map(\.id), [global.id])
+        XCTAssertEqual(store.groupedRecordCount, 1)
+        try groups.setPinned(false, recordID: grouped.id, groupID: first.id, at: fixture.now)
+        fixture.now += 86_400 * 365
+        var settings = store.settings
+        settings.retentionEnabled = true
+        try store.updateSettings(settings)
+        XCTAssertEqual(store.allRecords.map(\.id), [global.id, grouped.id])
+        XCTAssertEqual(store.text(for: grouped), "grouped")
     }
 
     @MainActor

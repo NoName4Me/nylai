@@ -79,7 +79,7 @@ struct ClipboardPanelView: View {
             Button("删除分组", role: .destructive) {
                 guard let group = deletingGroup else { return }
                 do {
-                    try model.groups?.delete(group.id, history: model.store)
+                    try model.groups?.delete(group.id)
                     if model.selectedGroupID == group.id { model.selectedGroupID = nil }
                 } catch { model.errorMessage = error.localizedDescription }
                 deletingGroup = nil
@@ -280,7 +280,7 @@ struct ClipboardPanelView: View {
                             Text(record.sourceName ?? record.sourceBundleIdentifier ?? L10n.shared.string("来源未知")).lineLimit(1)
                             Text("·")
                             Text(model.relativeTime(for: record.copiedAt))
-                            ForEach((model.groups?.groups ?? []).filter { $0.recordIDs.contains(record.id) }) { group in
+                            if let group = model.groups?.group(for: record.id) {
                                 Circle().fill(group.color.tint).frame(width: 6, height: 6).help(group.name)
                             }
                         }.font(.system(size: 10.5)).foregroundStyle(.secondary)
@@ -288,17 +288,19 @@ struct ClipboardPanelView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
             if !model.isSelecting {
+                let pinned = model.isPinnedInCurrentScope(record)
+                let pinTitle = L10n.shared.string(pinned ? "取消置顶" : "置顶")
                 Button { model.togglePinned(record) } label: {
-                    Image(systemName: record.isPinned ? "pin.fill" : "pin")
+                    Image(systemName: pinned ? "pin.fill" : "pin")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(record.isPinned ? NylaiPalette.accent : .secondary)
+                        .foregroundStyle(pinned ? NylaiPalette.accent : .secondary)
                         .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
-                .opacity(record.isPinned || hoveredID == record.id ? 1 : 0)
-                .help(record.isPinned ? L10n.shared.string("取消置顶") : L10n.shared.string("置顶"))
-                .accessibilityLabel(record.isPinned ? L10n.shared.string("取消置顶") : L10n.shared.string("置顶"))
+                .opacity(pinned || hoveredID == record.id ? 1 : 0)
+                .help(pinTitle)
+                .accessibilityLabel(pinTitle)
                 Button("粘贴") { model.directPaste(record) }.buttonStyle(.borderless)
                     .disabled(!model.canDirectPaste)
                     .help(model.canDirectPaste ? L10n.shared.string("粘贴到 %@", model.targetApplication?.localizedName ?? "") : L10n.shared.string("先切换到目标应用，再打开剪贴板。"))
@@ -327,7 +329,7 @@ struct ClipboardPanelView: View {
     @ViewBuilder private func recordActions(_ record: ClipboardRecord) -> some View {
         Button("复制") { model.copy(record) }
         if model.onSendToBoard != nil { Button("发送到画布") { model.sendToBoard([record]) } }
-        Button(record.isPinned ? L10n.shared.string("取消置顶") : L10n.shared.string("置顶")) {
+        Button(L10n.shared.string(model.isPinnedInCurrentScope(record) ? "取消置顶" : "置顶")) {
             model.togglePinned(record)
         }
         Menu("分组") {

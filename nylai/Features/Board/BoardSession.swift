@@ -3,13 +3,13 @@ import UniformTypeIdentifiers
 import Observation
 
 enum BoardTool: String, CaseIterable, Identifiable {
-    case select, hand, note, pen, eraser, line, arrow, rectangle, ellipse, triangle, diamond, star
+    case select, note, pen, eraser, line, arrow, rectangle, ellipse, triangle, diamond, star
     static let shapes: [Self] = [.rectangle, .ellipse, .triangle, .diamond, .star]
     var isShape: Bool { Self.shapes.contains(self) }
     var showsDrawingStyle: Bool { isShape || self == .pen || self == .line || self == .arrow }
     var shortcut: String {
         switch self {
-        case .select: "V"; case .hand: "H"; case .note: "N"; case .pen: "B"; case .eraser: "E"
+        case .select: "V"; case .note: "N"; case .pen: "B"; case .eraser: "E"
         case .line: "L"; case .arrow: "A"; case .rectangle: "R"; case .ellipse: "O"
         case .triangle: "T"; case .diamond: "D"; case .star: "S"
         }
@@ -18,7 +18,6 @@ enum BoardTool: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .select: "cursorarrow"
-        case .hand: "hand.draw"
         case .note: "note.text"
         case .pen: "pencil.tip"
         case .eraser: "eraser"
@@ -34,7 +33,6 @@ enum BoardTool: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .select: L10n.shared.string("选择")
-        case .hand: L10n.shared.string("平移")
         case .note: L10n.shared.string("便签")
         case .pen: L10n.shared.string("画笔")
         case .eraser: L10n.shared.string("橡皮擦")
@@ -62,6 +60,7 @@ final class BoardSession {
     var showsToolShortcuts = false
     var toolbarCollapsed = false
     @ObservationIgnored var focusCanvas: (() -> Void)?
+    @ObservationIgnored var selectedNoteText: (() -> String?)?
     var strokeWidth: CGFloat = 4
     var dashed = false
     var translucent = false
@@ -76,6 +75,14 @@ final class BoardSession {
     init(store: BoardStore) { self.store = store }
     var board: BoardDocument { store.active }
     var selected: [BoardItem] { board.items.filter { selection.contains($0.id) } }
+    var editableSelectedShapes: [BoardItem] { selected.filter { $0.kind.isShape && !$0.locked } }
+    var selectedShapesAreFilled: Bool { editableSelectedShapes.allSatisfy { $0.filled == true } }
+
+    func toggleSelectedShapeFill() {
+        guard !editableSelectedShapes.isEmpty else { return }
+        let fill = !selectedShapesAreFilled
+        mutateSelected { if $0.kind.isShape { $0.filled = fill } }
+    }
 
     func switchBoard(_ id: UUID) {
         finishEditing()
@@ -240,25 +247,30 @@ final class BoardSession {
         }
     }
 
-    func copy() {
+    func copy(_ pasteboard: NSPasteboard = .general) {
+        if let text = selectedNoteText?() {
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            return
+        }
         finishEditing()
         let items = selected
         if items.count == 1, let item = items.first {
             if item.kind == .note {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(item.text, forType: .string)
+                pasteboard.clearContents()
+                pasteboard.setString(item.text, forType: .string)
                 return
             }
             if let asset = item.asset, let image = store.image(asset) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([image])
+                pasteboard.clearContents()
+                pasteboard.writeObjects([image])
                 return
             }
         }
-        export(copy: true)
+        export(copy: true, pasteboard: pasteboard)
     }
 
-    func export(copy: Bool = false) {
+    func export(copy: Bool = false, pasteboard: NSPasteboard = .general) {
         finishEditing()
         let items = selected.isEmpty ? board.items : selected
         guard let image = BoardRenderer.export(items, store: store) else {
@@ -266,8 +278,8 @@ final class BoardSession {
             return
         }
         if copy {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.writeObjects([image])
+            pasteboard.clearContents()
+            pasteboard.writeObjects([image])
         } else {
             let panel = NSSavePanel()
             panel.allowedContentTypes = [.png]

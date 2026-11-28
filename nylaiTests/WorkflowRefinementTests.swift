@@ -9,13 +9,13 @@ final class WorkflowRefinementTests: XCTestCase {
         defer { fixture.remove() }
         try fixture.snippets.save(SavedSnippet(name: "生产地址", group: "工作", text: "https://example.com"))
         try fixture.snippets.save(SavedSnippet(name: "备用入口", group: "常用", text: "https://example.com"))
-        try fixture.groups.migrateLegacyItems(history: fixture.history, snippets: fixture.snippets)
+        let groups = try fixture.history.loadGroups()
         let record = try XCTUnwrap(fixture.history.allRecords.first)
         XCTAssertEqual(fixture.history.allRecords.count, 1)
-        let name = try XCTUnwrap(fixture.groups.name(for: record.id))
+        let name = try XCTUnwrap(groups.name(for: record.id))
         XCTAssertTrue(name.contains("生产地址"))
         XCTAssertTrue(name.contains("备用入口"))
-        XCTAssertTrue(fixture.groups.groups.allSatisfy { $0.recordIDs.contains(record.id) })
+        XCTAssertEqual(groups.groups.filter { $0.recordIDs.contains(record.id) }.map(\.name), ["工作"])
         let reopened = try ClipboardGroupsStore(fileURL: fixture.root.appendingPathComponent("groups.json"))
         XCTAssertEqual(reopened.name(for: record.id), name)
     }
@@ -29,37 +29,41 @@ final class WorkflowRefinementTests: XCTestCase {
         settings.maximumItems = 1
         try fixture.history.updateSettings(settings)
         try fixture.snippets.save(SavedSnippet(name: "命令", group: "工作", text: "git status"))
-        try fixture.groups.migrateLegacyItems(history: fixture.history, snippets: fixture.snippets)
+        let groups = try fixture.history.loadGroups()
         XCTAssertNotNil(fixture.history.allRecords.first { $0.id == ordinary.id })
-        XCTAssertTrue(fixture.groups.groups.contains { $0.recordIDs.contains(saved.id) })
-        let work = try XCTUnwrap(fixture.groups.groups.first { $0.name == "工作" })
+        XCTAssertNotNil(groups.group(for: saved.id)?.pinnedAt?[saved.id])
+        let work = try XCTUnwrap(groups.groups.first { $0.name == "工作" })
         let imported = try XCTUnwrap(fixture.history.allRecords.first { work.recordIDs.contains($0.id) })
         XCTAssertEqual(fixture.history.text(for: imported), "git status")
-        XCTAssertTrue(imported.isPinned)
-        try fixture.groups.migrateLegacyItems(history: fixture.history, snippets: fixture.snippets)
+        XCTAssertFalse(imported.isPinned)
+        XCTAssertNotNil(work.pinnedAt?[imported.id])
+        _ = try fixture.history.loadGroups()
         XCTAssertEqual(fixture.history.allRecords.count, 3)
-        XCTAssertEqual(fixture.groups.groups.count, 2)
+        XCTAssertEqual(groups.groups.count, 2)
         let reopened = try ClipboardGroupsStore(fileURL: fixture.root.appendingPathComponent("groups.json"))
-        XCTAssertEqual(reopened.groups, fixture.groups.groups)
+        XCTAssertEqual(reopened.groups, groups.groups)
     }
 
     func testMovingBetweenGroupsKeepsContentProtectedAndRejectsDuplicateNames() throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
+        let groups = try fixture.history.loadGroups()
         let record = try fixture.add("分组内容")
         let a = ClipboardGroup(name: "工作", color: .green)
         let b = ClipboardGroup(name: "个人", color: .blue)
-        try fixture.groups.save(a)
-        try fixture.groups.save(b)
-        XCTAssertThrowsError(try fixture.groups.save(ClipboardGroup(name: " 工作 ")))
-        try fixture.groups.setMembership([record.id], groupID: a.id, included: true, history: fixture.history)
-        try fixture.groups.setMembership([record.id], groupID: b.id, included: true, history: fixture.history)
-        try fixture.groups.delete(a.id, history: fixture.history)
-        XCTAssertTrue(try XCTUnwrap(fixture.history.allRecords.first { $0.id == record.id }).isPinned)
+        try groups.save(a)
+        try groups.save(b)
+        XCTAssertThrowsError(try groups.save(ClipboardGroup(name: " 工作 ")))
+        try groups.setMembership([record.id], groupID: a.id, included: true, history: fixture.history)
+        try groups.setMembership([record.id], groupID: b.id, included: true, history: fixture.history)
+        XCTAssertEqual(groups.groups.first { $0.id == a.id }?.recordIDs, [])
+        try groups.delete(a.id)
+        XCTAssertFalse(try XCTUnwrap(fixture.history.allRecords.first { $0.id == record.id }).isPinned)
         try fixture.history.clearOrdinary()
         XCTAssertEqual(fixture.history.text(for: record), "分组内容")
-        try fixture.groups.delete(b.id, history: fixture.history)
-        XCTAssertFalse(try XCTUnwrap(fixture.history.allRecords.first { $0.id == record.id }).isPinned)
+        try groups.delete(b.id)
+        XCTAssertNil(groups.group(for: record.id))
+        XCTAssertEqual(fixture.history.allRecords.map(\.id), [record.id])
     }
 
     func testVisibleCheckboxSelectionMergesInVisibleOrderAndPinnedCopyStaysOpen() throws {
@@ -68,7 +72,7 @@ final class WorkflowRefinementTests: XCTestCase {
         let first = try fixture.add("第一条")
         let second = try fixture.add("第二条")
         let pasteboard = RefinementPasteboard()
-        let model = ClipboardPanelModel(store: fixture.history, pasteboard: pasteboard, targetApplication: nil, groups: fixture.groups)
+        let model = ClipboardPanelModel(store: fixture.history, pasteboard: pasteboard, targetApplication: nil)
         model.isSelecting = true
         model.isPinned = true
         var closes = 0
@@ -123,13 +127,11 @@ final class WorkflowRefinementTests: XCTestCase {
 private struct Fixture {
     let root: URL
     let history: ClipboardHistoryStore
-    let groups: ClipboardGroupsStore
     let snippets: SnippetStore
     init() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         history = try ClipboardHistoryStore(directoryURL: root,
                                             settingsStore: ClipboardSettingsStore(fileURL: root.appendingPathComponent("settings.json")))
-        groups = try ClipboardGroupsStore(fileURL: root.appendingPathComponent("groups.json"))
         snippets = try SnippetStore(fileURL: root.appendingPathComponent("snippets.json"))
     }
     func add(_ text: String) throws -> ClipboardRecord {

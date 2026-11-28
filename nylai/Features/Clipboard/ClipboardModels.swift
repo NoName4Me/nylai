@@ -27,6 +27,7 @@ struct ClipboardIndex: Codable, Equatable, Sendable {
     static let currentVersion = 1
     var version: Int
     var records: [ClipboardRecord]
+    var migratedGroupPins: Bool?
 
     static let empty = ClipboardIndex(version: currentVersion, records: [])
 }

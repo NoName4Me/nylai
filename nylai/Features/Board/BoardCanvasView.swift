@@ -25,10 +25,20 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
         case move(start: CGPoint, items: [BoardItem])
         case resize(start: CGPoint, item: BoardItem)
         case rotate(start: CGPoint, item: BoardItem)
-        case corner(item: BoardItem)
+        case corner(start: CGPoint, item: BoardItem)
         case endpoint(item: BoardItem, index: Int)
         case marquee(start: CGPoint, previous: Set<UUID>)
         case stroke(start: CGPoint, kind: BoardKind)
+        case noteText(BoardNoteTextLayout)
+    }
+    private struct NoteSelection {
+        let itemID: UUID
+        let anchor: Int
+        var end: Int
+
+        var range: NSRange {
+            NSRange(location: min(anchor, end), length: abs(end - anchor))
+        }
     }
     private var drag: Drag?
     private var preview: [BoardItem] = []
@@ -40,6 +50,8 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
     private var noteScroll: NSScrollView?
     private var editorID: UUID?
     private var menuPoint: CGPoint?
+    private var noteSelection: NoteSelection?
+    private var noteTrackingArea: NSTrackingArea?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -54,6 +66,12 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
             guard let self else { return }
             self.window?.makeFirstResponder(self)
         }
+        session.selectedNoteText = { [weak self] in
+            guard let self, let selection = self.noteSelection, selection.range.length > 0,
+                  let text = self.selectableNoteText() else { return nil }
+            guard NSMaxRange(selection.range) <= text.length else { return nil }
+            return text.substring(with: selection.range)
+        }
         registerForDraggedTypes([.fileURL, .png, .tiff, .string])
     }
     required init?(coder: NSCoder) { nil }
@@ -64,8 +82,40 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
         layoutEditor()
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        guard noteTrackingArea == nil else { return }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        noteTrackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let location = world(point(event))
+        guard session.tool == .select, !spaceDown, let note = hit(location), note.kind == .note else {
+            NSCursor.arrow.set()
+            return
+        }
+        if !note.locked, BoardRenderer.noteHeaderRect(note.frame).contains(location),
+           !BoardRenderer.noteColorRect(note.frame).contains(location), !BoardRenderer.noteCollapseRect(note.frame).contains(location) {
+            NSCursor.openHand.set()
+        } else if !note.isCollapsed, BoardRenderer.noteBodyRect(note.frame).contains(location),
+                  BoardRenderer.todoLine(in: note, at: location) == nil {
+            NSCursor.iBeam.set()
+        } else {
+            NSCursor.arrow.set()
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) { NSCursor.arrow.set() }
+
     func syncEditor() {
         let id = session.editingID
+        if let selection = noteSelection,
+           id != nil || session.tool != .select || !session.selection.contains(selection.itemID) {
+            noteSelection = nil
+        }
         if editorID == id { layoutEditor(); return }
         noteEditor?.onFinish = nil
         noteEditor?.onResign = nil
@@ -115,8 +165,7 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
               let item = session.board.items.first(where: { $0.id == id }) else { return }
         let scale = viewport.zoom
         let frame = viewport.rect(item.frame, in: bounds.size)
-        scroll.frame = CGRect(x: frame.minX + 12 * scale, y: frame.minY + 32 * scale,
-                              width: max(1, frame.width - 24 * scale), height: max(1, frame.height - 42 * scale))
+        scroll.frame = BoardRenderer.noteBodyRect(frame, scale: scale)
         editor.minSize = CGSize(width: 0, height: scroll.contentSize.height)
         editor.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         if abs((editor.font?.pointSize ?? 0) - 14 * scale) > 0.1 { editor.font = .systemFont(ofSize: 14 * scale) }
@@ -144,7 +193,9 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
             let shown = preview.first { $0.id == item.id } ?? item
             let frame = viewport.rect(shown.frame, in: bounds.size)
             guard viewport.rect(shown.rotatedBounds, in: bounds.size).intersects(dirtyRect.insetBy(dx: -30, dy: -30)) else { continue }
-            BoardRenderer.draw(shown, in: frame, scale: viewport.zoom, store: session.store, showsNoteControls: true, hidesNoteText: session.editingID == item.id)
+            let textRange = noteSelection.flatMap { $0.itemID == item.id ? $0.range : nil }
+            BoardRenderer.draw(shown, in: frame, scale: viewport.zoom, store: session.store,
+                               showsNoteControls: true, hidesNoteText: session.editingID == item.id, selectedNoteText: textRange)
         }
         for item in preview where !items.contains(where: { $0.id == item.id }) {
             BoardRenderer.draw(item, in: viewport.rect(item.frame, in: bounds.size), scale: viewport.zoom, store: session.store)
@@ -169,13 +220,15 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
         return frame
     }
 
+    private let rotationHandleRadius: CGFloat = 14
+
     private func handles(_ item: BoardItem) -> (resize: CGPoint, rotation: CGPoint, corner: CGPoint) {
         let frame = displayFrame(item)
         let t = BoardGeometry.transform(frame, angle: item.angle)
-        let radius = item.radius * viewport.zoom
+        let rotationOffset = rotationHandleRadius / sqrt(2)
         return (CGPoint(x: frame.maxX, y: frame.maxY).applying(t),
-                CGPoint(x: frame.maxX + 15, y: frame.minY - 15).applying(t),
-                CGPoint(x: frame.maxX - radius - 12, y: frame.maxY - 12).applying(t))
+                CGPoint(x: frame.maxX + rotationOffset, y: frame.minY - rotationOffset).applying(t),
+                BoardGeometry.cornerRadiusHandle(frame, radius: item.radius * viewport.zoom).applying(t))
     }
 
     private func drawHandle(_ point: CGPoint, circle: Bool = false) {
@@ -203,9 +256,17 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
         let h = handles(item)
         drawHandle(h.resize)
         if item.kind.isAnnotation {
+            let r = rotationHandleRadius
+            let control = r * 0.55228475
+            let x = frame.maxX, y = frame.minY
             let arc = NSBezierPath()
-            arc.appendArc(withCenter: h.rotation, radius: 7, startAngle: 35, endAngle: 320)
-            arc.lineWidth = 1.6; arc.stroke()
+            arc.move(to: CGPoint(x: x, y: y - r).applying(t))
+            arc.curve(to: CGPoint(x: x + r, y: y).applying(t),
+                      controlPoint1: CGPoint(x: x + control, y: y - r).applying(t),
+                      controlPoint2: CGPoint(x: x + r, y: y - control).applying(t))
+            arc.lineCapStyle = .round
+            arc.lineWidth = 1.6
+            arc.stroke()
         }
         if item.kind.supportsCornerRadius { drawHandle(h.corner, circle: true) }
     }
@@ -252,12 +313,14 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
     }
 
     override func mouseDown(with event: NSEvent) {
+        noteSelection = nil
         session.finishEditing()
         syncEditor()
+        needsDisplay = true
         window?.makeFirstResponder(self)
         let screen = point(event)
         let p = world(screen)
-        if spaceDown || session.tool == .hand {
+        if spaceDown {
             drag = .pan(start: screen, viewport: viewport)
             return
         }
@@ -286,8 +349,13 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
                 }
             } else {
                 let h = handles(item)
-                if item.kind.isAnnotation && near(h.rotation, screen) { drag = .rotate(start: p, item: item); return }
-                if item.kind.supportsCornerRadius && near(h.corner, screen) { drag = .corner(item: item); return }
+                if item.kind.isAnnotation && hypot(screen.x - h.rotation.x, screen.y - h.rotation.y) <= 11 {
+                    drag = .rotate(start: p, item: item); return
+                }
+                if item.kind.supportsCornerRadius && near(h.corner, screen)
+                    && hypot(screen.x - h.corner.x, screen.y - h.corner.y) < hypot(screen.x - h.resize.x, screen.y - h.resize.y) {
+                    drag = .corner(start: screen, item: item); return
+                }
                 if near(h.resize, screen) { drag = .resize(start: p, item: item); return }
             }
         }
@@ -317,6 +385,15 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
                     panel.makeKeyAndOrderFront(nil)
                     return
                 }
+            }
+            if item.kind == .note, !BoardRenderer.noteHeaderRect(item.frame).contains(p) {
+                if !item.isCollapsed, !event.modifierFlags.contains(.shift), BoardRenderer.noteBodyRect(item.frame).contains(p) {
+                    let layout = BoardNoteTextLayout(item: item, frame: displayFrame(item), scale: viewport.zoom)
+                    let index = layout.insertionIndex(at: screen)
+                    noteSelection = NoteSelection(itemID: item.id, anchor: index, end: index)
+                    drag = .noteText(layout)
+                }
+                return
             }
             drag = .move(start: p, items: session.selected.filter { !$0.locked })
         } else {
@@ -364,6 +441,7 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
         let location = world(point(event))
         menuPoint = location
         let target = hit(location)
+        if target?.id != noteSelection?.itemID { noteSelection = nil; needsDisplay = true }
         if let target { session.select(target, extending: false) } else { session.selection = [] }
         let menu = NSMenu()
         func add(_ title: String, _ selector: Selector, enabled: Bool = true) {
@@ -396,7 +474,7 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
     }
     @objc private func menuCopy() { session.copy() }
     @objc private func menuLock() { session.toggleLock() }
-    @objc private func menuFill() { session.mutateSelected { if $0.kind.isShape { $0.filled = $0.filled != true } } }
+    @objc private func menuFill() { session.toggleSelectedShapeFill() }
     @objc private func menuResetRotation() { session.mutateSelected { $0.rotation = nil } }
     @objc private func menuFront() { session.layer(front: true) }
     @objc private func menuBack() { session.layer(front: false) }
@@ -414,6 +492,8 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
         guard let drag else { return }
         let screen = point(event), p = world(screen)
         switch drag {
+        case .noteText(let layout):
+            noteSelection?.end = layout.insertionIndex(at: screen)
         case .pan(let start, var view):
             view.center.x -= (screen.x - start.x) / view.zoom
             view.center.y -= (screen.y - start.y) / view.zoom
@@ -453,10 +533,13 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
             if event.modifierFlags.contains(.shift) { angle = (angle / (.pi / 12)).rounded() * (.pi / 12) }
             copy.rotation = angle
             preview = [copy]
-        case .corner(let item):
+        case .corner(let start, let item):
             var copy = item
-            let local = p.applying(BoardGeometry.transform(item.frame, angle: -item.angle))
-            copy.cornerRadius = max(0, min(min(item.frame.width, item.frame.height) / 2, item.frame.maxX - local.x - 12 / viewport.zoom))
+            let frame = displayFrame(item)
+            let inverse = BoardGeometry.transform(frame, angle: -item.angle)
+            copy.cornerRadius = BoardGeometry.draggedCornerRadius(
+                from: start.applying(inverse), to: screen.applying(inverse), in: frame, radius: item.radius * viewport.zoom
+            ) / viewport.zoom
             preview = [copy]
         case .endpoint(let item, let index):
             var copy = item
@@ -509,7 +592,7 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
                 session.store.editBoard(session.board.id) { $0.items.append(contentsOf: items) }
             case .pan:
                 session.store.flush()
-            case .marquee: break
+            case .marquee, .noteText: break
             }
         }
         clearDrag()
@@ -579,8 +662,9 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
         switch event.keyCode {
         case 49: spaceDown = true
         case 51, 117: session.delete()
-        case 53: clearDrag(); session.selection = []; session.tool = .select
+        case 53: noteSelection = nil; clearDrag(); session.selection = []; session.tool = .select
         case 123, 124, 125, 126:
+            guard noteSelection == nil else { return }
             let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
             let dx: CGFloat = event.keyCode == 123 ? -step : event.keyCode == 124 ? step : 0
             let dy: CGFloat = event.keyCode == 126 ? -step : event.keyCode == 125 ? step : 0
@@ -604,7 +688,21 @@ final class BoardCanvasView: NSView, NSTextViewDelegate {
     }
     @objc func paste(_ sender: Any?) { session.paste() }
     @objc func copy(_ sender: Any?) { session.copy() }
-    override func selectAll(_ sender: Any?) { session.selection = Set(session.board.items.map(\.id)) }
+    override func selectAll(_ sender: Any?) {
+        if let selection = noteSelection, let text = selectableNoteText() {
+            noteSelection = NoteSelection(itemID: selection.itemID, anchor: 0, end: text.length)
+            needsDisplay = true
+        } else {
+            session.selection = Set(session.board.items.map(\.id))
+        }
+    }
+
+    private func selectableNoteText() -> NSString? {
+        guard let id = noteSelection?.itemID, session.tool == .select, session.editingID == nil,
+              session.selection.contains(id),
+              let item = session.board.items.first(where: { $0.id == id && !$0.isCollapsed }) else { return nil }
+        return BoardRenderer.noteText(item.text, scale: 1, darkInk: false).string as NSString
+    }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { .copy }
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {

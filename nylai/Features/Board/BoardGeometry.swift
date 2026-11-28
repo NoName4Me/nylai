@@ -14,6 +14,25 @@ enum BoardGeometry {
         return CGRect(x: frame.midX - w / 2, y: frame.midY - h / 2, width: w, height: h)
     }
 
+    static func cornerRadiusHandle(_ frame: CGRect, radius: CGFloat) -> CGPoint {
+        let corner = CGPoint(x: frame.maxX, y: frame.maxY)
+        let diagonal = hypot(frame.width, frame.height) / 2
+        let maximumRadius = min(frame.width, frame.height) / 2
+        guard maximumRadius > 0 else { return corner }
+        let inset = min(13, diagonal / 2)
+        let fraction = (inset + (diagonal - inset) * radius / maximumRadius) / diagonal
+        return CGPoint(x: corner.x - frame.width / 2 * fraction, y: corner.y - frame.height / 2 * fraction)
+    }
+
+    static func draggedCornerRadius(from start: CGPoint, to end: CGPoint, in frame: CGRect, radius: CGFloat) -> CGFloat {
+        let diagonal = hypot(frame.width, frame.height) / 2
+        guard diagonal > 0 else { return 0 }
+        let travel = diagonal - min(13, diagonal / 2)
+        let projected = ((start.x - end.x) * frame.width + (start.y - end.y) * frame.height) / (2 * diagonal)
+        let maximumRadius = min(frame.width, frame.height) / 2
+        return min(maximumRadius, max(0, radius + projected / travel * maximumRadius))
+    }
+
     static func endpoints(_ item: BoardItem) -> [CGPoint] {
         guard let first = item.points.first, let last = item.points.last else { return [] }
         let t = transform(item.frame, angle: item.angle)

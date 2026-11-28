@@ -798,10 +798,11 @@ struct SettingsView: View {
                         VStack(spacing: 0) {
                             HStack(spacing: 12) {
                                 VStack(alignment: .leading, spacing: 3) {
+                                    let grouped = store.groupedRecordCount
                                     Text(L10n.shared.string(
                                         "%@ 条未分组 · %@ 条已分组",
-                                        String(store.ordinaryRecords.count),
-                                        String(store.pinnedRecords.count)
+                                        String(store.index.records.count - grouped),
+                                        String(grouped)
                                     ))
                                         .font(.system(size: 13, weight: .medium))
                                     Text("删除历史不会修改系统剪贴板当前内容。")
@@ -809,7 +810,7 @@ struct SettingsView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Button("清空未分组记录") {
+                                Button("清空普通记录") {
                                     do {
                                         try store.clearOrdinary()
                                     } catch {
